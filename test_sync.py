@@ -44,7 +44,7 @@ class WindowTests(unittest.TestCase):
     def setUp(self):
         # Keep lookups deterministic and offline; test queue production separately.
         with patch.object(app.threading.Thread, 'start'):
-            self.window = app.App()
+            self.window = app.App(auto_connect=False)
         self.window.withdraw()
 
     def tearDown(self):
@@ -113,7 +113,7 @@ class SpotifyTests(unittest.TestCase):
         song_response.__enter__.return_value.status = 200
         song_response.__enter__.return_value.read.return_value = json.dumps(playback()).encode()
         expired = urllib.error.HTTPError('https://example.test', 401, 'expired', {}, None)
-        with patch.object(app.urllib.request, 'urlopen', side_effect=[expired, token_response, song_response]) as request:
+        with patch.object(app, 'save_refresh_token'), patch.object(app.urllib.request, 'urlopen', side_effect=[expired, token_response, song_response]) as request:
             self.assertEqual(spotify.current()['item']['id'], 'one')
             self.assertIn(b'grant_type=refresh_token', request.call_args_list[1].args[0].data)
             self.assertEqual(request.call_args_list[2].args[0].get_header('Authorization'), 'Bearer renewed')

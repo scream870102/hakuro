@@ -133,3 +133,8 @@ The next session should test dist/SpotifyOriginalLyrics.exe with the user-provid
 ## Multi-source synchronized lyrics update
 
 lyrics_sources.py owns providers, matching and LRC parsing (milliseconds). app.py uses separate Spotify/lyrics workers and a Tk-main-thread queue. Track generation guards reject stale results; pending requests keep only the newest song. Plain lyrics remain a fallback. OpenCC normalizes Traditional/Simplified Chinese for matching only; package its data files. Tests: test_app, test_sync, test_lyrics_sources. API-based pause/seek correction has polling/network latency. NetEase/QQ public endpoints are unofficial and may change. Actual user Spotify OAuth/playback still needs end-to-end verification.
+
+
+## Automatic login and dark UI
+
+Current folder: C:/Users/User/Downloads/spotify-lyrics-shower. App starts connecting automatically; missing config is an inline notice, retry remains available. Spotify.connect_session refreshes a DPAPI-cached token; only missing/invalid_grant triggers browser authorization. Transient failures preserve the cache. Rotated refresh tokens are saved. token_store.py stores current-user/client-bound encrypted data in LocalAppData/SpotifyOriginalLyrics/session.bin, outside Git. UI uses dark clam styles, dark lyrics and current-line colors, plus Windows 11 caption attributes. test_login and test_token_store cover lifecycle and real DPAPI with dummy tokens in temp folders. Tests must disable auto-connect or mock configuration/session access; never inspect the user's actual cache.

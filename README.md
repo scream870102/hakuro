@@ -4,7 +4,7 @@
 
 1. 開啟 `dist` 資料夾，將你自己的 `secret.env` 放在 `SpotifyOriginalLyrics.exe` 旁邊。
 2. 雙擊 `SpotifyOriginalLyrics.exe`，不需要安裝 Python 或執行 PowerShell。
-3. 按 **Connect Spotify**，在瀏覽器完成授權，接著在 Spotify 播放歌曲。
+3. app 會自動連線；首次使用在瀏覽器完成授權，之後開啟會自動沿用登入。接著在 Spotify 播放歌曲。
 
 `secret.env` 使用 UTF-8 純文字，可直接放一行 Client ID，或使用：
 
@@ -13,11 +13,18 @@ SPOTIFY_CLIENT_ID=你的ClientID
 ```
 
 也接受 `CLIENT_ID` 或 `clientId`，可加成對引號。不要填 Client Secret。
-缺少或格式錯誤時，app 會顯示提示；修正檔案後再次按 Connect Spotify 即可。
+缺少或格式錯誤時，app 會顯示提示；修正檔案後按 Retry connection 即可。
 設定檔不內嵌於 EXE，也不會自動複製進發行檔；分享程式時請另行提供適合的 Client ID。
 
 Spotify Developer app 的 Redirect URI 必須設為 `http://127.0.0.1:8787/callback`。
 使用 PKCE，不需要 Client Secret。登入仍須符合 Spotify 對該開發者 app 的帳號權限限制。
+
+## 自動登入與深色介面
+
+啟動時自動讀取 secret.env 並連線，不必每次按 Connect。首次使用或授權失效時仍須在瀏覽器完成 Spotify 授權；一般重新開啟會使用保存的 refresh token 在背景續用登入。
+refresh token 以 Windows DPAPI（目前 Windows 使用者）加密，存於 `%LOCALAPPDATA%/SpotifyOriginalLyrics/session.bin`，不寫入專案、EXE 或 Git。更換 Client ID 不會沿用舊憑證。
+暫時斷網不會清除登入；啟動連線失敗可按 **Retry connection**。若無法保存登入，畫面會提醒，下次可能需要重新授權。
+介面預設深色，包含背景、按鈕、歌詞、捲軸與綠色目前句高亮；Windows 11 也設定深色標題列。
 
 ## 歌詞來源與跟隨
 
@@ -46,7 +53,7 @@ HTTPS 使用 Windows 憑證存放區，不停用 TLS 驗證。
 
 ```text
 python -m pip install -r requirements.txt PyInstaller==6.22.3
-python -m unittest -v test_app test_sync test_lyrics_sources
+python -m unittest -v test_app test_sync test_lyrics_sources test_login test_token_store
 python -m PyInstaller --noconfirm --onefile --windowed --name SpotifyOriginalLyrics --collect-data opencc app.py
 ```
 

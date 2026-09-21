@@ -24,6 +24,8 @@ class AppTests(unittest.TestCase):
 
     def test_config_failure_does_not_start_auth(self):
         window = Mock()
+        window.connecting = False
+        window.spotify = None
         with patch.object(app, 'TRUSTSTORE_AVAILABLE', True), patch.object(app, 'read_client_id', side_effect=ValueError('missing config')), patch.object(app.messagebox, 'showerror') as error, patch.object(app.threading, 'Thread') as thread:
             app.App.connect(window)
             error.assert_called_once()
@@ -31,15 +33,17 @@ class AppTests(unittest.TestCase):
 
     def test_auth_error_survives_delayed_callback(self):
         window = Mock()
+        window.connecting = False
+        window.spotify = None
         with patch.object(app, 'Spotify') as spotify:
-            spotify.return_value.authorize.side_effect = RuntimeError('test authorization failed')
+            spotify.return_value.connect_session.side_effect = RuntimeError('test authorization failed')
             app.App.auth(window, 'abc123')
             window.events.put.assert_called_once_with(('auth_error', 'test authorization failed'))
             window.after.assert_not_called()
 
     def test_window_startup(self):
         self.assertTrue(app.TRUSTSTORE_AVAILABLE)
-        window = app.App()
+        window = app.App(auto_connect=False)
         try:
             window.withdraw()
             window.update()

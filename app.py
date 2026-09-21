@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import queue
 from bisect import bisect_right
+from token_store import load_refresh_token, save_refresh_token
 from lyrics_sources import fetch_lyrics, LyricsResult
 import urllib.error, urllib.parse, urllib.request, webbrowser
 
@@ -75,11 +76,16 @@ class CallbackServer(http.server.ThreadingHTTPServer):
         self.code = None
         self.error = None
 
+class LoginRequired(Exception):
+    pass
+
+
 class Spotify:
     def __init__(self, client_id):
         self.client_id = client_id
         self.access_token = None
         self.refresh_token = None
+        self.cache_warning = ""
 
     def authorize(self):
         verifier, challenge = pkce_pair()
@@ -118,8 +124,47 @@ class Spotify:
                 "This app uses the Windows certificate store through truststore.\n\n"
                 f"Original error: {e}"
             ) from e
+        self.accept_token(token)
+
+    def accept_token(self, token):
         self.access_token = token["access_token"]
         self.refresh_token = token.get("refresh_token", self.refresh_token)
+        if self.refresh_token:
+            try:
+                save_refresh_token(self.client_id, self.refresh_token)
+                self.cache_warning = ""
+            except OSError:
+                self.cache_warning = "Connected, but login could not be saved. Next launch may need authorization."
+
+    def refresh(self):
+        data = urllib.parse.urlencode({"grant_type": "refresh_token",
+            "refresh_token": self.refresh_token, "client_id": self.client_id}).encode()
+        request = urllib.request.Request(SPOTIFY_TOKEN, data=data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                token = json.loads(response.read().decode())
+        except urllib.error.HTTPError as error:
+            try:
+                details = json.loads(error.read().decode())
+            except (ValueError, UnicodeError):
+                details = {}
+            finally:
+                error.close()
+            if error.code == 400 and details.get("error") == "invalid_grant":
+                raise LoginRequired("Spotify authorization expired") from error
+            raise
+        self.accept_token(token)
+
+    def connect_session(self):
+        self.refresh_token = load_refresh_token(self.client_id)
+        if self.refresh_token:
+            try:
+                self.refresh()
+                return
+            except LoginRequired:
+                pass
+        self.authorize()
 
     def current(self):
         for attempt in range(2):
@@ -135,14 +180,7 @@ class Spotify:
                 if error.code != 401 or attempt or not self.refresh_token:
                     raise
                 error.close()
-                data = urllib.parse.urlencode({"grant_type": "refresh_token",
-                    "refresh_token": self.refresh_token, "client_id": self.client_id}).encode()
-                refresh = urllib.request.Request(SPOTIFY_TOKEN, data=data,
-                    headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
-                with urllib.request.urlopen(refresh, timeout=15) as response:
-                    token = json.loads(response.read().decode())
-                self.access_token = token["access_token"]
-                self.refresh_token = token.get("refresh_token", self.refresh_token)
+                self.refresh()
 
 
 class PlaybackClock:
@@ -170,12 +208,14 @@ def active_line(cues, position):
 
 
 class App(tk.Tk):
-    def __init__(self):
+    def __init__(self, auto_connect=True):
         super().__init__()
         self.title("Spotify Original Lyrics")
         self.geometry("800x660")
         self.minsize(650, 450)
         self.spotify = None
+        self.connecting = False
+        self.auto_timer = None
         self.stop = threading.Event()
         self.events = queue.Queue()
         self.requests = queue.Queue(maxsize=1)
@@ -192,9 +232,49 @@ class App(tk.Tk):
         self.source = tk.StringVar(value="Sources: LRCLIB / NetEase / QQ Music")
         self.position = tk.StringVar(value="00:00 / 00:00")
         self.follow = tk.BooleanVar(value=True)
+        self.login_notice = tk.StringVar()
+        self.apply_dark_theme()
         self.build()
+        self.bind("<Map>", self.dark_titlebar, add="+")
         threading.Thread(target=self.lyrics_worker, daemon=True).start()
         self.timer = self.after(100, self.tick)
+        if auto_connect:
+            self.auto_timer = self.after(150, self.auto_connect)
+
+    def auto_connect(self):
+        self.auto_timer = None
+        self.connect(automatic=True)
+
+    def apply_dark_theme(self):
+        self.configure(background="#121212")
+        style = ttk.Style(self)
+        style.theme_use("clam")
+        style.configure(".", background="#121212", foreground="#e8e8e8", bordercolor="#383838", lightcolor="#383838", darkcolor="#383838", troughcolor="#181818", focuscolor="#1db954")
+        style.configure("TButton", background="#282828", foreground="#eeeeee", padding=(10, 6))
+        style.map("TButton", background=[("disabled", "#202020"), ("active", "#383838")], foreground=[("disabled", "#999999")])
+        style.configure("TCheckbutton", indicatorbackground="#282828", indicatorforeground="#1db954")
+        style.map("TCheckbutton", background=[("active", "#121212")], indicatorbackground=[("selected", "#1db954"), ("active", "#383838")])
+        style.configure("Vertical.TScrollbar", background="#3a3a3a", arrowcolor="#dddddd", troughcolor="#181818", borderwidth=0)
+        style.map("Vertical.TScrollbar", background=[("active", "#555555")])
+        style.configure("TLabelframe.Label", foreground="#b8b8b8")
+        style.configure("Notice.TLabel", foreground="#e0b86c")
+
+    def dark_titlebar(self, event):
+        if event.widget is not self or sys.platform != "win32":
+            return
+        import ctypes
+        from ctypes import wintypes
+        try:
+            set_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
+            set_attribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+            set_attribute.restype = ctypes.c_long
+            handle = int(self.wm_frame(), 0)
+            # Windows 11 dark frame, caption background and caption text; older Windows may ignore them.
+            for attribute, color in ((20, 1), (35, 0x121212), (36, 0xe8e8e8)):
+                value = wintypes.DWORD(color)
+                set_attribute(handle, attribute, ctypes.byref(value), ctypes.sizeof(value))
+        except (AttributeError, OSError, ValueError, tk.TclError):
+            pass
 
     def build(self):
         frame = ttk.Frame(self, padding=14)
@@ -203,7 +283,7 @@ class App(tk.Tk):
         ttk.Label(frame, text="Original lyrics with timed-line following when available.").pack(anchor="w", pady=(2, 10))
         bar = ttk.Frame(frame)
         bar.pack(fill="x", pady=(0, 12))
-        self.connect_button = ttk.Button(bar, text="Connect Spotify", command=self.connect)
+        self.connect_button = ttk.Button(bar, text="Retry connection", command=self.connect)
         self.connect_button.pack(side="left")
         ttk.Button(bar, text="Reload Lyrics", command=self.clear).pack(side="left", padx=8)
         ttk.Checkbutton(bar, text="Follow lyrics", variable=self.follow, command=self.follow_changed).pack(side="left")
@@ -215,13 +295,14 @@ class App(tk.Tk):
         ttk.Label(now, textvariable=self.position).pack(anchor="e")
         lyrics_frame = ttk.LabelFrame(frame, text="Lyrics", padding=8)
         lyrics_frame.pack(fill="both", expand=True)
-        self.text = tk.Text(lyrics_frame, wrap="word", font=("Segoe UI", 12), padx=12, pady=12, spacing3=8, state="disabled")
-        self.text.tag_configure("current", background="#d8f5e4", foreground="#123c28")
+        self.text = tk.Text(lyrics_frame, wrap="word", font=("Segoe UI", 12), padx=12, pady=12, spacing3=8, state="disabled", background="#181818", foreground="#dddddd", insertbackground="#eeeeee", selectbackground="#345443", selectforeground="#ffffff", relief="flat", highlightthickness=0)
+        self.text.tag_configure("current", background="#1d4831", foreground="#f0fff5")
         scrollbar = ttk.Scrollbar(lyrics_frame, orient="vertical", command=self.text.yview)
         self.text.configure(yscrollcommand=scrollbar.set)
         self.text.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
         ttk.Label(frame, textvariable=self.source, wraplength=740).pack(anchor="w", pady=(7, 0))
+        ttk.Label(frame, textvariable=self.login_notice, style="Notice.TLabel", wraplength=740).pack(anchor="w")
 
     def set_text(self, text):
         self.text.config(state="normal")
@@ -230,23 +311,30 @@ class App(tk.Tk):
         self.text.config(state="disabled")
         self.highlighted = -1
 
-    def connect(self):
+    def connect(self, automatic=False):
+        if self.connecting or self.spotify is not None:
+            return
         if not TRUSTSTORE_AVAILABLE:
             messagebox.showerror("Missing dependency", "The app is missing its HTTPS support. Please reinstall the complete app.")
             return
         try:
             client_id = read_client_id()
         except (ValueError, UnicodeError) as error:
-            messagebox.showerror("Client ID configuration", str(error), parent=self)
+            self.status.set("Client ID configuration needed")
+            self.login_notice.set(str(error))
+            if not automatic:
+                messagebox.showerror("Client ID configuration", str(error), parent=self)
             return
+        self.connecting = True
+        self.login_notice.set("")
         self.connect_button.config(state="disabled")
-        self.status.set("Opening Spotify authorization...")
+        self.status.set("Connecting to Spotify...")
         threading.Thread(target=self.auth, args=(client_id,), daemon=True).start()
 
     def auth(self, client_id):
         try:
             spotify = Spotify(client_id)
-            spotify.authorize()
+            spotify.connect_session()
             self.events.put(("authorized", spotify))
         except Exception as error:
             self.events.put(("auth_error", str(error)))
@@ -257,6 +345,9 @@ class App(tk.Tk):
             try:
                 data = self.spotify.current()
                 self.events.put(("playback", data, time.monotonic()))
+            except LoginRequired:
+                self.events.put(("login_required",))
+                return
             except Exception as error:
                 if isinstance(error, urllib.error.HTTPError) and error.code == 429:
                     try:
@@ -352,14 +443,24 @@ class App(tk.Tk):
             kind, *args = event
             if kind == "authorized":
                 self.spotify = args[0]
+                self.connecting = False
+                self.connect_button.config(text="Connected", state="disabled")
+                self.login_notice.set(self.spotify.cache_warning)
                 self.status.set("Connected")
                 threading.Thread(target=self.poll, daemon=True).start()
+            elif kind == "login_required":
+                self.spotify = None
+                self.clock.freeze()
+                self.connect(automatic=True)
             elif kind == "auth_error":
-                self.connect_button.config(state="normal")
+                self.connecting = False
+                self.connect_button.config(text="Retry connection", state="normal")
                 self.status.set("Connection failed")
-                messagebox.showerror("Spotify connection failed", args[0], parent=self)
+                self.login_notice.set(args[0])
             elif kind == "playback":
                 self.apply_playback(*args)
+                if self.spotify is not None:
+                    self.login_notice.set(self.spotify.cache_warning)
             elif kind == "playback_error":
                 self.clock.freeze()
                 self.status.set(args[0])
@@ -391,6 +492,8 @@ class App(tk.Tk):
 
     def close(self):
         self.stop.set()
+        if self.auto_timer is not None:
+            self.after_cancel(self.auto_timer)
         self.after_cancel(self.timer)
         self.destroy()
 
