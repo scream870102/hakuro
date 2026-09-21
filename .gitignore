@@ -1,0 +1,22 @@
+# Credentials and local configuration
+*.env
+.env
+.env.*
+!.env.example
+!*.env.example
+
+# Python environments and generated files
+.venv/
+venv/
+.build-venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Packaging output (keep the .spec build recipe)
+build/
+dist/
+*.log
