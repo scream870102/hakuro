@@ -349,6 +349,101 @@ async fn seek(position_ms: i64, state: State<'_, AppState>) -> Result<(), String
     with_client(&state, |client| async move { client.seek(position_ms).await }).await
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The interface reads these names literally. A flattened struct does not
+    /// inherit the wrapper's `rename_all`, so this pins every key the frontend
+    /// depends on: a mismatch here silently blanks the track, disables the
+    /// transport and stops the highlight, while lyrics keep working.
+    #[test]
+    fn playback_event_keys_match_what_the_interface_reads() {
+        let event = PlaybackEvent {
+            playback: Playback {
+                track_id: "id".into(),
+                name: "Title".into(),
+                artists: vec!["Artist".into()],
+                album: "Album".into(),
+                album_art: Some("https://example.test/art.jpg".into()),
+                duration_ms: 180_000,
+                progress_ms: Some(1000),
+                is_playing: true,
+                has_track: true,
+                can_skip_next: true,
+                can_skip_previous: false,
+                can_seek: true,
+                device_name: Some("Device".into()),
+            },
+            generation: 7,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        let object = json.as_object().unwrap();
+
+        for key in [
+            "trackId",
+            "name",
+            "artists",
+            "album",
+            "albumArt",
+            "durationMs",
+            "progressMs",
+            "isPlaying",
+            "hasTrack",
+            "canSkipNext",
+            "canSkipPrevious",
+            "canSeek",
+            "deviceName",
+            "generation",
+        ] {
+            assert!(object.contains_key(key), "missing key: {key}");
+        }
+        // Nothing may reach the interface under its Rust spelling.
+        for key in ["track_id", "has_track", "duration_ms", "is_playing", "can_seek"] {
+            assert!(!object.contains_key(key), "snake_case leaked: {key}");
+        }
+        assert_eq!(object["hasTrack"], serde_json::json!(true));
+        assert_eq!(object["durationMs"], serde_json::json!(180_000));
+    }
+
+    #[test]
+    fn lyrics_event_keys_match_and_cues_keep_their_own_spelling() {
+        let event = LyricsEvent {
+            generation: 3,
+            track_id: "id".into(),
+            source: "LRCLIB".into(),
+            synced: true,
+            cues: vec![Cue {
+                time_ms: 1000,
+                text: "LINE_A".into(),
+            }],
+            text: "LINE_A".into(),
+            partial: false,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        let object = json.as_object().unwrap();
+
+        for key in ["generation", "trackId", "source", "synced", "cues", "text", "partial"] {
+            assert!(object.contains_key(key), "missing key: {key}");
+        }
+        // The interface reads cue timings as `time_ms`; keep that spelling.
+        assert_eq!(object["cues"][0]["time_ms"], serde_json::json!(1000));
+    }
+
+    #[test]
+    fn status_event_keys_match() {
+        let json = serde_json::to_value(StatusEvent {
+            state: "connected",
+            message: "Connected".into(),
+            notice: String::new(),
+        })
+        .unwrap();
+        for key in ["state", "message", "notice"] {
+            assert!(json.as_object().unwrap().contains_key(key), "missing key: {key}");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()

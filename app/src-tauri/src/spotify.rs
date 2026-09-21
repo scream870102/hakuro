@@ -126,7 +126,13 @@ fn pkce_pair() -> (String, String) {
 }
 
 /// What the interface needs to know about the current playback.
+///
+/// The interface reads these as camelCase. This rename must live here rather
+/// than on the wrapping event: `#[serde(rename_all)]` does not reach through a
+/// `#[serde(flatten)]`, so without it every field below reaches the interface
+/// under a name it does not read.
 #[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Playback {
     pub track_id: String,
     pub name: String,
