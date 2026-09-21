@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spotify Original Lyrics</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <!-- Album art, blurred and scaled, sits behind everything and cross-fades on track change. -->
+    <div class="backdrop" aria-hidden="true">
+      <div class="backdrop__layer" id="backdrop-a"></div>
+      <div class="backdrop__layer" id="backdrop-b"></div>
+      <div class="backdrop__scrim"></div>
+    </div>
+
+    <header class="titlebar" data-tauri-drag-region>
+      <div class="titlebar__meta">
+        <img class="titlebar__art" id="album-art" alt="" />
+        <div class="titlebar__text">
+          <h1 class="titlebar__track" id="track-name">No track playing</h1>
+          <p class="titlebar__artist" id="track-artist"></p>
+        </div>
+      </div>
+      <div class="titlebar__status">
+        <span class="badge" id="source-badge" hidden></span>
+        <span class="status" id="status-text">Connecting…</span>
+      </div>
+    </header>
+
+    <main class="stage">
+      <div class="lyrics" id="lyrics" tabindex="0">
+        <div class="lyrics__empty" id="lyrics-empty">Waiting for playback…</div>
+        <ol class="lyrics__list" id="lyrics-list"></ol>
+      </div>
+      <div class="notice" id="notice" hidden></div>
+    </main>
+
+    <footer class="controls">
+      <div class="scrubber" id="scrubber" role="slider" aria-label="Seek"
+           aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0">
+        <div class="scrubber__track">
+          <div class="scrubber__buffer"></div>
+          <div class="scrubber__fill" id="scrubber-fill"></div>
+          <div class="scrubber__knob" id="scrubber-knob"></div>
+        </div>
+      </div>
+
+      <div class="controls__row">
+        <span class="time" id="time-current">00:00</span>
+
+        <div class="transport">
+          <button class="transport__button" id="previous" disabled title="Previous track" aria-label="Previous track">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6v12M19 6.5v11a.8.8 0 0 1-1.25.66l-8-5.5a.8.8 0 0 1 0-1.32l8-5.5A.8.8 0 0 1 19 6.5Z"/></svg>
+          </button>
+          <button class="transport__button transport__button--primary" id="play-pause" disabled title="Play or pause" aria-label="Play or pause">
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-play"><path d="M8 5.5v13a.8.8 0 0 0 1.23.67l10-6.5a.8.8 0 0 0 0-1.34l-10-6.5A.8.8 0 0 0 8 5.5Z"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-pause"><path d="M8 5h3v14H8zM13 5h3v14h-3z"/></svg>
+          </button>
+          <button class="transport__button" id="next" disabled title="Next track" aria-label="Next track">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 6v12M5 6.5v11a.8.8 0 0 0 1.25.66l8-5.5a.8.8 0 0 0 0-1.32l-8-5.5A.8.8 0 0 0 5 6.5Z"/></svg>
+          </button>
+        </div>
+
+        <span class="time" id="time-total">00:00</span>
+      </div>
+
+      <div class="controls__row controls__row--secondary">
+        <label class="toggle">
+          <input type="checkbox" id="follow" checked />
+          <span class="toggle__track"><span class="toggle__thumb"></span></span>
+          <span class="toggle__label">Follow lyrics</span>
+        </label>
+        <div class="controls__spacer"></div>
+        <button class="ghost-button" id="reload">Reload lyrics</button>
+        <button class="ghost-button" id="reconnect" hidden>Retry connection</button>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

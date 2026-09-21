@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Spotify Original Lyrics",
+  "version": "3.0.0",
+  "identifier": "com.eccentricstudio.spotifylyrics",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Spotify Original Lyrics",
+        "width": 940,
+        "height": 760,
+        "minWidth": 520,
+        "minHeight": 460,
+        "resizable": true,
+        "backgroundColor": "#0b0d0c",
+        "theme": "Dark"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "publisher": "Eccentric Studio",
+    "shortDescription": "Original-language lyrics for whatever Spotify is playing."
+  }
+}
