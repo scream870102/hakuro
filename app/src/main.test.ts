@@ -32,6 +32,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 const initial = () => ({
   settings: {
+    player: "spotify",
     clientId: "a".repeat(32),
     sources: [{ id: "lrclib", enabled: true }, { id: "musixmatch", enabled: true }],
     theme: { accent: "#123456", activeLine: "#ffffff", pastLine: "#666666" },
@@ -126,6 +127,7 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
   el("settings-form").dispatchEvent(new Event("submit", { cancelable: true }));
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("save_settings", { incoming: {
+    player: "spotify",
     clientId: "b".repeat(32),
     sources: [{ id: "musixmatch", enabled: true }, { id: "lrclib", enabled: false }],
     theme: { accent: "#abcdef", activeLine: "#fedcba", pastLine: "#112233" },
@@ -141,6 +143,39 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
   expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#abcdef");
   expect(el<HTMLInputElement>("follow").checked).toBe(false);
   expect(el<HTMLDialogElement>("settings-dialog").open).toBe(false);
+});
+
+it("hides the Spotify setup when the player is switched to YouTube Music, and saves the choice", async () => {
+  await import("./main");
+  await flush();
+  el("settings-open").click();
+  await flush();
+  // Spotify is the stored choice, so its setup starts visible.
+  expect(el("spotify-settings").hidden).toBe(false);
+
+  const player = el<HTMLSelectElement>("settings-player");
+  player.value = "ytmusic";
+  player.dispatchEvent(new Event("change"));
+  // YouTube Music has nothing to sign in to, so the Client ID stops being asked for.
+  expect(el("spotify-settings").hidden).toBe(true);
+
+  el("settings-form").dispatchEvent(new Event("submit", { cancelable: true }));
+  await flush();
+  const saved = bridge.invoke.mock.calls.find(([command]) => command === "save_settings")!;
+  expect((saved[1] as { incoming: { player: string } }).incoming.player).toBe("ytmusic");
+});
+
+it("connects straight away on first run when the player needs no Client ID", async () => {
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") {
+      return { ...initial(), settings: { ...initial().settings, player: "ytmusic", clientId: "" } };
+    }
+  });
+  await import("./main");
+  await flush();
+  // An empty Client ID is only a blocker for Spotify.
+  expect(el<HTMLDialogElement>("settings-dialog").open).toBe(false);
+  expect(bridge.invoke).toHaveBeenCalledWith("connect", undefined);
 });
 
 it("keeps refresh separate from source selection and closes the picker when tracks change", async () => {
@@ -163,6 +198,83 @@ it("keeps refresh separate from source selection and closes the picker when trac
   lyrics(2, "Current song lyrics");
   lyrics(1, "Old song lyrics");
   expect(el("lyrics-list").textContent).toBe("Current song lyrics");
+});
+
+/** jsdom gives every element a zero-sized box, so the panel needs a real one. */
+function boxed(dialog: HTMLDialogElement) {
+  dialog.getBoundingClientRect = () =>
+    ({ left: 100, right: 400, top: 100, bottom: 400, x: 100, y: 100, width: 300, height: 300 }) as DOMRect;
+  return dialog;
+}
+
+const at = (clientX: number, clientY: number) => ({ clientX, clientY, bubbles: true });
+
+it("treats a click away from the settings panel as cancelling it", async () => {
+  await import("./main");
+  await flush();
+  el("settings-open").click();
+  await flush();
+  const dialog = boxed(el<HTMLDialogElement>("settings-dialog"));
+  el<HTMLInputElement>("color-accent").value = "#abcdef";
+
+  dialog.dispatchEvent(new MouseEvent("pointerdown", at(20, 20)));
+  dialog.dispatchEvent(new MouseEvent("click", at(20, 20)));
+  await flush();
+  expect(dialog.open).toBe(false);
+  // Cancelling, not saving: the edit is dropped and the stored colour comes back.
+  expect(bridge.invoke).not.toHaveBeenCalledWith("save_settings", expect.anything());
+  expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#123456");
+});
+
+it("keeps the settings panel open when a click merely starts or ends inside it", async () => {
+  await import("./main");
+  await flush();
+  el("settings-open").click();
+  await flush();
+  const dialog = boxed(el<HTMLDialogElement>("settings-dialog"));
+
+  // Dragging a slider or selecting text often releases past the edge.
+  dialog.dispatchEvent(new MouseEvent("pointerdown", at(200, 200)));
+  dialog.dispatchEvent(new MouseEvent("click", at(20, 20)));
+  expect(dialog.open).toBe(true);
+
+  // The dialog is padded, so a click inside its box is never "away" even when
+  // it lands on the dialog element rather than on a control.
+  dialog.dispatchEvent(new MouseEvent("pointerdown", at(110, 110)));
+  dialog.dispatchEvent(new MouseEvent("click", at(110, 110)));
+  expect(dialog.open).toBe(true);
+});
+
+it("treats a click away from the source picker as cancelling it", async () => {
+  await import("./main");
+  await flush();
+  playback();
+  el("source-badge").click();
+  const dialog = boxed(el<HTMLDialogElement>("source-dialog"));
+  expect(dialog.open).toBe(true);
+
+  dialog.dispatchEvent(new MouseEvent("pointerdown", at(20, 20)));
+  dialog.dispatchEvent(new MouseEvent("click", at(20, 20)));
+  await flush();
+  expect(dialog.open).toBe(false);
+  expect(bridge.invoke).not.toHaveBeenCalledWith("set_track_source", expect.anything());
+});
+
+it("puts back a previewed setting when Escape dismisses the panel", async () => {
+  await import("./main");
+  await flush();
+  el("settings-open").click();
+  await flush();
+  const dialog = el<HTMLDialogElement>("settings-dialog");
+  const size = el<HTMLInputElement>("settings-lyric-size");
+  size.value = "40";
+  size.dispatchEvent(new Event("input"));
+  expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("40px");
+
+  // Escape never reaches either button, so without this the preview would stay.
+  dialog.dispatchEvent(new Event("cancel"));
+  dialog.close();
+  expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("26px");
 });
 
 it("keeps the settings dialog and entered values when saving fails", async () => {

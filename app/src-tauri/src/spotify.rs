@@ -13,11 +13,11 @@ use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
 use base64::Engine;
-use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
+use crate::player::{Playback, PlayerError, PlayerKind};
 use crate::token_store;
 
 const REDIRECT_URI: &str = "http://127.0.0.1:8787/callback";
@@ -59,6 +59,20 @@ impl From<reqwest::Error> for SpotifyError {
     }
 }
 
+impl From<SpotifyError> for PlayerError {
+    fn from(error: SpotifyError) -> Self {
+        match error {
+            SpotifyError::LoginRequired => PlayerError::NeedsAuth,
+            SpotifyError::Config(message) => PlayerError::Config(message),
+            SpotifyError::Network(message) => PlayerError::Network(message),
+            // The status is dropped: nothing downstream branches on it, and the
+            // message is Spotify's own wording, which is what gets shown.
+            SpotifyError::Refused { message, .. } => PlayerError::Refused { message },
+            SpotifyError::RateLimited { retry_after } => PlayerError::RateLimited { retry_after },
+        }
+    }
+}
+
 fn base64_url(bytes: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
@@ -69,31 +83,6 @@ fn pkce_pair() -> (String, String) {
     let verifier = base64_url(&raw);
     let challenge = base64_url(&Sha256::digest(verifier.as_bytes()));
     (verifier, challenge)
-}
-
-/// What the interface needs to know about the current playback.
-///
-/// The interface reads these as camelCase. This rename must live here rather
-/// than on the wrapping event: `#[serde(rename_all)]` does not reach through a
-/// `#[serde(flatten)]`, so without it every field below reaches the interface
-/// under a name it does not read.
-#[derive(Debug, Clone, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Playback {
-    pub track_id: String,
-    pub name: String,
-    pub artists: Vec<String>,
-    pub album: String,
-    pub album_art: Option<String>,
-    pub duration_ms: i64,
-    pub progress_ms: Option<i64>,
-    pub is_playing: bool,
-    pub has_track: bool,
-    /// Spotify's own view of which transport actions are currently allowed.
-    pub can_skip_next: bool,
-    pub can_skip_previous: bool,
-    pub can_seek: bool,
-    pub device_name: Option<String>,
 }
 
 pub struct Spotify {
@@ -400,6 +389,7 @@ impl Spotify {
                 .and_then(|device| device.get("name"))
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            source: PlayerKind::Spotify,
         })
     }
 

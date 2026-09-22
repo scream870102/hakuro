@@ -1,5 +1,10 @@
-//! Application wiring: Spotify polling, lyric lookups, and the commands the
+//! Application wiring: playback polling, lyric lookups, and the commands the
 //! interface calls.
+//!
+//! Two playback sources are supported and exactly one is live: Spotify over its
+//! Web API, or YouTube Music through the Windows system media session. The
+//! choice is a setting, and changing it drops the old connection so the poll
+//! loop below ends and a new one starts.
 //!
 //! The backend owns every network call and pushes events to the frontend; the
 //! frontend owns only presentation and the sub-second position extrapolation
@@ -10,8 +15,10 @@ mod lrc;
 mod matching;
 mod musixmatch;
 mod petitlyrics;
+mod player;
 mod providers;
 mod settings;
+mod smtc;
 mod spotify;
 mod token_store;
 
@@ -28,8 +35,10 @@ use tokio::sync::RwLock;
 use db::Db;
 use lrc::Cue;
 use providers::{LyricsResult, TrackQuery};
+use player::{Playback, Player, PlayerError, PlayerKind};
 use settings::Settings;
-use spotify::{Playback, Spotify, SpotifyError};
+use smtc::Smtc;
+use spotify::Spotify;
 
 /// Poll politely: 1.5 s keeps the highlight honest without burning rate limit.
 const POLL_INTERVAL: Duration = Duration::from_millis(1500);
@@ -95,7 +104,8 @@ struct ConfigPayload {
 
 #[derive(Default)]
 struct Session {
-    spotify: RwLock<Option<Arc<Spotify>>>,
+    /// The one live playback source, or nothing while disconnected.
+    player: RwLock<Option<Player>>,
     /// Incremented on every track change; a lyric result from an older
     /// generation belongs to a song that is no longer playing.
     generation: AtomicU64,
@@ -190,18 +200,23 @@ async fn save_settings(
 
     let previous = state.settings.read().await.clone();
     let sources_changed = incoming.sources != previous.sources;
-    let previous_client_id = previous.client_id;
+    // Either half of the identity invalidates the open connection: a new Client
+    // ID cannot reuse the cached refresh token, and a new player is a different
+    // source altogether. A Client ID edited while following YouTube Music
+    // changes nothing that is running, so it does not reconnect.
+    let identity_changed = incoming.player != previous.player
+        || (incoming.player.needs_client_id() && incoming.client_id != previous.client_id);
     settings::save(&incoming)?;
     *state.settings.write().await = incoming.clone();
 
-    if incoming.client_id != previous_client_id {
-        // The cached refresh token is bound to the old identity and cannot be
-        // reused; dropping the client makes the next connect start clean.
-        *state.session.spotify.write().await = None;
+    if identity_changed {
+        // Dropping the client makes the next connect start clean, and ends the
+        // poll loop the old one was feeding.
+        *state.session.player.write().await = None;
         state.session.current_track.write().await.clear();
         *state.session.current_playback.write().await = None;
         state.session.generation.fetch_add(1, Ordering::SeqCst);
-        if incoming.client_id.is_empty() {
+        if incoming.player.needs_client_id() && incoming.client_id.is_empty() {
             emit_status(
                 &app,
                 "needs-client-id",
@@ -231,19 +246,33 @@ async fn clear_lyrics_cache(state: State<'_, AppState>) -> Result<ConfigPayload,
     Ok(state.config(&settings))
 }
 
-// ------------------------------------------------------------------- Spotify
+// -------------------------------------------------------------------- players
 
-/// Connect using the cached session, falling back to browser authorization.
+/// Connect to whichever source the settings name.
+///
+/// Spotify resumes from its cached session and falls back to browser
+/// authorization; YouTube Music has nothing to authorize, so it only has to
+/// reach the system media session.
 #[tauri::command]
 async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let _connecting = state.session.connecting.lock().await;
-    if state.session.spotify.read().await.is_some() {
+    if state.session.player.read().await.is_some() {
         return Ok(());
     }
 
-    emit_status(&app, "connecting", "Connecting to Spotify…", "");
+    let settings = state.settings.read().await.clone();
+    emit_status(
+        &app,
+        "connecting",
+        format!("Connecting to {}…", settings.player.label()),
+        "",
+    );
 
-    let stored = state.settings.read().await.client_id.clone();
+    if settings.player == PlayerKind::Ytmusic {
+        return connect_ytmusic(&app, &state).await;
+    }
+
+    let stored = settings.client_id.clone();
     let client_id = match settings::validate_client_id(&stored) {
         Ok(client_id) => client_id,
         Err(error) => {
@@ -302,10 +331,31 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
     if state.settings.read().await.client_id != client_id {
         return Err("Client ID changed during authorization. Connect again.".into());
     }
-    *state.session.spotify.write().await = Some(client);
+    *state.session.player.write().await = Some(Player::spotify(client));
     emit_status(&app, "connected", "Connected", notice);
 
     start_polling(&app, &state).await;
+    Ok(())
+}
+
+/// YouTube Music needs no sign-in: the system media session is either there or
+/// Windows refuses, and the only lasting warning is the lyric database.
+async fn connect_ytmusic(app: &AppHandle, state: &State<'_, AppState>) -> Result<(), String> {
+    let client = match Smtc::connect().await {
+        Ok(client) => Arc::new(client),
+        Err(error) => {
+            emit_status(app, "error", "Connection failed", error.to_string());
+            return Err(error.to_string());
+        }
+    };
+    // The reader may have switched back to Spotify while Windows was answering.
+    if state.settings.read().await.player != PlayerKind::Ytmusic {
+        return Err("The player changed while connecting. Connect again.".into());
+    }
+    let notice = state.db.warning().unwrap_or_default().to_string();
+    *state.session.player.write().await = Some(Player::ytmusic(client));
+    emit_status(app, "connected", "Connected", notice);
+    start_polling(app, state).await;
     Ok(())
 }
 
@@ -327,45 +377,43 @@ async fn poll_loop(app: AppHandle) {
     loop {
         let client = {
             let state = app.state::<AppState>();
-            let client = state.session.spotify.read().await.clone();
-            match client {
-                Some(client) => client,
-                None => {
-                    // Something dropped the client — a new Client ID, usually.
-                    // Release the flag so the next connect can start a loop.
-                    *state.session.polling.write().await = false;
-                    break;
-                }
+            // The flag is held across the decision on purpose. A reconnect that
+            // installs its client between reading the slot and clearing the
+            // flag would otherwise find the flag still set, decline to start a
+            // loop of its own, and leave nothing polling at all.
+            let mut polling = state.session.polling.write().await;
+            let current = state.session.player.read().await.clone();
+            if current.is_none() {
+                // Something dropped the client — a settings change, usually.
+                // Release the flag so the next connect can start a loop.
+                *polling = false;
             }
+            current
         };
+        // Outside the block, so both guards are released before the loop ends.
+        let Some(client) = client else { break };
 
         let mut delay = POLL_INTERVAL;
         let result = client.playback().await;
-        // A response from an identity replaced in Settings must not reset the new session.
-        let active = app.state::<AppState>().session.spotify.read().await.clone();
-        if !active
-            .as_ref()
-            .is_some_and(|active| Arc::ptr_eq(active, &client))
-        {
+        // A response from a source replaced in Settings must not reset the new
+        // one. The serial is unique per connection, which a pointer comparison
+        // can no longer be now that two kinds of client share one slot.
+        let active = app.state::<AppState>().session.player.read().await.clone();
+        if !active.as_ref().is_some_and(|open| open.serial == client.serial) {
             continue;
         }
         match result {
             Ok(playback) => apply_playback(&app, playback).await,
-            Err(SpotifyError::LoginRequired) => {
+            Err(PlayerError::NeedsAuth) => {
                 let state = app.state::<AppState>();
-                *state.session.spotify.write().await = None;
+                *state.session.player.write().await = None;
                 *state.session.polling.write().await = false;
                 emit_status(&app, "needs-auth", "Spotify sign-in expired", "");
                 break;
             }
-            Err(SpotifyError::RateLimited { retry_after }) => {
+            Err(PlayerError::RateLimited { retry_after }) => {
                 delay = Duration::from_secs(retry_after.max(2));
-                emit_status(
-                    &app,
-                    "waiting",
-                    "Spotify rate limit; waiting before retry",
-                    "",
-                );
+                emit_status(&app, "waiting", "Rate limited; waiting before retry", "");
             }
             Err(error) => {
                 emit_status(&app, "waiting", error.to_string(), "");
@@ -377,14 +425,19 @@ async fn poll_loop(app: AppHandle) {
 }
 
 /// A key that survives restarts, so the database can be read back next session.
+///
+/// The source is part of the key. It has to be: YouTube Music has no track id
+/// at all, so its key is title and length — exactly the shape Spotify falls back
+/// to — and without a prefix the two would read each other's cached lyrics.
 fn track_key(playback: &Playback) -> String {
     if !playback.has_track {
         return String::new();
     }
+    let prefix = playback.source.prefix();
     if playback.track_id.is_empty() {
-        format!("{}|{}", playback.name, playback.duration_ms)
+        format!("{prefix}:{}|{}", playback.name, playback.duration_ms)
     } else {
-        playback.track_id.clone()
+        format!("{prefix}:{}", playback.track_id)
     }
 }
 
@@ -564,21 +617,22 @@ fn validate_source_track(current: &str, selected: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Transport control. Spotify's refusals — Premium required, no active device —
-/// arrive with its own wording, which is passed through unchanged rather than
-/// matched against a string this app would have to guess.
+/// Transport control. A source's refusals — Premium required, no active device,
+/// a button the player does not offer — arrive with its own wording, which is
+/// passed through unchanged rather than matched against a string this app would
+/// have to guess.
 async fn with_client<F, Fut>(state: &State<'_, AppState>, action: F) -> Result<(), String>
 where
-    F: FnOnce(Arc<Spotify>) -> Fut,
-    Fut: std::future::Future<Output = Result<(), SpotifyError>>,
+    F: FnOnce(Player) -> Fut,
+    Fut: std::future::Future<Output = Result<(), PlayerError>>,
 {
     let client = state
         .session
-        .spotify
+        .player
         .read()
         .await
         .clone()
-        .ok_or_else(|| "Not connected to Spotify".to_string())?;
+        .ok_or_else(|| "Not connected to a player".to_string())?;
     action(client).await.map_err(|error| error.to_string())
 }
 
@@ -638,6 +692,7 @@ mod tests {
             can_skip_previous: false,
             can_seek: true,
             device_name: Some("Device".into()),
+            source: PlayerKind::Spotify,
         }
     }
 
@@ -790,15 +845,27 @@ mod tests {
     /// there is one and never anything derived from the session.
     #[test]
     fn track_key_prefers_the_spotify_id_and_falls_back_to_title_and_length() {
-        assert_eq!(track_key(&playback()), "id");
+        assert_eq!(track_key(&playback()), "sp:id");
 
         let mut local = playback();
         local.track_id = String::new();
-        assert_eq!(track_key(&local), "Title|180000");
+        assert_eq!(track_key(&local), "sp:Title|180000");
 
         let mut stopped = playback();
         stopped.has_track = false;
         assert_eq!(track_key(&stopped), "");
+    }
+
+    /// The two sources reach the same fallback shape — title and length — so
+    /// only the prefix keeps one from serving the other's cached lyrics.
+    #[test]
+    fn the_same_song_on_each_source_gets_its_own_database_key() {
+        let mut spotify = playback();
+        spotify.track_id = String::new();
+        let mut ytmusic = spotify.clone();
+        ytmusic.source = PlayerKind::Ytmusic;
+        assert_eq!(track_key(&ytmusic), "ytm:Title|180000");
+        assert_ne!(track_key(&spotify), track_key(&ytmusic));
     }
 }
 

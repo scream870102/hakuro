@@ -13,6 +13,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::player::PlayerKind;
+
 #[cfg(test)]
 thread_local! {
     static TEST_DATA_DIR: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
@@ -111,7 +113,11 @@ impl Default for Theme {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
-    /// Spotify Client ID. Empty until the reader fills it in.
+    /// Which player to follow. A reader uses one or the other, never both, so
+    /// this is a switch rather than a priority list.
+    pub player: PlayerKind,
+    /// Spotify Client ID. Empty until the reader fills it in, and only asked for
+    /// when the player above is Spotify.
     pub client_id: String,
     pub sources: Vec<SourcePreference>,
     pub theme: Theme,
@@ -149,6 +155,7 @@ pub const MIN_OPACITY: u8 = 30;
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            player: PlayerKind::default(),
             client_id: String::new(),
             sources: PROVIDERS
                 .iter()

@@ -44,8 +44,11 @@ interface LyricsEvent {
 }
 
 type ClickThrough = "off" | "auto" | "always";
+/** Which player Hakuro follows. Exactly one is live at a time. */
+type PlayerKind = "spotify" | "ytmusic";
 
 interface Settings {
+  player: PlayerKind;
   clientId: string;
   sources: { id: string; enabled: boolean }[];
   theme: { accent: string; activeLine: string; pastLine: string };
@@ -130,7 +133,7 @@ const state = {
 
 // ---------------------------------------------------------------- rendering
 
-/** Long enough to read a Spotify refusal, short enough not to become furniture. */
+/** Long enough to read a player's refusal, short enough not to become furniture. */
 const NOTICE_LIFETIME_MS = 8000;
 let noticeTimer = 0;
 
@@ -256,7 +259,8 @@ async function send(command: string, args?: Record<string, unknown>) {
     await invoke(command, args);
     setNotice("");
   } catch (error) {
-    // Spotify's own refusal text, e.g. the Premium or no-active-device message.
+    // The player's own refusal text, e.g. Spotify's Premium or no-active-device
+    // message, or a transport button the media session does not offer.
     setNotice(String(error));
   }
 }
@@ -447,6 +451,40 @@ const sourceSelect = element<HTMLSelectElement>("track-source");
 let sourceTrackId = "";
 const settingsError = element("settings-error");
 
+/**
+ * Dismiss a modal dialog by clicking away from it, or by pressing Escape.
+ *
+ * A modal dialog's backdrop is the dialog element itself, and the dialog is
+ * padded, so the target of the event cannot say whether the click landed
+ * outside — a click in the padding targets the dialog too. The box it occupies
+ * can say, so that is what is measured.
+ *
+ * Both the press and the release have to land outside. Selecting text or
+ * dragging a slider often ends beyond the edge, and throwing away the panel
+ * because a drag overshot would be its own bug.
+ */
+function dismissOnClickAway(dialog: HTMLDialogElement, dismiss: () => void) {
+  const outside = (event: MouseEvent) => {
+    const box = dialog.getBoundingClientRect();
+    return (
+      event.clientX < box.left ||
+      event.clientX > box.right ||
+      event.clientY < box.top ||
+      event.clientY > box.bottom
+    );
+  };
+  let pressedOutside = false;
+  dialog.addEventListener("pointerdown", (event) => { pressedOutside = outside(event); });
+  dialog.addEventListener("click", (event) => {
+    const away = pressedOutside && outside(event);
+    pressedOutside = false;
+    if (away) dismiss();
+  });
+  // Escape dismisses a dialog without reaching either button, which would
+  // otherwise leave a preview applied that was never saved.
+  dialog.addEventListener("cancel", dismiss);
+}
+
 function applyConfig(value: Config) {
   config = value;
   const { theme } = value.settings;
@@ -506,11 +544,22 @@ function renderSourceOrder() {
   });
 }
 
+/** Only Spotify has anything to configure, so the rest of the panel is hidden. */
+function showPlayerSettings(player: PlayerKind) {
+  element("spotify-settings").hidden = player !== "spotify";
+}
+
+element<HTMLSelectElement>("settings-player").addEventListener("change", (event) => {
+  showPlayerSettings((event.target as HTMLSelectElement).value as PlayerKind);
+});
+
 async function openSettings() {
   try {
     const value = await invoke<Config>("get_config");
     config = value;
     draft = structuredClone(value.settings);
+    element<HTMLSelectElement>("settings-player").value = draft.player;
+    showPlayerSettings(draft.player);
     element<HTMLInputElement>("client-id").value = draft.clientId;
     element<HTMLInputElement>("color-accent").value = draft.theme.accent;
     element<HTMLInputElement>("color-active").value = draft.theme.activeLine;
@@ -529,15 +578,23 @@ async function openSettings() {
 }
 
 element("settings-open").addEventListener("click", () => void openSettings());
-element("settings-cancel").addEventListener("click", () => {
+
+/**
+ * Leaving without saving puts back what was stored, because the size and
+ * opacity dials preview themselves on the live window as they move.
+ */
+function cancelSettings() {
   settingsDialog.close();
   if (config) applyConfig(config);
-});
+}
+element("settings-cancel").addEventListener("click", cancelSettings);
+dismissOnClickAway(settingsDialog, cancelSettings);
 element("settings-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = element<HTMLButtonElement>("settings-save");
   button.disabled = true;
   settingsError.textContent = "";
+  draft.player = element<HTMLSelectElement>("settings-player").value as PlayerKind;
   draft.clientId = element<HTMLInputElement>("client-id").value.trim();
   draft.theme = {
     accent: element<HTMLInputElement>("color-accent").value,
@@ -565,6 +622,7 @@ ui.sourceBadge.addEventListener("click", () => {
   sourceDialog.showModal();
 });
 element("source-cancel").addEventListener("click", () => sourceDialog.close());
+dismissOnClickAway(sourceDialog, () => sourceDialog.close());
 element("source-save").addEventListener("click", async () => {
   const button = element<HTMLButtonElement>("source-save");
   button.disabled = true;
@@ -688,7 +746,8 @@ async function start() {
     await Promise.all([playbackReady, lyricsReady, statusReady, clickThroughReady]);
     void syncMaximized();
     applyConfig(await invoke<Config>("get_config"));
-    if (!config!.settings.clientId) {
+    // Only Spotify needs anything typed in before it can connect.
+    if (config!.settings.player === "spotify" && !config!.settings.clientId) {
       ui.statusText.textContent = "Set up Spotify in Settings";
       await openSettings();
     }
