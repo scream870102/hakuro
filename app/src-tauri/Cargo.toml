@@ -1,9 +1,10 @@
 [package]
 name = "hakuro"
-version = "4.0.0"
+version = "1.0.0"
 description = "Original-language lyrics for whatever Spotify is playing."
 authors = ["Eccentric Studio"]
 edition = "2021"
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

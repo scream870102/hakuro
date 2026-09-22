@@ -1,15 +1,15 @@
 # Hakuro
 
-Windows 桌面歌詞播放器：跟隨 Spotify 正在播放的歌曲，搜尋原文歌詞、同步高亮，並把下載過的歌詞存入 SQLite。介面使用英文，目前採用 Tauri 2、Rust 與 TypeScript。
+Windows 桌面歌詞播放器：跟隨 Spotify 正在播放的歌曲，搜尋原文歌詞、同步高亮，並把下載過的歌詞存入 SQLite。介面使用英文，以 Tauri 2、Rust 與 TypeScript 實作。
 
 ## 開始使用
 
-1. 將 `hakuro.exe` 放在你有寫入權限的資料夾，或使用 NSIS 安裝程式安裝。
+1. 從 [Releases](https://github.com/scream870102/hakuro/releases) 下載 `*-setup.exe` 安裝，或把可攜版 `hakuro.exe` 放在你有寫入權限的資料夾。
 2. 在 [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) 取得自己的 App **Client ID**，加入 Redirect URI：`http://127.0.0.1:8787/callback`。建立 App 與帳號資格限制以 [官方說明](https://developer.spotify.com/documentation/web-api/concepts/apps) 為準。
-3. 開啟 Hakuro，點 **Settings**，在 **Spotify Client ID** 填入 Client ID 並儲存。只填 ID，不要填 Client Secret，也不要加上 `SPOTIFY_CLIENT_ID=`。
+3. 開啟 Hakuro，點 **Settings**，在 **Spotify Client ID** 填入 Client ID 並儲存。只填 ID，不要加上 `SPOTIFY_CLIENT_ID=`。
 4. 依畫面提示連線，在瀏覽器完成 Spotify 授權，然後在 Spotify 播放音樂。
 
-App 使用 PKCE，無須 Client Secret。新版不讀取 `secret.env`；舊版使用者請在 Settings 重新填入 Client ID 並登入。Redirect URI 必須完全一致，請勿改成 `localhost`；詳見 [Spotify Redirect URI 規則](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri)。
+App 使用 PKCE 授權。Redirect URI 必須完全一致，請勿改成 `localhost`；詳見 [Spotify Redirect URI 規則](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri)。
 
 ## 歌詞與設定
 
@@ -104,3 +104,7 @@ npm run tauri -- icon icon.png
 - `app/src/`：TypeScript 介面、歌詞同步與樣式。
 - `app/src-tauri/src/`：Spotify 授權／播放、歌詞來源、SQLite 與個人設定。
 - `app/src-tauri/tauri.conf.json`：視窗、App 名稱、圖示與 NSIS 打包設定。
+
+## 授權
+
+[MIT License](LICENSE) © 2026 Eccentric Studio
