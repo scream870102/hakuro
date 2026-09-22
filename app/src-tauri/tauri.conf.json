@@ -19,6 +19,7 @@
         "minWidth": 520,
         "minHeight": 460,
         "resizable": true,
+        "decorations": false,
         "backgroundColor": "#0b0d0c",
         "theme": "Dark"
       }
@@ -41,7 +42,12 @@
     ],
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "headerImage": "installer/header.bmp",
+        "uninstallerHeaderImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp"
       }
     },
     "publisher": "Eccentric Studio",

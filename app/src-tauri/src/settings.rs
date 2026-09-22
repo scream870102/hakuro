@@ -101,6 +101,11 @@ pub struct Settings {
     pub theme: Theme,
     /// Auto-scroll the lyrics to the current line.
     pub follow_lyrics: bool,
+    /// Keep the window above every other window.
+    ///
+    /// Stored rather than reset each launch: a reader who pins the lyrics over
+    /// a game or a video wants them pinned the next time too.
+    pub always_on_top: bool,
 }
 
 impl Default for Settings {
@@ -116,6 +121,7 @@ impl Default for Settings {
                 .collect(),
             theme: Theme::default(),
             follow_lyrics: true,
+            always_on_top: false,
         }
     }
 }

@@ -8,6 +8,14 @@ const bridge = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: bridge.invoke }));
+const appWindow = vi.hoisted(() => ({
+  setAlwaysOnTop: vi.fn(),
+  minimize: vi.fn(),
+  toggleMaximize: vi.fn(),
+  close: vi.fn(),
+  isMaximized: vi.fn(),
+}));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => appWindow }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (name: string, callback: (event: { payload: unknown }) => void) => {
     bridge.listeners.set(name, callback);
@@ -21,6 +29,7 @@ const initial = () => ({
     sources: [{ id: "lrclib", enabled: true }, { id: "musixmatch", enabled: true }],
     theme: { accent: "#123456", activeLine: "#ffffff", pastLine: "#666666" },
     followLyrics: true,
+    alwaysOnTop: false,
   },
   providers: [{ id: "lrclib", label: "LRCLIB" }, { id: "musixmatch", label: "Musixmatch" }],
   dataDir: "C:/Hakuro", storedTracks: 2, storageWarning: "",
@@ -45,6 +54,8 @@ beforeEach(async () => {
   vi.resetModules();
   bridge.listeners.clear();
   bridge.invoke.mockReset();
+  for (const fn of Object.values(appWindow)) fn.mockReset().mockResolvedValue(undefined);
+  appWindow.isMaximized.mockResolvedValue(false);
   document.documentElement.innerHTML = html;
   vi.stubGlobal("requestAnimationFrame", vi.fn());
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
@@ -98,6 +109,7 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
     sources: [{ id: "musixmatch", enabled: true }, { id: "lrclib", enabled: false }],
     theme: { accent: "#abcdef", activeLine: "#fedcba", pastLine: "#112233" },
     followLyrics: false,
+    alwaysOnTop: false,
   } });
   expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#abcdef");
   expect(el<HTMLInputElement>("follow").checked).toBe(false);
@@ -150,4 +162,50 @@ it("uses the durable fallback key for a track without a Spotify ID", async () =>
   el("source-save").click();
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("set_track_source", { source: null, trackId: "|100000" });
+});
+
+it("pins the window on top and stores the choice", async () => {
+  await import("./main");
+  await flush();
+  // The stored value is applied at startup, not only when the button is used.
+  expect(appWindow.setAlwaysOnTop).toHaveBeenCalledWith(false);
+
+  el("pin").click();
+  await flush();
+  expect(appWindow.setAlwaysOnTop).toHaveBeenLastCalledWith(true);
+  expect(el("pin").getAttribute("aria-pressed")).toBe("true");
+  expect(bridge.invoke).toHaveBeenCalledWith("save_settings", {
+    incoming: { ...initial().settings, alwaysOnTop: true },
+  });
+});
+
+it("keeps the window pinned as it was when the save fails", async () => {
+  await import("./main");
+  await flush();
+  bridge.invoke.mockRejectedValueOnce("Settings folder is read-only");
+
+  el("pin").click();
+  await flush();
+  expect(appWindow.setAlwaysOnTop).toHaveBeenLastCalledWith(false);
+  expect(el("pin").getAttribute("aria-pressed")).toBe("false");
+  expect(el("notice").textContent).toContain("read-only");
+});
+
+it("drives the window buttons and tracks the maximized glyph", async () => {
+  await import("./main");
+  await flush();
+
+  el("win-minimize").click();
+  el("win-maximize").click();
+  el("win-close").click();
+  expect(appWindow.minimize).toHaveBeenCalled();
+  expect(appWindow.toggleMaximize).toHaveBeenCalled();
+  expect(appWindow.close).toHaveBeenCalled();
+
+  // Every re-import of the module leaves its own resize listener on jsdom's
+  // shared window, so the answer has to be stable rather than one-shot.
+  appWindow.isMaximized.mockResolvedValue(true);
+  window.dispatchEvent(new Event("resize"));
+  await flush();
+  expect(document.body.classList.contains("is-maximized")).toBe(true);
 });

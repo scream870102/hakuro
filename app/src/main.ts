@@ -6,6 +6,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { activeLine, emptySample, formatTime, positionAt, type Sample } from "./clock";
 
 interface Cue {
@@ -46,6 +47,7 @@ interface Settings {
   sources: { id: string; enabled: boolean }[];
   theme: { accent: string; activeLine: string; pastLine: string };
   followLyrics: boolean;
+  alwaysOnTop: boolean;
 }
 
 interface Config {
@@ -89,6 +91,7 @@ const ui = {
   playPause: element<HTMLButtonElement>("play-pause"),
   next: element<HTMLButtonElement>("next"),
   follow: element<HTMLInputElement>("follow"),
+  pin: element<HTMLButtonElement>("pin"),
   reload: element<HTMLButtonElement>("reload"),
   reconnect: element<HTMLButtonElement>("reconnect"),
 };
@@ -243,6 +246,43 @@ function seekToFraction(clientX: number) {
   void send("seek", { positionMs });
 }
 
+// ------------------------------------------------------------ window chrome
+
+const appWindow = getCurrentWindow();
+
+/** Reflect the pin in the button and in the window itself. */
+function setPinned(pinned: boolean) {
+  ui.pin.setAttribute("aria-pressed", String(pinned));
+  ui.pin.title = pinned ? "Stop keeping on top" : "Keep on top";
+  void appWindow.setAlwaysOnTop(pinned);
+}
+
+ui.pin.addEventListener("click", () => {
+  if (!config) return;
+  const alwaysOnTop = ui.pin.getAttribute("aria-pressed") !== "true";
+  // Move the window first: the click should land even if the save then fails.
+  setPinned(alwaysOnTop);
+  ui.pin.disabled = true;
+  const incoming = { ...config.settings, alwaysOnTop };
+  void invoke<Config>("save_settings", { incoming }).then(applyConfig).catch((error) => {
+    setPinned(config!.settings.alwaysOnTop);
+    setNotice(String(error));
+  }).finally(() => { ui.pin.disabled = false; });
+});
+
+element("win-minimize").addEventListener("click", () => void appWindow.minimize());
+element("win-maximize").addEventListener("click", () => void appWindow.toggleMaximize());
+element("win-close").addEventListener("click", () => void appWindow.close());
+
+// The glyph has to follow every route to maximized — the button, a double-click
+// on the drag region, and Win+Up — so it tracks the resize rather than the click.
+async function syncMaximized() {
+  document.body.classList.toggle("is-maximized", await appWindow.isMaximized());
+}
+window.addEventListener("resize", () => void syncMaximized());
+
+// --------------------------------------------------------------- transport
+
 ui.playPause.addEventListener("click", () => void send(state.isPlaying ? "pause" : "play"));
 ui.next.addEventListener("click", () => void send("next_track"));
 ui.previous.addEventListener("click", () => void send("previous_track"));
@@ -264,6 +304,7 @@ function applyConfig(value: Config) {
   document.documentElement.style.setProperty("--active-line", theme.activeLine);
   document.documentElement.style.setProperty("--past-line", theme.pastLine);
   ui.follow.checked = value.settings.followLyrics;
+  setPinned(value.settings.alwaysOnTop);
 }
 
 function renderSourceOrder() {
@@ -463,6 +504,7 @@ requestAnimationFrame(frame);
 async function start() {
   try {
     await Promise.all([playbackReady, lyricsReady, statusReady]);
+    void syncMaximized();
     applyConfig(await invoke<Config>("get_config"));
     if (!config!.settings.clientId) {
       ui.statusText.textContent = "Set up Spotify in Settings";

@@ -82,6 +82,12 @@ pub fn parse_lrc(text: &str) -> Vec<Cue> {
 
 /// Index of the cue covering `position_ms`, or -1 before the first cue.
 /// Equivalent to Python's `bisect_right(cues, position) - 1`.
+///
+/// The running highlight is driven by `activeLine` in `clock.ts`, because it
+/// has to move between polls rather than once per lookup. This copy exists to
+/// hold that search honest against the parser's own output, so it is compiled
+/// for the tests only.
+#[cfg(test)]
 pub fn active_line(cues: &[Cue], position_ms: i64) -> i64 {
     let mut low = 0usize;
     let mut high = cues.len();

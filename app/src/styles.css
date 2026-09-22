@@ -11,6 +11,10 @@
   --surface-strong: rgba(12, 14, 13, 0.82);
   --hairline: rgba(255, 255, 255, 0.09);
   --radius: 14px;
+  /* Window chrome is drawn by this app, not Windows. 46x32 keeps the close
+     button a comfortable target at the screen corner. */
+  --chrome-button: 46px;
+  --chrome-height: 32px;
   --shadow: 0 18px 44px rgba(0, 0, 0, 0.46);
   /* Japanese and Chinese lyrics need a CJK-capable stack, not just Segoe UI. */
   --font: "Segoe UI Variable Display", "Segoe UI", "Yu Gothic UI", "Meiryo",
@@ -73,12 +77,87 @@ body {
 /* ---------- titlebar ---------- */
 
 .titlebar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding: 14px 20px;
+  /* The controls float in the corner; this keeps the status text clear of them. */
+  padding-right: calc(4 * var(--chrome-button) + 12px);
   background: linear-gradient(180deg, rgba(8, 10, 9, 0.55), transparent);
+}
+
+/* ---------- window controls ---------- */
+
+.window-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  z-index: 2;
+}
+
+.window-button {
+  display: grid;
+  place-items: center;
+  width: var(--chrome-button);
+  height: var(--chrome-height);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.window-button svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  /* Matches the stroke weight of the transport glyphs below. */
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.window-button:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--ink);
+}
+
+/* Closing is the one destructive control up here, so it reads differently. */
+.window-button--close:hover {
+  background: #c0392f;
+  color: #fff;
+}
+
+/* At rest the pin carries the same weight as its neighbours; the accent, not a
+   dimmer grey, is what says it is on. */
+.window-button--pin[aria-pressed="false"] {
+  color: var(--ink-dim);
+}
+
+.window-button--pin[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.window-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.icon-restore {
+  display: none;
+}
+
+body.is-maximized .icon-restore {
+  display: block;
+}
+
+body.is-maximized .icon-maximize {
+  display: none;
 }
 
 .titlebar__meta {
@@ -566,6 +645,7 @@ dialog input { accent-color: var(--accent); }
 #settings-error, #source-error { color: #e6c185; }
 @media (max-width: 650px) {
   .titlebar { flex-wrap: wrap; gap: 8px; }
+  .titlebar__meta { max-width: 100%; }
   .titlebar__status { width: 100%; justify-content: space-between; }
   .controls__row--secondary { flex-wrap: wrap; gap: 8px; }
 }
