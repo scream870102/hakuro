@@ -1,8 +1,8 @@
 [package]
-name = "app"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+name = "hakuro"
+version = "4.0.0"
+description = "Original-language lyrics for whatever Spotify is playing."
+authors = ["Eccentric Studio"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,7 +11,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "app_lib"
+name = "hakuro_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -36,6 +36,8 @@ roxmltree = "0.21.1"
 urlencoding = "2.1.3"
 windows = { version = "0.62.2", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
 ferrous-opencc = { version = "0.4.0", default-features = false, features = ["t2s-conversion"] }
+# `bundled` compiles SQLite from source, so the release needs no DLL beside the executable.
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

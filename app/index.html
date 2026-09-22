@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Spotify Original Lyrics</title>
+    <title>Hakuro</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
@@ -23,7 +23,7 @@
         </div>
       </div>
       <div class="titlebar__status">
-        <span class="badge" id="source-badge" hidden></span>
+        <button class="badge" id="source-badge" disabled aria-haspopup="dialog">Lyrics source ▾</button>
         <span class="status" id="status-text">Connecting…</span>
       </div>
     </header>
@@ -72,11 +72,49 @@
           <span class="toggle__label">Follow lyrics</span>
         </label>
         <div class="controls__spacer"></div>
-        <button class="ghost-button" id="reload">Reload lyrics</button>
+        <button class="ghost-button" id="reload" disabled title="Download lyrics again, bypassing the cache">Refresh lyrics</button>
+        <button class="ghost-button" id="settings-open">Settings</button>
         <button class="ghost-button" id="reconnect" hidden>Retry connection</button>
       </div>
     </footer>
 
+    <dialog id="source-dialog" aria-labelledby="source-title">
+      <h2 id="source-title">Source for this song</h2>
+      <p id="source-track"></p>
+      <p>Choose a preferred source, or use your global search order.</p>
+      <label for="track-source">Preferred source</label>
+      <select id="track-source"></select>
+      <p id="source-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button class="ghost-button" id="source-cancel">Cancel</button>
+        <button class="ghost-button" id="source-save">Apply</button>
+      </div>
+    </dialog>
+
+    <dialog id="settings-dialog" aria-labelledby="settings-title">
+      <form id="settings-form">
+        <h2 id="settings-title">Hakuro settings</h2>
+        <label for="client-id">Spotify Client ID</label>
+        <input id="client-id" type="text" autocomplete="off" spellcheck="false" placeholder="32-character Client ID" />
+        <p>Copy the Client ID from your Spotify Developer app. Set its redirect URI to <code>http://127.0.0.1:8787/callback</code>. No Client Secret is needed.</p>
+        <h3>Lyrics search order</h3>
+        <p>Move sources up or down and select which ones to search. A song's preferred source takes priority.</p>
+        <ol id="source-order" class="source-order"></ol>
+        <h3>Colors</h3>
+        <div class="color-settings">
+          <label>Buttons and controls <input id="color-accent" type="color" /></label>
+          <label>Current lyric <input id="color-active" type="color" /></label>
+          <label>Past lyrics <input id="color-past" type="color" /></label>
+        </div>
+        <label class="follow-setting"><input id="settings-follow" type="checkbox" /> Follow lyrics automatically</label>
+        <p id="storage-info"></p>
+        <p id="settings-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="ghost-button" id="settings-cancel" type="button">Cancel</button>
+          <button class="ghost-button" id="settings-save" type="submit">Save settings</button>
+        </div>
+      </form>
+    </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

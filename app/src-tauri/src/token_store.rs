@@ -10,10 +10,12 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use windows::Win32::Foundation::{HLOCAL, LocalFree};
+use windows::Win32::Foundation::{LocalFree, HLOCAL};
 use windows::Win32::Security::Cryptography::{
-    CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB, CryptProtectData, CryptUnprotectData,
+    CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
 };
+
+pub const SESSION_FILE: &str = "session.bin";
 
 /// An encrypted blob far larger than this is not something this app wrote.
 const MAX_ENCRYPTED_BYTES: usize = 131_072;
@@ -25,18 +27,16 @@ struct Session {
     refresh_token: String,
 }
 
+/// Beside the executable, with the settings and the lyrics database, so a
+/// portable copy carries its own sign-in and leaves nothing in the profile.
 fn cache_path() -> Result<PathBuf, String> {
-    let root = std::env::var_os("LOCALAPPDATA")
-        .ok_or_else(|| "Local application storage is unavailable".to_string())?;
-    Ok(PathBuf::from(root)
-        .join("SpotifyOriginalLyrics")
-        .join("session.bin"))
+    crate::settings::data_path(SESSION_FILE)
 }
 
 /// The stored blob is bound to both the Windows user and the client id, so a
 /// different Spotify app cannot reuse a cached token.
 fn entropy_bytes(client_id: &str) -> Vec<u8> {
-    format!("SpotifyOriginalLyrics:{client_id}").into_bytes()
+    format!("Hakuro:{client_id}").into_bytes()
 }
 
 fn wipe(buffer: &mut [u8]) {
@@ -187,25 +187,13 @@ pub fn clear_refresh_token() {
 mod tests {
     use super::*;
 
-    /// Runs real DPAPI against a dummy token; it must never touch the user's
-    /// actual cache, so the test redirects LOCALAPPDATA at a temp folder.
-    fn with_temp_localappdata<T>(body: impl FnOnce() -> T) -> T {
-        let previous = std::env::var_os("LOCALAPPDATA");
-        let folder = std::env::temp_dir().join(format!("sol-test-{}", std::process::id()));
-        std::fs::create_dir_all(&folder).unwrap();
-        unsafe { std::env::set_var("LOCALAPPDATA", &folder) };
-        let outcome = body();
-        match previous {
-            Some(value) => unsafe { std::env::set_var("LOCALAPPDATA", value) },
-            None => unsafe { std::env::remove_var("LOCALAPPDATA") },
-        }
-        let _ = std::fs::remove_dir_all(&folder);
-        outcome
-    }
+    use crate::settings::tests::with_temp_data_dir;
 
+    /// Runs real DPAPI against a dummy token; it must never touch the user's
+    /// actual cache, so the data folder is redirected at a temp folder.
     #[test]
     fn round_trips_and_binds_to_the_client_id() {
-        with_temp_localappdata(|| {
+        with_temp_data_dir(|_| {
             assert!(load_refresh_token("client-one").is_none());
 
             save_refresh_token("client-one", "dummy-refresh-token").unwrap();

@@ -5,15 +5,16 @@
 //! frontend owns only presentation and the sub-second position extrapolation
 //! that keeps the highlight smooth between polls.
 
+mod db;
 mod lrc;
 mod matching;
 mod musixmatch;
 mod petitlyrics;
 mod providers;
+mod settings;
 mod spotify;
 mod token_store;
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,14 +24,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::RwLock;
 
+use db::Db;
 use lrc::Cue;
 use providers::{LyricsResult, TrackQuery};
+use settings::Settings;
 use spotify::{Playback, Spotify, SpotifyError};
 
 /// Poll politely: 1.5 s keeps the highlight honest without burning rate limit.
 const POLL_INTERVAL: Duration = Duration::from_millis(1500);
-/// Enough songs for an evening of listening, without unbounded growth.
-const CACHE_LIMIT: usize = 100;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -61,23 +62,54 @@ struct LyricsEvent {
     text: String,
     /// Set when some providers failed but another one answered.
     partial: bool,
+    /// The source this track is pinned to, or empty for the normal order. The
+    /// interface shows it as the current choice in the source menu.
+    requested: String,
+}
+
+/// One lyrics source as the settings panel and the source menu list it.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderInfo {
+    id: String,
+    label: String,
+}
+
+/// Everything the interface needs to draw the settings panel in one answer.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConfigPayload {
+    settings: Settings,
+    providers: Vec<ProviderInfo>,
+    /// Shown in the panel so the reader can find their own files.
+    data_dir: String,
+    stored_tracks: i64,
+    /// Non-empty when lyrics cannot be kept between sessions.
+    storage_warning: String,
 }
 
 #[derive(Default)]
 struct Session {
     spotify: RwLock<Option<Arc<Spotify>>>,
-    cache: RwLock<HashMap<String, LyricsResult>>,
     /// Incremented on every track change; a lyric result from an older
     /// generation belongs to a song that is no longer playing.
     generation: AtomicU64,
+    /// Also supersede lookups when refreshing or changing sources on the same song.
+    lookup_request: AtomicU64,
     current_track: RwLock<String>,
+    /// The last sample, kept so a source change can look the song up again
+    /// straight away instead of waiting for the next poll.
+    current_playback: RwLock<Option<Playback>>,
     polling: RwLock<bool>,
+    connecting: tokio::sync::Mutex<()>,
 }
 
 struct AppState {
     http: reqwest::Client,
     musixmatch: musixmatch::Session,
     session: Session,
+    settings: RwLock<Settings>,
+    db: Db,
 }
 
 impl AppState {
@@ -86,6 +118,26 @@ impl AppState {
             http: providers::client().expect("HTTPS client must start"),
             musixmatch: musixmatch::Session::new(),
             session: Session::default(),
+            settings: RwLock::new(settings::load()),
+            db: Db::open(),
+        }
+    }
+
+    fn config(&self, settings: &Settings) -> ConfigPayload {
+        ConfigPayload {
+            settings: settings.clone(),
+            providers: settings::PROVIDERS
+                .iter()
+                .map(|(id, label)| ProviderInfo {
+                    id: (*id).to_string(),
+                    label: (*label).to_string(),
+                })
+                .collect(),
+            data_dir: settings::data_dir()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|error| error),
+            stored_tracks: self.db.stored_track_count(),
+            storage_warning: self.db.warning().unwrap_or_default().to_string(),
         }
     }
 }
@@ -106,24 +158,101 @@ fn emit_status(
     );
 }
 
+// ------------------------------------------------------------------ settings
+
+/// Everything the settings panel needs, including the provider list so the
+/// interface never hard-codes source names the backend owns.
+#[tauri::command]
+async fn get_config(state: State<'_, AppState>) -> Result<ConfigPayload, String> {
+    let settings = state.settings.read().await.clone();
+    Ok(state.config(&settings))
+}
+
+/// Persist the panel's contents, apply them, and reconnect if the identity changed.
+#[tauri::command]
+async fn save_settings(
+    app: AppHandle,
+    incoming: Settings,
+    state: State<'_, AppState>,
+) -> Result<ConfigPayload, String> {
+    let mut incoming = incoming;
+    incoming.normalize();
+    // An empty Client ID is allowed — it is the first-run state, and refusing
+    // to save would also throw away the colours typed in the same panel.
+    if !incoming.client_id.is_empty() {
+        incoming.client_id = settings::validate_client_id(&incoming.client_id)?;
+    }
+
+    let previous = state.settings.read().await.clone();
+    let sources_changed = incoming.sources != previous.sources;
+    let previous_client_id = previous.client_id;
+    settings::save(&incoming)?;
+    *state.settings.write().await = incoming.clone();
+
+    if incoming.client_id != previous_client_id {
+        // The cached refresh token is bound to the old identity and cannot be
+        // reused; dropping the client makes the next connect start clean.
+        *state.session.spotify.write().await = None;
+        state.session.current_track.write().await.clear();
+        *state.session.current_playback.write().await = None;
+        state.session.generation.fetch_add(1, Ordering::SeqCst);
+        if incoming.client_id.is_empty() {
+            emit_status(
+                &app,
+                "needs-client-id",
+                "Client ID configuration needed",
+                "",
+            );
+        } else {
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let state = handle.state::<AppState>();
+                let _ = connect(handle.clone(), state).await;
+            });
+        }
+    } else if sources_changed {
+        refresh_current(&app).await;
+    }
+
+    Ok(state.config(&incoming))
+}
+
+/// Forget every downloaded lyric. The per-track source choices are kept,
+/// because they are decisions, not cached data.
+#[tauri::command]
+async fn clear_lyrics_cache(state: State<'_, AppState>) -> Result<ConfigPayload, String> {
+    state.db.clear_lyrics();
+    let settings = state.settings.read().await.clone();
+    Ok(state.config(&settings))
+}
+
+// ------------------------------------------------------------------- Spotify
+
 /// Connect using the cached session, falling back to browser authorization.
 #[tauri::command]
 async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let _connecting = state.session.connecting.lock().await;
     if state.session.spotify.read().await.is_some() {
         return Ok(());
     }
 
     emit_status(&app, "connecting", "Connecting to Spotify…", "");
 
-    let client_id = match spotify::read_client_id() {
+    let stored = state.settings.read().await.client_id.clone();
+    let client_id = match settings::validate_client_id(&stored) {
         Ok(client_id) => client_id,
         Err(error) => {
-            emit_status(&app, "error", "Client ID configuration needed", error.to_string());
-            return Err(error.to_string());
+            emit_status(
+                &app,
+                "needs-client-id",
+                "Client ID configuration needed",
+                error.clone(),
+            );
+            return Err(error);
         }
     };
 
-    let client = Arc::new(Spotify::new(client_id).map_err(|error| error.to_string())?);
+    let client = Arc::new(Spotify::new(client_id.clone()).map_err(|error| error.to_string())?);
 
     let needs_browser = match client.connect_session().await {
         Ok(needs_browser) => needs_browser,
@@ -146,13 +275,28 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
             emit_status(&app, "error", "Connection failed", message);
             return Err(message.to_string());
         }
-        if let Err(error) = client.complete_authorization(verifier, expected_state).await {
+        if let Err(error) = client
+            .complete_authorization(verifier, expected_state)
+            .await
+        {
             emit_status(&app, "error", "Connection failed", error.to_string());
             return Err(error.to_string());
         }
     }
 
-    let notice = client.cache_warning().await;
+    // A sign-in that cannot be cached and a cache that cannot be written are
+    // both "your work will not survive a restart"; say so together.
+    let mut notice = client.cache_warning().await;
+    if let Some(warning) = state.db.warning() {
+        notice = if notice.is_empty() {
+            warning.to_string()
+        } else {
+            format!("{notice} {warning}")
+        };
+    }
+    if state.settings.read().await.client_id != client_id {
+        return Err("Client ID changed during authorization. Connect again.".into());
+    }
     *state.session.spotify.write().await = Some(client);
     emit_status(&app, "connected", "Connected", notice);
 
@@ -176,18 +320,31 @@ async fn start_polling(app: &AppHandle, state: &State<'_, AppState>) {
 
 async fn poll_loop(app: AppHandle) {
     loop {
-        let (client, has_client) = {
+        let client = {
             let state = app.state::<AppState>();
             let client = state.session.spotify.read().await.clone();
-            (client.clone(), client.is_some())
+            match client {
+                Some(client) => client,
+                None => {
+                    // Something dropped the client — a new Client ID, usually.
+                    // Release the flag so the next connect can start a loop.
+                    *state.session.polling.write().await = false;
+                    break;
+                }
+            }
         };
-        if !has_client {
-            break;
-        }
-        let client = client.expect("client presence was just checked");
 
         let mut delay = POLL_INTERVAL;
-        match client.playback().await {
+        let result = client.playback().await;
+        // A response from an identity replaced in Settings must not reset the new session.
+        let active = app.state::<AppState>().session.spotify.read().await.clone();
+        if !active
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, &client))
+        {
+            continue;
+        }
+        match result {
             Ok(playback) => apply_playback(&app, playback).await,
             Err(SpotifyError::LoginRequired) => {
                 let state = app.state::<AppState>();
@@ -198,7 +355,12 @@ async fn poll_loop(app: AppHandle) {
             }
             Err(SpotifyError::RateLimited { retry_after }) => {
                 delay = Duration::from_secs(retry_after.max(2));
-                emit_status(&app, "waiting", "Spotify rate limit; waiting before retry", "");
+                emit_status(
+                    &app,
+                    "waiting",
+                    "Spotify rate limit; waiting before retry",
+                    "",
+                );
             }
             Err(error) => {
                 emit_status(&app, "waiting", error.to_string(), "");
@@ -209,26 +371,29 @@ async fn poll_loop(app: AppHandle) {
     }
 }
 
+/// A key that survives restarts, so the database can be read back next session.
+fn track_key(playback: &Playback) -> String {
+    if !playback.has_track {
+        return String::new();
+    }
+    if playback.track_id.is_empty() {
+        format!("{}|{}", playback.name, playback.duration_ms)
+    } else {
+        playback.track_id.clone()
+    }
+}
+
 /// Publish the sample, and start a lyric lookup when the song changed.
 async fn apply_playback(app: &AppHandle, playback: Playback) {
     let state = app.state::<AppState>();
-
-    // A stopped player or a non-track item clears the view.
-    let key = if playback.has_track {
-        if playback.track_id.is_empty() {
-            format!("{}|{}", playback.name, playback.duration_ms)
-        } else {
-            playback.track_id.clone()
-        }
-    } else {
-        String::new()
-    };
+    let key = track_key(&playback);
 
     let changed = *state.session.current_track.read().await != key;
     if changed {
         *state.session.current_track.write().await = key.clone();
         state.session.generation.fetch_add(1, Ordering::SeqCst);
     }
+    *state.session.current_playback.write().await = Some(playback.clone());
     let generation = state.session.generation.load(Ordering::SeqCst);
 
     let _ = app.emit(
@@ -243,8 +408,28 @@ async fn apply_playback(app: &AppHandle, playback: Playback) {
         return;
     }
 
-    if let Some(cached) = state.session.cache.read().await.get(&key).cloned() {
-        emit_lyrics(app, generation, &key, cached);
+    deliver_lyrics(app, &playback, generation).await;
+}
+
+/// Answer from the database if it can, otherwise look the song up.
+async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
+    let state = app.state::<AppState>();
+    let request = state.session.lookup_request.fetch_add(1, Ordering::SeqCst) + 1;
+    let key = track_key(playback);
+    let requested = state
+        .db
+        .preferred_source(&key)
+        .unwrap_or_else(|| db::AUTO.to_string());
+
+    let order = state.settings.read().await.lookup_order();
+    // An automatic answer is only valid for the order that produced it.
+    let cache_key = if requested.is_empty() {
+        format!("auto:{}", order.join(","))
+    } else {
+        requested.clone()
+    };
+    if let Some(cached) = state.db.lyrics(&key, &cache_key) {
+        emit_lyrics(app, generation, &key, &requested, cached);
         return;
     }
 
@@ -255,33 +440,49 @@ async fn apply_playback(app: &AppHandle, playback: Playback) {
         duration_ms: playback.duration_ms,
         spotify_id: (!playback.track_id.is_empty()).then(|| playback.track_id.clone()),
     };
+    let track_name = playback.name.clone();
+    let artist = playback.artists.first().cloned().unwrap_or_default();
 
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let result = {
             let state = handle.state::<AppState>();
-            providers::fetch_lyrics(&state.http, &state.musixmatch, &query).await
+            if requested.is_empty() {
+                // Read the order into a value: the lookup can take seconds, and
+                // the settings panel must not block behind it.
+                providers::fetch_lyrics(&state.http, &state.musixmatch, &query, &order).await
+            } else {
+                providers::fetch_pinned(&state.http, &state.musixmatch, &requested, &query).await
+            }
         };
 
         let state = handle.state::<AppState>();
         // Drop the answer if the song moved on while the lookup was in flight.
-        if state.session.generation.load(Ordering::SeqCst) != generation {
+        if state.session.generation.load(Ordering::SeqCst) != generation
+            || state.session.lookup_request.load(Ordering::SeqCst) != request
+        {
             return;
         }
-        if !result.is_empty() {
-            let mut cache = state.session.cache.write().await;
-            if cache.len() >= CACHE_LIMIT {
-                if let Some(oldest) = cache.keys().next().cloned() {
-                    cache.remove(&oldest);
-                }
-            }
-            cache.insert(key.clone(), result.clone());
-        }
-        emit_lyrics(&handle, generation, &key, result);
+        state.db.save_lyrics(
+            &key,
+            &cache_key,
+            db::TrackInfo {
+                name: &track_name,
+                artist: &artist,
+            },
+            &result,
+        );
+        emit_lyrics(&handle, generation, &key, &requested, result);
     });
 }
 
-fn emit_lyrics(app: &AppHandle, generation: u64, track_id: &str, result: LyricsResult) {
+fn emit_lyrics(
+    app: &AppHandle,
+    generation: u64,
+    track_id: &str,
+    requested: &str,
+    result: LyricsResult,
+) {
     let _ = app.emit(
         "lyrics",
         LyricsEvent {
@@ -292,17 +493,69 @@ fn emit_lyrics(app: &AppHandle, generation: u64, track_id: &str, result: LyricsR
             cues: result.cues,
             text: result.text,
             partial: !result.errors.is_empty(),
+            requested: requested.to_string(),
         },
     );
 }
 
-/// Forget the cached lyrics for the current song and look it up again.
+/// Re-run the lookup for whatever is playing right now.
+async fn refresh_current(app: &AppHandle) {
+    let playback = {
+        let state = app.state::<AppState>();
+        let playback = state.session.current_playback.read().await.clone();
+        playback
+    };
+    let Some(playback) = playback else { return };
+    if !playback.has_track {
+        return;
+    }
+    let generation = {
+        let state = app.state::<AppState>();
+        state.session.generation.load(Ordering::SeqCst)
+    };
+    deliver_lyrics(app, &playback, generation).await;
+}
+
+/// Forget the downloaded lyrics for the current song and look them up again.
 #[tauri::command]
-async fn reload_lyrics(state: State<'_, AppState>) -> Result<(), String> {
+async fn reload_lyrics(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let key = state.session.current_track.read().await.clone();
-    state.session.cache.write().await.remove(&key);
-    // Clearing the current track makes the next poll treat it as a new song.
-    state.session.current_track.write().await.clear();
+    state.db.forget(&key);
+    refresh_current(&app).await;
+    Ok(())
+}
+
+/// Pin the current song to one lyrics source, or clear the pin with `None`.
+///
+/// The lookup runs immediately rather than at the next poll, because this is a
+/// direct answer to a click.
+#[tauri::command]
+async fn set_track_source(
+    app: AppHandle,
+    track_id: String,
+    source: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let key = state.session.current_track.read().await.clone();
+    validate_source_track(&key, &track_id)?;
+    let source = source.filter(|id| !id.is_empty());
+    if let Some(id) = &source {
+        if settings::provider_label(id).is_none() {
+            return Err(format!("Unknown lyrics source: {id}"));
+        }
+    }
+    state.db.set_preferred_source(&key, source.as_deref())?;
+    refresh_current(&app).await;
+    Ok(())
+}
+
+fn validate_source_track(current: &str, selected: &str) -> Result<(), String> {
+    if current.is_empty() {
+        return Err("Nothing is playing.".into());
+    }
+    if current != selected {
+        return Err("The playing song changed. Open the source menu again.".into());
+    }
     Ok(())
 }
 
@@ -346,12 +599,42 @@ async fn previous_track(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn seek(position_ms: i64, state: State<'_, AppState>) -> Result<(), String> {
-    with_client(&state, |client| async move { client.seek(position_ms).await }).await
+    with_client(
+        &state,
+        |client| async move { client.seek(position_ms).await },
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_selection_rejects_a_song_changed_since_the_menu_opened() {
+        assert!(validate_source_track("song-b", "song-a").is_err());
+        assert!(validate_source_track("", "song-a").is_err());
+        assert!(validate_source_track("song-a", "song-a").is_ok());
+        assert!(validate_source_track("Title|180000", "Title|180000").is_ok());
+    }
+
+    fn playback() -> Playback {
+        Playback {
+            track_id: "id".into(),
+            name: "Title".into(),
+            artists: vec!["Artist".into()],
+            album: "Album".into(),
+            album_art: Some("https://example.test/art.jpg".into()),
+            duration_ms: 180_000,
+            progress_ms: Some(1000),
+            is_playing: true,
+            has_track: true,
+            can_skip_next: true,
+            can_skip_previous: false,
+            can_seek: true,
+            device_name: Some("Device".into()),
+        }
+    }
 
     /// The interface reads these names literally. A flattened struct does not
     /// inherit the wrapper's `rename_all`, so this pins every key the frontend
@@ -360,21 +643,7 @@ mod tests {
     #[test]
     fn playback_event_keys_match_what_the_interface_reads() {
         let event = PlaybackEvent {
-            playback: Playback {
-                track_id: "id".into(),
-                name: "Title".into(),
-                artists: vec!["Artist".into()],
-                album: "Album".into(),
-                album_art: Some("https://example.test/art.jpg".into()),
-                duration_ms: 180_000,
-                progress_ms: Some(1000),
-                is_playing: true,
-                has_track: true,
-                can_skip_next: true,
-                can_skip_previous: false,
-                can_seek: true,
-                device_name: Some("Device".into()),
-            },
+            playback: playback(),
             generation: 7,
         };
         let json = serde_json::to_value(&event).unwrap();
@@ -399,7 +668,13 @@ mod tests {
             assert!(object.contains_key(key), "missing key: {key}");
         }
         // Nothing may reach the interface under its Rust spelling.
-        for key in ["track_id", "has_track", "duration_ms", "is_playing", "can_seek"] {
+        for key in [
+            "track_id",
+            "has_track",
+            "duration_ms",
+            "is_playing",
+            "can_seek",
+        ] {
             assert!(!object.contains_key(key), "snake_case leaked: {key}");
         }
         assert_eq!(object["hasTrack"], serde_json::json!(true));
@@ -419,11 +694,21 @@ mod tests {
             }],
             text: "LINE_A".into(),
             partial: false,
+            requested: "netease".into(),
         };
         let json = serde_json::to_value(&event).unwrap();
         let object = json.as_object().unwrap();
 
-        for key in ["generation", "trackId", "source", "synced", "cues", "text", "partial"] {
+        for key in [
+            "generation",
+            "trackId",
+            "source",
+            "synced",
+            "cues",
+            "text",
+            "partial",
+            "requested",
+        ] {
             assert!(object.contains_key(key), "missing key: {key}");
         }
         // The interface reads cue timings as `time_ms`; keep that spelling.
@@ -439,8 +724,76 @@ mod tests {
         })
         .unwrap();
         for key in ["state", "message", "notice"] {
-            assert!(json.as_object().unwrap().contains_key(key), "missing key: {key}");
+            assert!(
+                json.as_object().unwrap().contains_key(key),
+                "missing key: {key}"
+            );
         }
+    }
+
+    /// The settings panel reads this payload directly, including the nested
+    /// settings object it posts straight back to `save_settings`.
+    #[test]
+    fn config_payload_keys_match_what_the_settings_panel_reads() {
+        let payload = ConfigPayload {
+            settings: Settings::default(),
+            providers: vec![ProviderInfo {
+                id: "lrclib".into(),
+                label: "LRCLIB".into(),
+            }],
+            data_dir: "C:/Hakuro".into(),
+            stored_tracks: 12,
+            storage_warning: String::new(),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        let object = json.as_object().unwrap();
+
+        for key in [
+            "settings",
+            "providers",
+            "dataDir",
+            "storedTracks",
+            "storageWarning",
+        ] {
+            assert!(object.contains_key(key), "missing key: {key}");
+        }
+        for key in ["clientId", "sources", "theme", "followLyrics"] {
+            assert!(
+                object["settings"].get(key).is_some(),
+                "missing settings key: {key}"
+            );
+        }
+        for key in ["accent", "activeLine", "pastLine"] {
+            assert!(
+                object["settings"]["theme"].get(key).is_some(),
+                "missing theme key: {key}"
+            );
+        }
+        assert_eq!(object["providers"][0]["label"], serde_json::json!("LRCLIB"));
+    }
+
+    /// The panel posts the payload's own `settings` object back unchanged, so
+    /// what serializes out has to deserialize in.
+    #[test]
+    fn settings_round_trip_through_the_shape_the_interface_sends_back() {
+        let original = Settings::default();
+        let json = serde_json::to_string(&original).unwrap();
+        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), original);
+    }
+
+    /// The database key has to survive a restart, so it is the Spotify id when
+    /// there is one and never anything derived from the session.
+    #[test]
+    fn track_key_prefers_the_spotify_id_and_falls_back_to_title_and_length() {
+        assert_eq!(track_key(&playback()), "id");
+
+        let mut local = playback();
+        local.track_id = String::new();
+        assert_eq!(track_key(&local), "Title|180000");
+
+        let mut stopped = playback();
+        stopped.has_track = false;
+        assert_eq!(track_key(&stopped), "");
     }
 }
 
@@ -451,6 +804,10 @@ pub fn run() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             connect,
+            get_config,
+            save_settings,
+            clear_lyrics_cache,
+            set_track_source,
             reload_lyrics,
             play,
             pause,

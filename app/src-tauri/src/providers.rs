@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::lrc::{parse_lrc, strip_tags, unescape, Cue};
 use crate::matching::{matches, normalize};
 
-const USER_AGENT: &str = "SpotifyOriginalLyrics/3.0";
+const USER_AGENT: &str = "Hakuro/4.0";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_RESPONSE_BYTES: usize = 2_000_000;
 
@@ -162,7 +162,11 @@ async fn request_json(
 }
 
 fn str_field(value: &Value, key: &str) -> String {
-    value.get(key).and_then(Value::as_str).unwrap_or("").to_string()
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
 }
 
 fn names(value: &Value, key: &str) -> Vec<String> {
@@ -180,7 +184,10 @@ pub async fn lrclib(client: &reqwest::Client, query: &TrackQuery) -> ProviderRes
         ("track_name", query.track.clone()),
         ("artist_name", query.primary_artist().to_string()),
         ("album_name", query.album.clone()),
-        ("duration", ((query.duration_ms as f64 / 1000.0).round() as i64).to_string()),
+        (
+            "duration",
+            ((query.duration_ms as f64 / 1000.0).round() as i64).to_string(),
+        ),
     ];
 
     let response = client
@@ -256,7 +263,10 @@ pub async fn netease(client: &reqwest::Client, query: &TrackQuery) -> ProviderRe
     // Same-album candidates first; a compilation re-issue often has a worse timeline.
     let wanted_album = normalize(&query.album);
     songs.sort_by_key(|song| {
-        normalize(&str_field(song.get("album").unwrap_or(&Value::Null), "name")) != wanted_album
+        normalize(&str_field(
+            song.get("album").unwrap_or(&Value::Null),
+            "name",
+        )) != wanted_album
     });
 
     for song in songs {
@@ -377,48 +387,80 @@ fn base64_decode(value: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD.decode(value).ok()
 }
 
-/// Ordered lookup across every provider.
+/// Run one provider by its settings id.
+///
+/// The id space is owned by `settings::PROVIDERS`, so an id that reaches here
+/// without a match came from a settings file this build does not understand;
+/// it answers "nothing found" rather than failing the whole lookup.
+pub async fn fetch_one(
+    client: &reqwest::Client,
+    musixmatch_session: &crate::musixmatch::Session,
+    id: &str,
+    query: &TrackQuery,
+) -> ProviderResult {
+    match id {
+        "lrclib" => lrclib(client, query).await,
+        "petitlyrics" => crate::petitlyrics::fetch(client, query).await,
+        "musixmatch" => crate::musixmatch::fetch(client, musixmatch_session, query).await,
+        "netease" => netease(client, query).await,
+        "qqmusic" => qqmusic(client, query).await,
+        _ => Ok(LyricsResult::empty("")),
+    }
+}
+
+/// Ordered lookup across the sources the settings enable.
 ///
 /// The first synchronized result wins. Plain text from an earlier provider is
 /// kept only as a fallback, so a source with words but no timeline never stops
 /// a later source from supplying the timeline. A provider that errors is noted
 /// and skipped: none of them is allowed to break the chain.
 ///
-/// Order: LRCLIB is open and fastest. The Japanese-market sources come next
-/// because this player is used on a Japan-region account, PetitLyrics ahead of
-/// Musixmatch because live probing on 2026-09-21 showed PetitLyrics answering
-/// reliably while Musixmatch was rate-limited. The Chinese sources stay last as
-/// the original backstop.
+/// The order is the reader's, from the settings panel; `settings::PROVIDERS`
+/// documents the default and why it is what it is.
 pub async fn fetch_lyrics(
     client: &reqwest::Client,
     musixmatch_session: &crate::musixmatch::Session,
     query: &TrackQuery,
+    order: &[String],
 ) -> LyricsResult {
     let mut chain = Chain::default();
 
-    if let Some(result) = chain.consider("LRCLIB", lrclib(client, query).await) {
-        return result;
-    }
-    if let Some(result) = chain.consider(
-        "PetitLyrics",
-        crate::petitlyrics::fetch(client, query).await,
-    ) {
-        return result;
-    }
-    if let Some(result) = chain.consider(
-        "Musixmatch",
-        crate::musixmatch::fetch(client, musixmatch_session, query).await,
-    ) {
-        return result;
-    }
-    if let Some(result) = chain.consider("NetEase", netease(client, query).await) {
-        return result;
-    }
-    if let Some(result) = chain.consider("QQ Music", qqmusic(client, query).await) {
-        return result;
+    for id in order {
+        let label = crate::settings::provider_label(id).unwrap_or(id.as_str());
+        let outcome = fetch_one(client, musixmatch_session, id, query).await;
+        if let Some(result) = chain.consider(label, outcome) {
+            return result;
+        }
     }
 
     chain.finish()
+}
+
+/// Look a track up in exactly one source, because the reader pinned it there.
+///
+/// No fallback: a pin that quietly answered from somewhere else would make the
+/// source badge a lie, and the badge is the only way to tell where a line came
+/// from.
+pub async fn fetch_pinned(
+    client: &reqwest::Client,
+    musixmatch_session: &crate::musixmatch::Session,
+    id: &str,
+    query: &TrackQuery,
+) -> LyricsResult {
+    let label = crate::settings::provider_label(id).unwrap_or(id);
+    let mut chain = Chain::default();
+    if let Some(result) = chain.consider(
+        label,
+        fetch_one(client, musixmatch_session, id, query).await,
+    ) {
+        return result;
+    }
+    let mut result = chain.finish();
+    // A plain-text-only answer still came from the pinned source.
+    if result.source.is_empty() {
+        result.source = label.to_string();
+    }
+    result
 }
 
 #[derive(Default)]
@@ -513,7 +555,8 @@ mod tests {
         let qq = super::qqmusic(&client, &query).await;
         println!("QQ Music    -> {}", describe(&qq));
 
-        let chained = super::fetch_lyrics(&client, &musixmatch, &query).await;
+        let order = crate::settings::Settings::default().lookup_order();
+        let chained = super::fetch_lyrics(&client, &musixmatch, &query, &order).await;
         println!(
             "chain       -> source={:?} synced={} cues={} chars={} errors={:?}",
             chained.source,
@@ -535,6 +578,48 @@ mod tests {
             }
             Ok(_) => "no match".to_string(),
             Err(error) => format!("failed: {error}"),
+        }
+    }
+
+    fn query() -> TrackQuery {
+        TrackQuery {
+            track: "Title".into(),
+            artists: vec!["First".into()],
+            album: "Album".into(),
+            duration_ms: 180_000,
+            spotify_id: None,
+        }
+    }
+
+    /// A settings file naming a provider this build dropped must not fail the
+    /// lookup; it is simply a source that finds nothing.
+    #[tokio::test]
+    async fn an_unknown_provider_id_finds_nothing_instead_of_erroring() {
+        let client = super::client().unwrap();
+        let session = crate::musixmatch::Session::new();
+        let result = fetch_one(&client, &session, "ghost", &query())
+            .await
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    /// An empty order means no source was consulted, which is an empty answer
+    /// and not a hang or a panic.
+    #[tokio::test]
+    async fn an_empty_order_returns_an_empty_result() {
+        let client = super::client().unwrap();
+        let session = crate::musixmatch::Session::new();
+        let result = fetch_lyrics(&client, &session, &query(), &[]).await;
+        assert!(result.is_empty());
+        assert!(result.errors.is_empty());
+    }
+
+    /// Every id the settings offer must be wired into `fetch_one`; a typo would
+    /// otherwise turn a source into a silent no-op only noticed in use.
+    #[test]
+    fn every_settings_provider_id_has_a_label() {
+        for (id, label) in crate::settings::PROVIDERS {
+            assert_eq!(crate::settings::provider_label(id), Some(label));
         }
     }
 

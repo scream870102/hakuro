@@ -38,6 +38,22 @@ interface LyricsEvent {
   cues: Cue[];
   text: string;
   partial: boolean;
+  requested: string;
+}
+
+interface Settings {
+  clientId: string;
+  sources: { id: string; enabled: boolean }[];
+  theme: { accent: string; activeLine: string; pastLine: string };
+  followLyrics: boolean;
+}
+
+interface Config {
+  settings: Settings;
+  providers: { id: string; label: string }[];
+  dataDir: string;
+  storedTracks: number;
+  storageWarning: string;
 }
 
 interface StatusEvent {
@@ -58,7 +74,7 @@ const ui = {
   albumArt: element<HTMLImageElement>("album-art"),
   backdropA: element("backdrop-a"),
   backdropB: element("backdrop-b"),
-  sourceBadge: element("source-badge"),
+  sourceBadge: element<HTMLButtonElement>("source-badge"),
   statusText: element("status-text"),
   lyrics: element("lyrics"),
   lyricsList: element<HTMLOListElement>("lyrics-list"),
@@ -78,6 +94,8 @@ const ui = {
 };
 
 const state = {
+  trackId: "",
+  requestedSource: "",
   sample: emptySample(performance.now()),
   generation: -1,
   cues: [] as Cue[],
@@ -112,7 +130,7 @@ function clearLyrics(placeholder: string) {
   state.cueTimes = [];
   state.highlighted = -1;
   state.synced = false;
-  ui.sourceBadge.hidden = true;
+  ui.sourceBadge.textContent = "Lyrics source ▾";
   ui.lyricsEmpty.textContent = placeholder;
   ui.lyricsEmpty.hidden = false;
 }
@@ -134,6 +152,7 @@ function showAlbumArt(url: string | null) {
 }
 
 function renderLyrics(event: LyricsEvent) {
+  state.requestedSource = event.requested;
   const hasContent = event.synced ? event.cues.length > 0 : event.text.length > 0;
   if (!hasContent) {
     clearLyrics("No matching lyrics found.");
@@ -230,6 +249,114 @@ ui.previous.addEventListener("click", () => void send("previous_track"));
 ui.reload.addEventListener("click", () => void send("reload_lyrics"));
 ui.reconnect.addEventListener("click", () => void send("connect"));
 
+let config: Config | undefined;
+let draft: Settings;
+const settingsDialog = element<HTMLDialogElement>("settings-dialog");
+const sourceDialog = element<HTMLDialogElement>("source-dialog");
+const sourceSelect = element<HTMLSelectElement>("track-source");
+let sourceTrackId = "";
+const settingsError = element("settings-error");
+
+function applyConfig(value: Config) {
+  config = value;
+  const { theme } = value.settings;
+  document.documentElement.style.setProperty("--accent", theme.accent);
+  document.documentElement.style.setProperty("--active-line", theme.activeLine);
+  document.documentElement.style.setProperty("--past-line", theme.pastLine);
+  ui.follow.checked = value.settings.followLyrics;
+}
+
+function renderSourceOrder() {
+  const list = element("source-order");
+  list.replaceChildren();
+  draft.sources.forEach((source, index) => {
+    const row = document.createElement("li");
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = source.enabled;
+    checkbox.addEventListener("change", () => { source.enabled = checkbox.checked; });
+    const name = config?.providers.find((provider) => provider.id === source.id)?.label ?? source.id;
+    label.append(checkbox, document.createTextNode(name));
+    row.append(label);
+    for (const [direction, text] of [[-1, "↑"], [1, "↓"]] as const) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "ghost-button";
+      button.textContent = text;
+      button.setAttribute("aria-label", `Move ${name} ${direction < 0 ? "up" : "down"}`);
+      const target = index + direction;
+      button.disabled = target < 0 || target >= draft.sources.length;
+      button.addEventListener("click", () => {
+        [draft.sources[index], draft.sources[target]] = [draft.sources[target], draft.sources[index]];
+        renderSourceOrder();
+        (list.children[target]?.querySelectorAll("button")[direction < 0 ? 0 : 1] as HTMLButtonElement)?.focus();
+      });
+      row.append(button);
+    }
+    list.append(row);
+  });
+}
+
+async function openSettings() {
+  try {
+    const value = await invoke<Config>("get_config");
+    config = value;
+    draft = structuredClone(value.settings);
+    element<HTMLInputElement>("client-id").value = draft.clientId;
+    element<HTMLInputElement>("color-accent").value = draft.theme.accent;
+    element<HTMLInputElement>("color-active").value = draft.theme.activeLine;
+    element<HTMLInputElement>("color-past").value = draft.theme.pastLine;
+    element<HTMLInputElement>("settings-follow").checked = draft.followLyrics;
+    element("storage-info").textContent = `Data folder: ${value.dataDir} · Cached songs: ${value.storedTracks}`;
+    settingsError.textContent = value.storageWarning;
+    renderSourceOrder();
+    if (!settingsDialog.open) settingsDialog.showModal();
+  } catch (error) { setNotice(String(error)); }
+}
+
+element("settings-open").addEventListener("click", () => void openSettings());
+element("settings-cancel").addEventListener("click", () => settingsDialog.close());
+element("settings-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = element<HTMLButtonElement>("settings-save");
+  button.disabled = true;
+  settingsError.textContent = "";
+  draft.clientId = element<HTMLInputElement>("client-id").value.trim();
+  draft.theme = {
+    accent: element<HTMLInputElement>("color-accent").value,
+    activeLine: element<HTMLInputElement>("color-active").value,
+    pastLine: element<HTMLInputElement>("color-past").value,
+  };
+  draft.followLyrics = element<HTMLInputElement>("settings-follow").checked;
+  try {
+    applyConfig(await invoke<Config>("save_settings", { incoming: draft }));
+    settingsDialog.close();
+  } catch (error) { settingsError.textContent = String(error); }
+  finally { button.disabled = false; }
+});
+
+ui.sourceBadge.addEventListener("click", () => {
+  if (!config || !state.trackId) return;
+  sourceTrackId = state.trackId;
+  element("source-track").textContent = ui.trackName.textContent;
+  element("source-error").textContent = "";
+  sourceSelect.replaceChildren(new Option("Automatic (global preferences)", ""));
+  config.providers.forEach((provider) => sourceSelect.add(new Option(provider.label, provider.id)));
+  sourceSelect.value = state.requestedSource;
+  sourceDialog.showModal();
+});
+element("source-cancel").addEventListener("click", () => sourceDialog.close());
+element("source-save").addEventListener("click", async () => {
+  const button = element<HTMLButtonElement>("source-save");
+  button.disabled = true;
+  try {
+    await invoke("set_track_source", { source: sourceSelect.value || null, trackId: sourceTrackId });
+    sourceDialog.close();
+  } catch (error) { element("source-error").textContent = String(error); }
+  finally { button.disabled = false; }
+});
+
 ui.scrubber.addEventListener("pointerdown", (event) => {
   ui.scrubber.setPointerCapture(event.pointerId);
   seekToFraction(event.clientX);
@@ -238,6 +365,7 @@ ui.scrubber.addEventListener("pointermove", (event) => {
   if (event.buttons === 1) seekToFraction(event.clientX);
 });
 ui.scrubber.addEventListener("keydown", (event) => {
+  if (!state.canSeek) return;
   if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
   event.preventDefault();
   const step = (event.shiftKey ? 30_000 : 5_000) * (event.key === "ArrowRight" ? 1 : -1);
@@ -261,11 +389,27 @@ ui.lyrics.addEventListener("wheel", () => {
 ui.follow.addEventListener("change", () => {
   state.manualScrollUntil = 0;
   state.highlighted = -1;
+  if (config) {
+    ui.follow.disabled = true;
+    const incoming = { ...config.settings, followLyrics: ui.follow.checked };
+    void invoke<Config>("save_settings", { incoming }).then(applyConfig).catch((error) => {
+      ui.follow.checked = config!.settings.followLyrics;
+      setNotice(String(error));
+    }).finally(() => { ui.follow.disabled = false; });
+  }
 });
 
 // ------------------------------------------------------------------- events
 
-void listen<PlaybackEvent>("playback", ({ payload }) => {
+const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
+  const trackId = payload.hasTrack ? payload.trackId || `${payload.name}|${payload.durationMs}` : "";
+  if (state.trackId !== trackId) {
+    sourceDialog.close();
+    state.requestedSource = "";
+  }
+  state.trackId = trackId;
+  ui.sourceBadge.disabled = !payload.hasTrack || !config;
+  ui.reload.disabled = !payload.hasTrack;
   state.sample = {
     positionMs: payload.progressMs,
     playing: payload.isPlaying,
@@ -280,6 +424,7 @@ void listen<PlaybackEvent>("playback", ({ payload }) => {
   ui.next.disabled = !payload.hasTrack || !payload.canSkipNext;
   ui.previous.disabled = !payload.hasTrack || !payload.canSkipPrevious;
   ui.scrubber.classList.toggle("is-disabled", !state.canSeek);
+  ui.scrubber.setAttribute("aria-disabled", String(!state.canSeek));
 
   const changed = state.generation !== payload.generation;
   if (changed) state.generation = payload.generation;
@@ -298,13 +443,13 @@ void listen<PlaybackEvent>("playback", ({ payload }) => {
   if (changed) clearLyrics("Looking for lyrics…");
 });
 
-void listen<LyricsEvent>("lyrics", ({ payload }) => {
+const lyricsReady = listen<LyricsEvent>("lyrics", ({ payload }) => {
   // A late answer for a song that already changed is not shown.
   if (payload.generation !== state.generation) return;
   renderLyrics(payload);
 });
 
-void listen<StatusEvent>("status", ({ payload }) => {
+const statusReady = listen<StatusEvent>("status", ({ payload }) => {
   ui.statusText.textContent = payload.message;
   state.statusNotice = payload.notice;
   setNotice(state.notice);
@@ -315,4 +460,15 @@ requestAnimationFrame(frame);
 
 // Connect only once the listeners above exist, so no status is emitted into the
 // void. A saved session resumes without the user pressing anything.
-void send("connect");
+async function start() {
+  try {
+    await Promise.all([playbackReady, lyricsReady, statusReady]);
+    applyConfig(await invoke<Config>("get_config"));
+    if (!config!.settings.clientId) {
+      ui.statusText.textContent = "Set up Spotify in Settings";
+      await openSettings();
+    }
+    else await send("connect");
+  } catch (error) { setNotice(String(error)); }
+}
+void start();

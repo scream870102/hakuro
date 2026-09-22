@@ -20,3 +20,9 @@ htmlcov/
 build/
 dist/
 *.log
+
+# Hakuro portable app data (never distribute personal settings or sessions)
+settings.json
+lyrics.db
+lyrics.db-*
+session.bin

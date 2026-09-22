@@ -1,63 +1,107 @@
-# Spotify Original Lyrics
+# Hakuro
 
-## 使用方式
+Windows 桌面歌詞播放器：跟隨 Spotify 正在播放的歌曲，搜尋原文歌詞、同步高亮，並把下載過的歌詞存入 SQLite。介面使用英文，目前採用 Tauri 2、Rust 與 TypeScript。
 
-1. 開啟 `dist` 資料夾，將你自己的 `secret.env` 放在 `SpotifyOriginalLyrics.exe` 旁邊。
-2. 雙擊 `SpotifyOriginalLyrics.exe`，不需要安裝 Python 或執行 PowerShell。
-3. app 會自動連線；首次使用在瀏覽器完成授權，之後開啟會自動沿用登入。接著在 Spotify 播放歌曲。
+## 開始使用
 
-`secret.env` 使用 UTF-8 純文字，可直接放一行 Client ID，或使用：
+1. 將 `hakuro.exe` 放在你有寫入權限的資料夾，或使用 NSIS 安裝程式安裝。
+2. 在 [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) 取得自己的 App **Client ID**，加入 Redirect URI：`http://127.0.0.1:8787/callback`。建立 App 與帳號資格限制以 [官方說明](https://developer.spotify.com/documentation/web-api/concepts/apps) 為準。
+3. 開啟 Hakuro，點 **Settings**，在 **Spotify Client ID** 填入 Client ID 並儲存。只填 ID，不要填 Client Secret，也不要加上 `SPOTIFY_CLIENT_ID=`。
+4. 依畫面提示連線，在瀏覽器完成 Spotify 授權，然後在 Spotify 播放音樂。
 
-```dotenv
-SPOTIFY_CLIENT_ID=你的ClientID
+App 使用 PKCE，無須 Client Secret。新版不讀取 `secret.env`；舊版使用者請在 Settings 重新填入 Client ID 並登入。Redirect URI 必須完全一致，請勿改成 `localhost`；詳見 [Spotify Redirect URI 規則](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri)。
+
+## 歌詞與設定
+
+- 點目前顯示的**歌詞來源按鈕**，可選擇這首歌偏好的來源，或回到自動搜尋。每首歌的選擇會保存在 SQLite。
+- **Refresh lyrics** 會略過快取、重新向來源取得目前歌曲的歌詞；來源選擇控制搜尋對象，兩者可同時使用。
+- **Settings** 可調整全域歌詞來源順序與啟用狀態。支援 LRCLIB、PetitLyrics、Musixmatch、NetEase、QQ Music。
+- **Settings** 可設定按鈕與控制項的強調色、目前歌詞的高亮色、已唱過歌詞的顏色。
+- **Follow lyrics** 控制是否自動捲動至目前歌詞；有時間軸時會隨播放位置高亮，純文字歌詞不會猜測時間。
+
+SQLite 保留成功下載的歌詞，重新開啟 App 仍可使用。來源可能因網路、地區、限流或服務變更而無法提供結果；有同步歌詞時優先呈現同步歌詞。搜尋會向來源傳送歌曲名稱、歌手等查詢資料，不會傳送 Spotify token。
+
+## 資料位置與備份
+
+所有 App 個人資料都與 `hakuro.exe` 放在同一資料夾：
+
+| 檔案 | 內容 |
+| --- | --- |
+| `settings.json` | Client ID、全域來源偏好、配色與跟隨歌詞設定 |
+| `lyrics.db` | 已下載歌詞與每首歌的來源偏好 |
+| `lyrics.db-wal`、`lyrics.db-shm` | SQLite 執行期間可能產生的輔助檔 |
+| `session.bin` | 經 Windows DPAPI 加密的 Spotify refresh token |
+
+請使用可寫入的資料夾，例如自己的文件資料夾；不要把可攜版放進唯讀目錄或 `Program Files`。備份或搬移前先關閉 App，再複製整個資料夾。`session.bin` 綁定 Windows 使用者與 Client ID，不能當成跨帳號／跨電腦登入憑證；搬到其他環境後請重新授權。
+
+分享程式時只分享乾淨的執行檔或安裝程式，不要附上個人設定、資料庫或 `session.bin`。新版不自動匯入舊 Python 版的設定與登入快取。
+
+## 開發環境
+
+目前 Windows 實作使用 DPAPI，不是可直接在其他作業系統編譯的通用版本。
+
+需要：
+
+- Node.js 24 與 npm（需符合 lockfile 中各套件的 Node 版本要求）。
+- Rust stable 與 Windows MSVC toolchain。
+- Visual Studio Build Tools 的 **Desktop development with C++** 工作負載及 Windows SDK。
+- Microsoft Edge WebView2 Runtime；使用者電腦執行 App 也需要它。
+
+安裝細節見 [Tauri 官方前置需求](https://v2.tauri.app/start/prerequisites/)。在專案根目錄開啟 PowerShell：
+
+```powershell
+cd app
+npm ci
+npm run tauri -- dev
 ```
 
-也接受 `CLIENT_ID` 或 `clientId`，可加成對引號。不要填 Client Secret。
-缺少或格式錯誤時，app 會顯示提示；修正檔案後按 Retry connection 即可。
-設定檔不內嵌於 EXE，也不會自動複製進發行檔；分享程式時請另行提供適合的 Client ID。
+開發版的個人資料位於開發用執行檔旁，通常是 `app/src-tauri/target/debug/`；不會共用正式版資料。`npm run dev` 只開啟前端伺服器，完整 App 請使用 Tauri dev。
 
-Spotify Developer app 的 Redirect URI 必須設為 `http://127.0.0.1:8787/callback`。
-使用 PKCE，不需要 Client Secret。登入仍須符合 Spotify 對該開發者 app 的帳號權限限制。
+檢查與測試（工作目錄為 `app/`）：
 
-## 自動登入與深色介面
-
-啟動時自動讀取 secret.env 並連線，不必每次按 Connect。首次使用或授權失效時仍須在瀏覽器完成 Spotify 授權；一般重新開啟會使用保存的 refresh token 在背景續用登入。
-refresh token 以 Windows DPAPI（目前 Windows 使用者）加密，存於 `%LOCALAPPDATA%/SpotifyOriginalLyrics/session.bin`，不寫入專案、EXE 或 Git。更換 Client ID 不會沿用舊憑證。
-暫時斷網不會清除登入；啟動連線失敗可按 **Retry connection**。若無法保存登入，畫面會提醒，下次可能需要重新授權。
-介面預設深色，包含背景、按鈕、歌詞、捲軸與綠色目前句高亮；Windows 11 也設定深色標題列。
-
-## 歌詞來源與跟隨
-
-依序查詢 **LRCLIB → NetEase → QQ Music**，優先採用歌名、歌手與長度相符的同步歌詞。
-若前一來源只有純文字，會繼續找其他來源的時間軸；都沒有時間軸時保留純文字。
-來源失敗會自動嘗試下一個，底部顯示實際來源及 Synced / Plain 模式。
-NetEase 與 QQ Music 使用非官方公開端點，可能因地區或服務變動而暫時無法使用。
-比對會統一繁簡與全形字，畫面歌詞不作翻譯或繁簡改寫；跨語言藝名／歌名仍可能找不到相符版本。
-
-- 有 LRC 時間軸：依 Spotify 播放位置高亮目前句子，自動捲動。
-- **Follow lyrics**：取消勾選即可手動閱讀；高亮仍會更新。
-- **Reload Lyrics**：清除目前歌曲的記憶體快取並重新查詢。
-- 暫停會停止推進；快轉、倒轉與切歌在下一次播放查詢後校正。
-- 約每 1.5 秒查詢 Spotify，畫面每 0.1 秒更新；不是音訊分析或逐字卡拉 OK，會有 API 延遲。
-- Spotify 連線失敗會暫停推進；來源歌詞時間本身不準時仍可能不同步。
-- 無時間軸時顯示純文字，不自行猜測時間。
-
-查詢會將歌曲名稱、歌手、專輯及長度送至歌詞來源，不傳 Spotify token 或 secret.env。
-原文歌詞不翻譯、不變更 Spotify 歌名。
-HTTPS 使用 Windows 憑證存放區，不停用 TLS 驗證。
-
-## 開發者重新打包
-
-以下指令僅供開發者；一般使用者只需 EXE 和自己的 `secret.env`。
-在 Windows、Python 3.10+（包含 Tkinter）的建置環境中執行：
-
-```text
-python -m pip install -r requirements.txt PyInstaller==6.22.3
-python -m unittest -v test_app test_sync test_lyrics_sources test_login test_token_store
-python -m PyInstaller --noconfirm --onefile --windowed --name SpotifyOriginalLyrics --collect-data opencc app.py
+```powershell
+npm test
+npm run build
+cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-輸出：`dist/SpotifyOriginalLyrics.exe`。不需 start.ps1 或其他啟動腳本。
-建置方式參考 [PyInstaller 官方文件](https://pyinstaller.org/en/stable/usage.html)。
+## 打包與部署
 
-播放進度格式：[Spotify currently playing](https://developer.spotify.com/documentation/web-api/reference/get-the-users-currently-playing-track)。歌詞 API：[LRCLIB](https://lrclib.net/docs)。其他來源的 schema 參考見 lyrics_sources.py。
+以下命令在 Windows 執行，工作目錄為 `app/`；第一次建置需要網路下載 npm、Cargo 與打包工具依賴。若有指定 Cargo target 或 `CARGO_TARGET_DIR`，產物路徑會隨之改變。
+
+### 可攜版 EXE
+
+```powershell
+npm ci
+npm run tauri -- build --no-bundle
+```
+
+預設輸出：`app/src-tauri/target/release/hakuro.exe`（相對於專案根目錄）。把 EXE 複製到乾淨、可寫入的資料夾，即可使用或壓縮分享。前端資源已封裝，SQLite 使用 bundled 模式，無須另附 Node.js、Rust、Python 或 SQLite DLL；目標電腦仍須安裝 WebView2 Runtime。
+
+### NSIS 安裝程式
+
+```powershell
+npm ci
+npm run tauri -- build --bundles nsis
+```
+
+預設輸出資料夾：`app/src-tauri/target/release/bundle/nsis/`，其中 `*-setup.exe` 是要提供給使用者的安裝程式。設定採 `currentUser` 安裝模式，請保留可寫入的安裝位置，讓設定和 SQLite 能存到 EXE 旁。NSIS 的 WebView2 安裝行為與部署選項見 [Tauri Windows Installer 文件](https://v2.tauri.app/distribute/windows-installer/)。
+
+更新可攜版時，先關閉 App，再替換 `hakuro.exe`，保留原本的資料檔。不要把建置過程測試產生的資料檔打包給其他人。
+
+### App icon
+
+使用者提供的原圖保留在 `app/icon.png`，Tauri 使用 `app/src-tauri/icons/` 中的 PNG、ICO 與 ICNS。要重新產生圖示，在 `app/` 執行：
+
+```powershell
+npm run tauri -- icon icon.png
+```
+
+此命令只做格式與尺寸轉換，不會修改原圖內容。重新打包後，新圖示會嵌入執行檔及安裝程式。
+
+## 專案結構
+
+- `app/src/`：TypeScript 介面、歌詞同步與樣式。
+- `app/src-tauri/src/`：Spotify 授權／播放、歌詞來源、SQLite 與個人設定。
+- `app/src-tauri/tauri.conf.json`：視窗、App 名稱、圖示與 NSIS 打包設定。
+- 舊版使用 Python／PyInstaller；目前桌面 App 的建置入口是 `app/`，不再使用 PyInstaller。

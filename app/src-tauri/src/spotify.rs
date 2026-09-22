@@ -10,7 +10,6 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
 use std::time::Duration;
 
 use base64::Engine;
@@ -57,59 +56,6 @@ impl From<reqwest::Error> for SpotifyError {
         } else {
             SpotifyError::Network("Spotify is unreachable".into())
         }
-    }
-}
-
-/// Read the Client ID from `secret.env` beside the executable — never bundled in,
-/// so the app can be shared without shipping someone else's Spotify identity.
-pub fn read_client_id() -> Result<String, SpotifyError> {
-    let folder: PathBuf = std::env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(PathBuf::from))
-        .ok_or_else(|| SpotifyError::Config("Cannot locate the application folder.".into()))?;
-    let path = folder.join("secret.env");
-    let content = std::fs::read_to_string(&path).map_err(|_| {
-        SpotifyError::Config(format!(
-            "Cannot read {}.\nPlace secret.env beside the app with SPOTIFY_CLIENT_ID=your_client_id.",
-            path.display()
-        ))
-    })?;
-
-    let mut values: Vec<String> = Vec::new();
-    for line in content.trim_start_matches('\u{feff}').lines() {
-        let mut line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((key, rest)) = line.split_once('=') {
-            if !matches!(key.trim(), "SPOTIFY_CLIENT_ID" | "CLIENT_ID" | "clientId") {
-                continue;
-            }
-            line = rest;
-        }
-        let mut value = line.trim();
-        // Tolerate a quoted value, as long as the quotes are paired.
-        if value.len() >= 2 {
-            let bytes = value.as_bytes();
-            let first = bytes[0] as char;
-            if (first == '\'' || first == '"') && bytes[bytes.len() - 1] as char == first {
-                value = &value[1..value.len() - 1];
-            }
-        }
-        values.push(value.to_string());
-    }
-
-    let invalid = || {
-        SpotifyError::Config(
-            "secret.env must contain one Client ID: SPOTIFY_CLIENT_ID=your_client_id.\nUse the Client ID, not the client secret."
-                .into(),
-        )
-    };
-    match values.as_slice() {
-        [single] if !single.is_empty() && single.chars().all(|c| c.is_ascii_alphanumeric()) => {
-            Ok(single.clone())
-        }
-        _ => Err(invalid()),
     }
 }
 
@@ -410,12 +356,7 @@ impl Spotify {
             .and_then(|actions| actions.get("disallows"))
             .cloned()
             .unwrap_or(Value::Null);
-        let allowed = |key: &str| {
-            !disallows
-                .get(key)
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-        };
+        let allowed = |key: &str| !disallows.get(key).and_then(Value::as_bool).unwrap_or(false);
 
         Ok(Playback {
             track_id: item
@@ -463,17 +404,20 @@ impl Spotify {
     }
 
     pub async fn play(&self) -> Result<(), SpotifyError> {
-        self.call(reqwest::Method::PUT, "/me/player/play", &[]).await?;
+        self.call(reqwest::Method::PUT, "/me/player/play", &[])
+            .await?;
         Ok(())
     }
 
     pub async fn pause(&self) -> Result<(), SpotifyError> {
-        self.call(reqwest::Method::PUT, "/me/player/pause", &[]).await?;
+        self.call(reqwest::Method::PUT, "/me/player/pause", &[])
+            .await?;
         Ok(())
     }
 
     pub async fn next(&self) -> Result<(), SpotifyError> {
-        self.call(reqwest::Method::POST, "/me/player/next", &[]).await?;
+        self.call(reqwest::Method::POST, "/me/player/next", &[])
+            .await?;
         Ok(())
     }
 
@@ -544,7 +488,10 @@ fn wait_for_callback(expected_state: &str) -> Result<String, SpotifyError> {
         }
 
         if let Some(error) = error {
-            respond(&mut stream, "Sign-in was cancelled. You can close this tab.");
+            respond(
+                &mut stream,
+                "Sign-in was cancelled. You can close this tab.",
+            );
             return Err(SpotifyError::Config(format!("Spotify returned: {error}")));
         }
         // A mismatched state means this callback did not come from our request.
@@ -573,7 +520,7 @@ fn read_request_target(stream: &TcpStream) -> Option<String> {
 
 fn respond(stream: &mut TcpStream, message: &str) {
     let body = format!(
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Spotify Original Lyrics</title>\
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Hakuro</title>\
          <style>body{{background:#121212;color:#e8e8e8;font-family:system-ui,sans-serif;\
          display:grid;place-items:center;height:100vh;margin:0}}</style></head>\
          <body><p>{message}</p></body></html>"

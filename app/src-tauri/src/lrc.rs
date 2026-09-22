@@ -18,7 +18,7 @@ static OFFSET: LazyLock<Regex> =
 
 /// One timed lyric line. `text` may hold several lines joined by `\n` when a
 /// source stamps a translation with the same time as the original.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Cue {
     pub time_ms: i64,
     pub text: String,
@@ -127,12 +127,18 @@ mod tests {
         );
         assert_eq!(parse_lrc("plain lyrics"), cues(&[]));
         // Offsets never push a cue below zero.
-        assert_eq!(parse_lrc("[offset:900]\n[00:00.1]LINE_A"), cues(&[(0, "LINE_A")]));
+        assert_eq!(
+            parse_lrc("[offset:900]\n[00:00.1]LINE_A"),
+            cues(&[(0, "LINE_A")])
+        );
     }
 
     #[test]
     fn carriage_return_only_files_still_parse() {
-        assert_eq!(parse_lrc("[00:01]LINE_A\r[00:02]LINE_B"), cues(&[(1000, "LINE_A"), (2000, "LINE_B")]));
+        assert_eq!(
+            parse_lrc("[00:01]LINE_A\r[00:02]LINE_B"),
+            cues(&[(1000, "LINE_A"), (2000, "LINE_B")])
+        );
     }
 
     #[test]
