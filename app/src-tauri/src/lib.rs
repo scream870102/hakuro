@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::RwLock;
 
@@ -32,6 +33,10 @@ use spotify::{Playback, Spotify, SpotifyError};
 
 /// Poll politely: 1.5 s keeps the highlight honest without burning rate limit.
 const POLL_INTERVAL: Duration = Duration::from_millis(1500);
+
+/// The way back from a click-through window, which by definition cannot be
+/// clicked. The interface listens for this and flips the stored mode.
+const TOGGLE_CLICK_THROUGH: &str = "toggle-click-through";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -801,6 +806,26 @@ mod tests {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    // Key-up would fire the toggle a second time and undo it.
+                    if event.state == ShortcutState::Pressed {
+                        let _ = app.emit(TOGGLE_CLICK_THROUGH, ());
+                    }
+                })
+                .build(),
+        )
+        .setup(|app| {
+            // Registered here rather than on the plugin builder so that losing
+            // the chord to another program costs the shortcut, not the launch.
+            // The same toggle still lives in the settings panel.
+            let chord = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyP);
+            if let Err(error) = app.global_shortcut().register(chord) {
+                eprintln!("Ctrl+Alt+P is unavailable, click-through keeps its panel toggle: {error}");
+            }
+            Ok(())
+        })
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             connect,

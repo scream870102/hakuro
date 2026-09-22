@@ -34,7 +34,7 @@ SQLite 保留成功下載的歌詞，重新開啟 App 仍可使用。來源可�
 
 請使用可寫入的資料夾，例如自己的文件資料夾；不要把可攜版放進唯讀目錄或 `Program Files`。備份或搬移前先關閉 App，再複製整個資料夾。`session.bin` 綁定 Windows 使用者與 Client ID，不能當成跨帳號／跨電腦登入憑證；搬到其他環境後請重新授權。
 
-分享程式時只分享乾淨的執行檔或安裝程式，不要附上個人設定、資料庫或 `session.bin`。新版不自動匯入舊 Python 版的設定與登入快取。
+分享程式時只分享乾淨的執行檔或安裝程式，不要附上個人設定、資料庫或 `session.bin`。
 
 ## 開發環境
 
@@ -76,7 +76,7 @@ npm ci
 npm run tauri -- build --no-bundle
 ```
 
-預設輸出：`app/src-tauri/target/release/hakuro.exe`（相對於專案根目錄）。把 EXE 複製到乾淨、可寫入的資料夾，即可使用或壓縮分享。前端資源已封裝，SQLite 使用 bundled 模式，無須另附 Node.js、Rust、Python 或 SQLite DLL；目標電腦仍須安裝 WebView2 Runtime。
+預設輸出：`app/src-tauri/target/release/hakuro.exe`（相對於專案根目錄）。把 EXE 複製到乾淨、可寫入的資料夾，即可使用或壓縮分享。前端資源已封裝，SQLite 使用 bundled 模式，無須另附 Node.js、Rust 或 SQLite DLL；目標電腦仍須安裝 WebView2 Runtime。
 
 ### NSIS 安裝程式
 
@@ -104,4 +104,3 @@ npm run tauri -- icon icon.png
 - `app/src/`：TypeScript 介面、歌詞同步與樣式。
 - `app/src-tauri/src/`：Spotify 授權／播放、歌詞來源、SQLite 與個人設定。
 - `app/src-tauri/tauri.conf.json`：視窗、App 名稱、圖示與 NSIS 打包設定。
-- 舊版使用 Python／PyInstaller；目前桌面 App 的建置入口是 `app/`，不再使用 PyInstaller。

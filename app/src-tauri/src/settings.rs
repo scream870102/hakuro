@@ -61,6 +61,22 @@ pub fn data_path(name: &str) -> Result<PathBuf, String> {
     Ok(dir.join(name))
 }
 
+/// When the window lets clicks fall through to whatever is underneath.
+///
+/// Only ever acts while the window is pinned on top: an unpinned window that
+/// swallowed nothing and answered nothing would just look broken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClickThrough {
+    /// Always answer the mouse.
+    #[default]
+    Off,
+    /// Pass clicks through only while another window has focus.
+    Auto,
+    /// Always pass clicks through.
+    Always,
+}
+
 /// One entry of the global lookup order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourcePreference {
@@ -106,7 +122,29 @@ pub struct Settings {
     /// Stored rather than reset each launch: a reader who pins the lyrics over
     /// a game or a video wants them pinned the next time too.
     pub always_on_top: bool,
+    /// Background opacity, as a percentage. The lyrics themselves stay opaque;
+    /// this only thins what is behind them, so the window can sit over a game
+    /// without hiding it.
+    pub opacity: u8,
+    pub click_through: ClickThrough,
+    /// Compact mode strips the window down to art, title and a few lines of
+    /// lyrics. Stored so the window comes back the way it was left.
+    pub compact: bool,
+    /// Compact mode gets its own opacity: it exists to sit over other work,
+    /// which usually wants thinner glass than the full window.
+    pub compact_opacity: u8,
+    /// Lyric type size in pixels, per mode.
+    pub lyric_size: u8,
+    pub compact_lyric_size: u8,
 }
+
+/// Type-size bounds, shared by the two sliders. The floor stays readable at a
+/// glance from across a desk; the ceiling still fits three lines in compact.
+pub const MIN_LYRIC_SIZE: u8 = 12;
+pub const MAX_LYRIC_SIZE: u8 = 44;
+
+/// Below this the chrome stops being findable, so the slider stops here too.
+pub const MIN_OPACITY: u8 = 30;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -122,6 +160,12 @@ impl Default for Settings {
             theme: Theme::default(),
             follow_lyrics: true,
             always_on_top: false,
+            opacity: 100,
+            click_through: ClickThrough::Off,
+            compact: false,
+            compact_opacity: 85,
+            lyric_size: 26,
+            compact_lyric_size: 18,
         }
     }
 }
@@ -149,6 +193,12 @@ impl Settings {
             }
         }
         self.client_id = self.client_id.trim().to_string();
+        self.opacity = self.opacity.clamp(MIN_OPACITY, 100);
+        self.compact_opacity = self.compact_opacity.clamp(MIN_OPACITY, 100);
+        self.lyric_size = self.lyric_size.clamp(MIN_LYRIC_SIZE, MAX_LYRIC_SIZE);
+        self.compact_lyric_size = self
+            .compact_lyric_size
+            .clamp(MIN_LYRIC_SIZE, MAX_LYRIC_SIZE);
     }
 
     /// The lookup order actually used: enabled sources, in the stored order.
@@ -295,6 +345,52 @@ pub(crate) mod tests {
         );
         assert!(!ids.contains(&"ghost"));
         assert!(!settings.sources[0].enabled, "the stored flag is kept");
+    }
+
+    /// A hand-edited settings file must not be able to make the window vanish.
+    #[test]
+    fn normalize_clamps_opacity_into_a_findable_range() {
+        for (stored, expected) in [(0, MIN_OPACITY), (5, MIN_OPACITY), (60, 60), (255, 100)] {
+            let mut settings = Settings {
+                opacity: stored,
+                compact_opacity: stored,
+                ..Settings::default()
+            };
+            settings.normalize();
+            assert_eq!(settings.opacity, expected, "opacity {stored}");
+            assert_eq!(settings.compact_opacity, expected, "compact opacity {stored}");
+        }
+    }
+
+    /// Both sliders share the bounds, and neither may reach zero: lyrics that
+    /// cannot be seen are the one thing this window is for.
+    #[test]
+    fn normalize_clamps_both_lyric_sizes() {
+        for (stored, expected) in [(0, MIN_LYRIC_SIZE), (26, 26), (200, MAX_LYRIC_SIZE)] {
+            let mut settings = Settings {
+                lyric_size: stored,
+                compact_lyric_size: stored,
+                ..Settings::default()
+            };
+            settings.normalize();
+            assert_eq!(settings.lyric_size, expected, "lyric size {stored}");
+            assert_eq!(
+                settings.compact_lyric_size, expected,
+                "compact lyric size {stored}"
+            );
+        }
+    }
+
+    #[test]
+    fn click_through_round_trips_through_its_lowercase_names() {
+        for (mode, text) in [
+            (ClickThrough::Off, "\"off\""),
+            (ClickThrough::Auto, "\"auto\""),
+            (ClickThrough::Always, "\"always\""),
+        ] {
+            assert_eq!(serde_json::to_string(&mode).unwrap(), text);
+            assert_eq!(serde_json::from_str::<ClickThrough>(text).unwrap(), mode);
+        }
     }
 
     #[test]

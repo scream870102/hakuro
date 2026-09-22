@@ -19,6 +19,21 @@
            block dragging by themselves, which is why the whole bar can be
            "deep": the art and the track name drag the window, these do not. -->
       <div class="window-controls">
+        <span class="status" id="status-text">Connecting…</span>
+        <button class="window-button" id="settings-open" type="button" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M1.8 4h8.4M1.8 8h8.4"/><circle cx="4.2" cy="4" r="1.5"/><circle cx="7.8" cy="8" r="1.5"/>
+          </svg>
+        </button>
+        <button class="window-button" id="mode-toggle" type="button"
+                title="Compact mode" aria-label="Compact mode" aria-pressed="false">
+          <svg viewBox="0 0 12 12" aria-hidden="true" class="icon-compact">
+            <path d="M6 1.4v3.1M4.4 3l1.6 1.5L7.6 3M6 10.6V7.5M4.4 9l1.6-1.5L7.6 9"/>
+          </svg>
+          <svg viewBox="0 0 12 12" aria-hidden="true" class="icon-expand">
+            <path d="M6 4.5V1.4M4.4 2.9L6 1.4l1.6 1.5M6 7.5v3.1M4.4 9.1L6 10.6l1.6-1.5"/>
+          </svg>
+        </button>
         <button class="window-button window-button--pin" id="pin" type="button"
                 title="Keep on top" aria-label="Keep window on top" aria-pressed="false">
           <svg viewBox="0 0 12 12" aria-hidden="true">
@@ -46,7 +61,6 @@
       </div>
       <div class="titlebar__status">
         <button class="badge" id="source-badge" disabled aria-haspopup="dialog">Lyrics source ▾</button>
-        <span class="status" id="status-text">Connecting…</span>
       </div>
     </header>
 
@@ -55,7 +69,7 @@
         <div class="lyrics__empty" id="lyrics-empty">Waiting for playback…</div>
         <ol class="lyrics__list" id="lyrics-list"></ol>
       </div>
-      <div class="notice" id="notice" hidden></div>
+      <button class="notice" id="notice" type="button" hidden aria-live="polite"></button>
     </main>
 
     <footer class="controls">
@@ -95,7 +109,6 @@
         </label>
         <div class="controls__spacer"></div>
         <button class="ghost-button" id="reload" disabled title="Download lyrics again, bypassing the cache">Refresh lyrics</button>
-        <button class="ghost-button" id="settings-open">Settings</button>
         <button class="ghost-button" id="reconnect" hidden>Retry connection</button>
       </div>
     </footer>
@@ -128,6 +141,37 @@
           <label>Current lyric <input id="color-active" type="color" /></label>
           <label>Past lyrics <input id="color-past" type="color" /></label>
         </div>
+        <h3>Window</h3>
+        <label class="range-setting">
+          <span>Background opacity</span>
+          <input id="settings-opacity" type="range" min="30" max="100" step="5" />
+          <output id="opacity-value" for="settings-opacity">100%</output>
+        </label>
+        <label class="range-setting">
+          <span>Background opacity (compact)</span>
+          <input id="settings-compact-opacity" type="range" min="30" max="100" step="5" />
+          <output id="compact-opacity-value" for="settings-compact-opacity">85%</output>
+        </label>
+        <p>Thins the background so the desktop shows through. The lyrics stay fully opaque. Compact mode keeps its own value, because it is the one meant to sit over other work.</p>
+        <label class="range-setting">
+          <span>Lyric size</span>
+          <input id="settings-lyric-size" type="range" min="12" max="44" step="1" />
+          <output id="lyric-size-value" for="settings-lyric-size">26px</output>
+        </label>
+        <label class="range-setting">
+          <span>Lyric size (compact)</span>
+          <input id="settings-compact-lyric-size" type="range" min="12" max="44" step="1" />
+          <output id="compact-lyric-size-value" for="settings-compact-lyric-size">18px</output>
+        </label>
+        <p>Compact mode always keeps room for three lines: the line being sung, and the one on either side.</p>
+        <label for="settings-click-through">Click-through</label>
+        <select id="settings-click-through">
+          <option value="off">Off — the window always answers the mouse</option>
+          <option value="auto">Auto — pass clicks through while another window has focus</option>
+          <option value="always">Always pass clicks through</option>
+        </select>
+        <p>Only acts while the window is pinned on top. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> switches between off and always from any application, which is the way back once clicks pass through.</p>
+
         <label class="follow-setting"><input id="settings-follow" type="checkbox" /> Follow lyrics automatically</label>
         <p id="storage-info"></p>
         <p id="settings-error" role="alert"></p>

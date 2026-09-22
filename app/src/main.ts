@@ -7,6 +7,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import { activeLine, emptySample, formatTime, positionAt, type Sample } from "./clock";
 
 interface Cue {
@@ -42,12 +43,21 @@ interface LyricsEvent {
   requested: string;
 }
 
+type ClickThrough = "off" | "auto" | "always";
+
 interface Settings {
   clientId: string;
   sources: { id: string; enabled: boolean }[];
   theme: { accent: string; activeLine: string; pastLine: string };
   followLyrics: boolean;
   alwaysOnTop: boolean;
+  /** Background opacity as a percentage; the lyrics stay opaque regardless. */
+  opacity: number;
+  clickThrough: ClickThrough;
+  compact: boolean;
+  compactOpacity: number;
+  lyricSize: number;
+  compactLyricSize: number;
 }
 
 interface Config {
@@ -92,6 +102,7 @@ const ui = {
   next: element<HTMLButtonElement>("next"),
   follow: element<HTMLInputElement>("follow"),
   pin: element<HTMLButtonElement>("pin"),
+  mode: element<HTMLButtonElement>("mode-toggle"),
   reload: element<HTMLButtonElement>("reload"),
   reconnect: element<HTMLButtonElement>("reconnect"),
 };
@@ -119,11 +130,25 @@ const state = {
 
 // ---------------------------------------------------------------- rendering
 
+/** Long enough to read a Spotify refusal, short enough not to become furniture. */
+const NOTICE_LIFETIME_MS = 8000;
+let noticeTimer = 0;
+
 function setNotice(text: string) {
   state.notice = text;
   const message = text || state.statusNotice;
   ui.notice.textContent = message;
   ui.notice.hidden = message === "";
+  clearTimeout(noticeTimer);
+  if (message) noticeTimer = window.setTimeout(dismissNotice, NOTICE_LIFETIME_MS);
+}
+
+/** Both sources are cleared: a warning dismissed by hand should stay dismissed. */
+function dismissNotice() {
+  clearTimeout(noticeTimer);
+  state.notice = "";
+  state.statusNotice = "";
+  ui.notice.hidden = true;
 }
 
 function clearLyrics(placeholder: string) {
@@ -249,26 +274,121 @@ function seekToFraction(clientX: number) {
 // ------------------------------------------------------------ window chrome
 
 const appWindow = getCurrentWindow();
+let windowFocused = true;
+
+/** Persist one changed field, then apply whatever the backend hands back. */
+async function patchSettings(patch: Partial<Settings>, control?: { disabled: boolean }) {
+  const before = config;
+  if (!before) return;
+  if (control) control.disabled = true;
+  try {
+    const incoming = { ...before.settings, ...patch };
+    applyConfig(await invoke<Config>("save_settings", { incoming }));
+  } catch (error) {
+    // Put the window and every control back the way the stored settings have them.
+    applyConfig(before);
+    setNotice(String(error));
+  } finally {
+    if (control) control.disabled = false;
+  }
+}
 
 /** Reflect the pin in the button and in the window itself. */
 function setPinned(pinned: boolean) {
   ui.pin.setAttribute("aria-pressed", String(pinned));
   ui.pin.title = pinned ? "Stop keeping on top" : "Keep on top";
   void appWindow.setAlwaysOnTop(pinned);
+  applyClickThrough();
 }
+
+/**
+ * Clicks only fall through while the window is pinned. An unpinned window that
+ * ignored the mouse would just look broken, and there would be no reason for it.
+ */
+function applyClickThrough() {
+  const mode = config?.settings.clickThrough ?? "off";
+  const pinned = ui.pin.getAttribute("aria-pressed") === "true";
+  const through = pinned && (mode === "always" || (mode === "auto" && !windowFocused));
+  void appWindow.setIgnoreCursorEvents(through);
+}
+
+void appWindow.onFocusChanged(({ payload: focused }) => {
+  windowFocused = focused;
+  applyClickThrough();
+});
+
+// Compact keeps the header, three lines and the scrubber. These numbers mirror
+// `body.is-compact` in the stylesheet, so the window can never be dragged
+// smaller than the three lines the mode promises.
+const COMPACT_MIN_WIDTH = 340;
+// Header only: the chrome row (32px) + gap (4px) + the art row (34px) + the
+// bottom padding (6px), with a little slack. The scrubber costs nothing extra
+// because compact lifts it into the chrome row.
+const COMPACT_CHROME = 80;
+const FULL_MIN_WIDTH = 520;
+const FULL_MIN_HEIGHT = 460;
+
+const compactMinHeight = (lyricSize: number) =>
+  Math.ceil(3 * (lyricSize * 1.32 + 18)) + COMPACT_CHROME;
+
+/** The full-mode size to come back to, remembered at the moment of switching. */
+let roomySize: LogicalSize | undefined;
+let appliedCompact: boolean | undefined;
+
+async function applyWindowBounds(settings: Settings) {
+  const { compact, compactLyricSize } = settings;
+  const minHeight = compactMinHeight(compactLyricSize);
+  await appWindow.setMinSize(
+    compact
+      ? new LogicalSize(COMPACT_MIN_WIDTH, minHeight)
+      : new LogicalSize(FULL_MIN_WIDTH, FULL_MIN_HEIGHT),
+  );
+
+  const first = appliedCompact === undefined;
+  const switched = !first && appliedCompact !== compact;
+  appliedCompact = compact;
+  // Full mode opens at the size the configuration asks for. Compact has to
+  // shrink even on the first run: nothing remembers the window size between
+  // launches, so otherwise a stored compact mode would reopen at full size.
+  if (!switched && !(first && compact)) return;
+
+  if (compact) {
+    roomySize = (await appWindow.innerSize()).toLogical(await appWindow.scaleFactor());
+    await appWindow.setSize(new LogicalSize(Math.max(COMPACT_MIN_WIDTH, 460), minHeight));
+  } else if (roomySize) {
+    await appWindow.setSize(roomySize);
+  }
+}
+
+ui.mode.addEventListener("click", () => {
+  if (!config) return;
+  void patchSettings({ compact: !config.settings.compact }, ui.mode);
+});
 
 ui.pin.addEventListener("click", () => {
   if (!config) return;
   const alwaysOnTop = ui.pin.getAttribute("aria-pressed") !== "true";
   // Move the window first: the click should land even if the save then fails.
   setPinned(alwaysOnTop);
-  ui.pin.disabled = true;
-  const incoming = { ...config.settings, alwaysOnTop };
-  void invoke<Config>("save_settings", { incoming }).then(applyConfig).catch((error) => {
-    setPinned(config!.settings.alwaysOnTop);
-    setNotice(String(error));
-  }).finally(() => { ui.pin.disabled = false; });
+  void patchSettings({ alwaysOnTop }, ui.pin);
 });
+
+/** How long the follow toggle and refresh button wait before stepping aside. */
+const IDLE_AFTER_MS = 3000;
+let idleTimer = 0;
+
+function wake() {
+  document.body.classList.remove("is-idle");
+  clearTimeout(idleTimer);
+  idleTimer = window.setTimeout(() => document.body.classList.add("is-idle"), IDLE_AFTER_MS);
+}
+
+for (const name of ["pointermove", "pointerdown", "keydown", "wheel"]) {
+  window.addEventListener(name, wake, { passive: true });
+}
+
+// Start the clock at launch: "nothing has happened yet" is also idle.
+wake();
 
 element("win-minimize").addEventListener("click", () => void appWindow.minimize());
 element("win-maximize").addEventListener("click", () => void appWindow.toggleMaximize());
@@ -291,6 +411,36 @@ ui.reconnect.addEventListener("click", () => void send("connect"));
 
 let config: Config | undefined;
 let draft: Settings;
+/** The four per-mode dials in the panel, each with its own readout. */
+const DIALS = [
+  { input: "settings-opacity", output: "opacity-value", unit: "%", key: "opacity" },
+  { input: "settings-compact-opacity", output: "compact-opacity-value", unit: "%", key: "compactOpacity" },
+  { input: "settings-lyric-size", output: "lyric-size-value", unit: "px", key: "lyricSize" },
+  { input: "settings-compact-lyric-size", output: "compact-lyric-size-value", unit: "px", key: "compactLyricSize" },
+] as const;
+
+const dialValue = (id: string) => Number(element<HTMLInputElement>(id).value);
+
+/**
+ * Show the panel's numbers on the window behind it, for whichever mode is on.
+ * Judging an opacity or a type size from a number alone is guesswork; Cancel
+ * puts the stored values back.
+ */
+function previewWindowStyle() {
+  const compact = document.body.classList.contains("is-compact");
+  setWindowStyle(
+    dialValue(compact ? "settings-compact-opacity" : "settings-opacity"),
+    dialValue(compact ? "settings-compact-lyric-size" : "settings-lyric-size"),
+  );
+}
+
+for (const dial of DIALS) {
+  const input = element<HTMLInputElement>(dial.input);
+  input.addEventListener("input", () => {
+    element(dial.output).textContent = `${input.value}${dial.unit}`;
+    previewWindowStyle();
+  });
+}
 const settingsDialog = element<HTMLDialogElement>("settings-dialog");
 const sourceDialog = element<HTMLDialogElement>("source-dialog");
 const sourceSelect = element<HTMLSelectElement>("track-source");
@@ -304,7 +454,24 @@ function applyConfig(value: Config) {
   document.documentElement.style.setProperty("--active-line", theme.activeLine);
   document.documentElement.style.setProperty("--past-line", theme.pastLine);
   ui.follow.checked = value.settings.followLyrics;
+
+  const { compact } = value.settings;
+  document.body.classList.toggle("is-compact", compact);
+  ui.mode.setAttribute("aria-pressed", String(compact));
+  ui.mode.title = compact ? "Full mode" : "Compact mode";
+  setWindowStyle(
+    compact ? value.settings.compactOpacity : value.settings.opacity,
+    compact ? value.settings.compactLyricSize : value.settings.lyricSize,
+  );
+  void applyWindowBounds(value.settings);
   setPinned(value.settings.alwaysOnTop);
+}
+
+/** The two per-mode dials, applied together because both come from one mode. */
+function setWindowStyle(opacity: number, lyricSize: number) {
+  const root = document.documentElement.style;
+  root.setProperty("--ui-opacity", String(opacity / 100));
+  root.setProperty("--lyric-size", `${lyricSize}px`);
 }
 
 function renderSourceOrder() {
@@ -349,6 +516,11 @@ async function openSettings() {
     element<HTMLInputElement>("color-active").value = draft.theme.activeLine;
     element<HTMLInputElement>("color-past").value = draft.theme.pastLine;
     element<HTMLInputElement>("settings-follow").checked = draft.followLyrics;
+    for (const dial of DIALS) {
+      element<HTMLInputElement>(dial.input).value = String(draft[dial.key]);
+      element(dial.output).textContent = `${draft[dial.key]}${dial.unit}`;
+    }
+    element<HTMLSelectElement>("settings-click-through").value = draft.clickThrough;
     element("storage-info").textContent = `Data folder: ${value.dataDir} · Cached songs: ${value.storedTracks}`;
     settingsError.textContent = value.storageWarning;
     renderSourceOrder();
@@ -357,7 +529,10 @@ async function openSettings() {
 }
 
 element("settings-open").addEventListener("click", () => void openSettings());
-element("settings-cancel").addEventListener("click", () => settingsDialog.close());
+element("settings-cancel").addEventListener("click", () => {
+  settingsDialog.close();
+  if (config) applyConfig(config);
+});
 element("settings-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = element<HTMLButtonElement>("settings-save");
@@ -370,6 +545,8 @@ element("settings-form").addEventListener("submit", async (event) => {
     pastLine: element<HTMLInputElement>("color-past").value,
   };
   draft.followLyrics = element<HTMLInputElement>("settings-follow").checked;
+  for (const dial of DIALS) draft[dial.key] = dialValue(dial.input);
+  draft.clickThrough = element<HTMLSelectElement>("settings-click-through").value as ClickThrough;
   try {
     applyConfig(await invoke<Config>("save_settings", { incoming: draft }));
     settingsDialog.close();
@@ -397,6 +574,8 @@ element("source-save").addEventListener("click", async () => {
   } catch (error) { element("source-error").textContent = String(error); }
   finally { button.disabled = false; }
 });
+
+ui.notice.addEventListener("click", dismissNotice);
 
 ui.scrubber.addEventListener("pointerdown", (event) => {
   ui.scrubber.setPointerCapture(event.pointerId);
@@ -430,14 +609,7 @@ ui.lyrics.addEventListener("wheel", () => {
 ui.follow.addEventListener("change", () => {
   state.manualScrollUntil = 0;
   state.highlighted = -1;
-  if (config) {
-    ui.follow.disabled = true;
-    const incoming = { ...config.settings, followLyrics: ui.follow.checked };
-    void invoke<Config>("save_settings", { incoming }).then(applyConfig).catch((error) => {
-      ui.follow.checked = config!.settings.followLyrics;
-      setNotice(String(error));
-    }).finally(() => { ui.follow.disabled = false; });
-  }
+  void patchSettings({ followLyrics: ui.follow.checked }, ui.follow);
 });
 
 // ------------------------------------------------------------------- events
@@ -490,11 +662,21 @@ const lyricsReady = listen<LyricsEvent>("lyrics", ({ payload }) => {
   renderLyrics(payload);
 });
 
+// Ctrl+Alt+P is the way back from a window that ignores the mouse, so it flips
+// between the two absolute modes rather than cycling through "auto".
+const clickThroughReady = listen("toggle-click-through", () => {
+  if (!config) return;
+  const clickThrough: ClickThrough = config.settings.clickThrough === "always" ? "off" : "always";
+  void patchSettings({ clickThrough });
+});
+
 const statusReady = listen<StatusEvent>("status", ({ payload }) => {
   ui.statusText.textContent = payload.message;
   state.statusNotice = payload.notice;
   setNotice(state.notice);
   ui.reconnect.hidden = payload.state !== "error" && payload.state !== "needs-auth";
+  // A connection that needs attention should not be hidden by the idle fade.
+  if (!ui.reconnect.hidden) wake();
 });
 
 requestAnimationFrame(frame);
@@ -503,7 +685,7 @@ requestAnimationFrame(frame);
 // void. A saved session resumes without the user pressing anything.
 async function start() {
   try {
-    await Promise.all([playbackReady, lyricsReady, statusReady]);
+    await Promise.all([playbackReady, lyricsReady, statusReady, clickThroughReady]);
     void syncMaximized();
     applyConfig(await invoke<Config>("get_config"));
     if (!config!.settings.clientId) {

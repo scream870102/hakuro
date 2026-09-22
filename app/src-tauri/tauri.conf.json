@@ -20,7 +20,7 @@
         "minHeight": 460,
         "resizable": true,
         "decorations": false,
-        "backgroundColor": "#0b0d0c",
+        "transparent": true,
         "theme": "Dark"
       }
     ],

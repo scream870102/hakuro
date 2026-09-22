@@ -6,14 +6,21 @@ import html from "../index.html?raw";
 const bridge = vi.hoisted(() => ({
   invoke: vi.fn(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
+  focus: [] as ((event: { payload: boolean }) => void)[],
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: bridge.invoke }));
 const appWindow = vi.hoisted(() => ({
   setAlwaysOnTop: vi.fn(),
+  setIgnoreCursorEvents: vi.fn(),
   minimize: vi.fn(),
   toggleMaximize: vi.fn(),
   close: vi.fn(),
   isMaximized: vi.fn(),
+  onFocusChanged: vi.fn(),
+  setMinSize: vi.fn(),
+  setSize: vi.fn(),
+  innerSize: vi.fn(),
+  scaleFactor: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => appWindow }));
 vi.mock("@tauri-apps/api/event", () => ({
@@ -30,6 +37,12 @@ const initial = () => ({
     theme: { accent: "#123456", activeLine: "#ffffff", pastLine: "#666666" },
     followLyrics: true,
     alwaysOnTop: false,
+    opacity: 100,
+    clickThrough: "off",
+    compact: false,
+    compactOpacity: 85,
+    lyricSize: 26,
+    compactLyricSize: 18,
   },
   providers: [{ id: "lrclib", label: "LRCLIB" }, { id: "musixmatch", label: "Musixmatch" }],
   dataDir: "C:/Hakuro", storedTracks: 2, storageWarning: "",
@@ -54,8 +67,15 @@ beforeEach(async () => {
   vi.resetModules();
   bridge.listeners.clear();
   bridge.invoke.mockReset();
+  bridge.focus.length = 0;
   for (const fn of Object.values(appWindow)) fn.mockReset().mockResolvedValue(undefined);
   appWindow.isMaximized.mockResolvedValue(false);
+  appWindow.scaleFactor.mockResolvedValue(1);
+  appWindow.innerSize.mockResolvedValue({ toLogical: () => ({ width: 940, height: 760 }) });
+  appWindow.onFocusChanged.mockImplementation(async (cb: (e: { payload: boolean }) => void) => {
+    bridge.focus.push(cb);
+    return () => {};
+  });
   document.documentElement.innerHTML = html;
   vi.stubGlobal("requestAnimationFrame", vi.fn());
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
@@ -69,11 +89,11 @@ beforeEach(async () => {
 it("opens settings instead of connecting on first run", async () => {
   bridge.invoke.mockImplementation(async (command: string) => {
     if (command === "get_config") return { ...initial(), settings: { ...initial().settings, clientId: "" } };
-    if (command === "connect") expect(bridge.listeners.size).toBe(3);
+    if (command === "connect") expect(bridge.listeners.size).toBe(4);
   });
   await import("./main");
   await flush();
-  expect(bridge.listeners.size).toBe(3);
+  expect(bridge.listeners.size).toBe(4);
   expect(el<HTMLDialogElement>("settings-dialog").open).toBe(true);
   expect(bridge.invoke).not.toHaveBeenCalledWith("connect", undefined);
 });
@@ -81,7 +101,8 @@ it("opens settings instead of connecting on first run", async () => {
 it("registers all event listeners before connecting an existing identity", async () => {
   bridge.invoke.mockImplementation(async (command: string) => {
     if (command === "get_config") return initial();
-    if (command === "connect") expect([...bridge.listeners.keys()].sort()).toEqual(["lyrics", "playback", "status"]);
+    if (command === "connect") expect([...bridge.listeners.keys()].sort())
+      .toEqual(["lyrics", "playback", "status", "toggle-click-through"]);
   });
   await import("./main");
   await flush();
@@ -110,6 +131,12 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
     theme: { accent: "#abcdef", activeLine: "#fedcba", pastLine: "#112233" },
     followLyrics: false,
     alwaysOnTop: false,
+    opacity: 100,
+    clickThrough: "off",
+    compact: false,
+    compactOpacity: 85,
+    lyricSize: 26,
+    compactLyricSize: 18,
   } });
   expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#abcdef");
   expect(el<HTMLInputElement>("follow").checked).toBe(false);
@@ -208,4 +235,164 @@ it("drives the window buttons and tracks the maximized glyph", async () => {
   window.dispatchEvent(new Event("resize"));
   await flush();
   expect(document.body.classList.contains("is-maximized")).toBe(true);
+});
+
+const focusChanged = (focused: boolean) => {
+  for (const handler of bridge.focus) handler({ payload: focused });
+};
+
+it("passes clicks through only while the window is pinned", async () => {
+  bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
+    if (command === "get_config") {
+      return { ...initial(), settings: { ...initial().settings, clickThrough: "always" } };
+    }
+    if (command === "save_settings") return { ...initial(), settings: args!.incoming };
+  });
+  await import("./main");
+  await flush();
+  // Unpinned, "always" must still leave the window usable.
+  expect(appWindow.setIgnoreCursorEvents).toHaveBeenLastCalledWith(false);
+
+  el("pin").click();
+  await flush();
+  expect(appWindow.setIgnoreCursorEvents).toHaveBeenLastCalledWith(true);
+});
+
+it("follows focus while click-through is on auto", async () => {
+  bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
+    if (command === "get_config") {
+      return { ...initial(), settings: { ...initial().settings, alwaysOnTop: true, clickThrough: "auto" } };
+    }
+    if (command === "save_settings") return { ...initial(), settings: args!.incoming };
+  });
+  await import("./main");
+  await flush();
+
+  focusChanged(false);
+  expect(appWindow.setIgnoreCursorEvents).toHaveBeenLastCalledWith(true);
+  focusChanged(true);
+  expect(appWindow.setIgnoreCursorEvents).toHaveBeenLastCalledWith(false);
+});
+
+it("flips between off and always when the global chord fires", async () => {
+  await import("./main");
+  await flush();
+
+  bridge.listeners.get("toggle-click-through")!({ payload: null });
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("save_settings", {
+    incoming: { ...initial().settings, clickThrough: "always" },
+  });
+
+  bridge.listeners.get("toggle-click-through")!({ payload: null });
+  await flush();
+  expect(bridge.invoke).toHaveBeenLastCalledWith("save_settings", {
+    incoming: { ...initial().settings, clickThrough: "off" },
+  });
+});
+
+it("thins only the background, never the lyrics", async () => {
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, opacity: 45 } };
+  });
+  await import("./main");
+  await flush();
+  expect(document.documentElement.style.getPropertyValue("--ui-opacity")).toBe("0.45");
+});
+
+it("steps the secondary controls aside once nothing is happening", async () => {
+  vi.useFakeTimers();
+  try {
+    await import("./main");
+    await vi.advanceTimersByTimeAsync(3100);
+    expect(document.body.classList.contains("is-idle")).toBe(true);
+
+    window.dispatchEvent(new Event("pointermove"));
+    expect(document.body.classList.contains("is-idle")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+const lastSize = (fn: { mock: { calls: unknown[][] } }) => {
+  const calls = fn.mock.calls;
+  const call = calls[calls.length - 1][0] as { width: number; height: number };
+  return { width: call.width, height: call.height };
+};
+
+it("lets a warning be dismissed by clicking it", async () => {
+  await import("./main");
+  await flush();
+  bridge.listeners.get("status")!({ payload: { state: "error", message: "x", notice: "Sign-in was not cached" } });
+  expect(el("notice").hidden).toBe(false);
+
+  el("notice").click();
+  expect(el("notice").hidden).toBe(true);
+});
+
+it("retires a warning on its own after a while", async () => {
+  vi.useFakeTimers();
+  try {
+    await import("./main");
+    bridge.listeners.get("status")!({ payload: { state: "error", message: "x", notice: "Sign-in was not cached" } });
+    expect(el("notice").hidden).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(8100);
+    expect(el("notice").hidden).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("switches to compact mode with its own opacity and type size", async () => {
+  await import("./main");
+  await flush();
+  expect(document.body.classList.contains("is-compact")).toBe(false);
+  expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("26px");
+
+  el("mode-toggle").click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("save_settings", {
+    incoming: { ...initial().settings, compact: true },
+  });
+  expect(document.body.classList.contains("is-compact")).toBe(true);
+  // The compact pair, not the full one.
+  expect(document.documentElement.style.getPropertyValue("--ui-opacity")).toBe("0.85");
+  expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("18px");
+});
+
+it("never lets compact be dragged below three lines of lyrics", async () => {
+  bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
+    if (command === "get_config") {
+      return { ...initial(), settings: { ...initial().settings, compact: true, compactLyricSize: 30 } };
+    }
+    if (command === "save_settings") return { ...initial(), settings: args!.incoming };
+  });
+  await import("./main");
+  await flush();
+
+  // Three lines of (30px * 1.32 line-height + 18px padding), plus the header.
+  const lines = Math.ceil(3 * (30 * 1.32 + 18));
+  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: lines + 80 });
+  // Nothing remembers the window size between launches, so a stored compact
+  // mode has to shrink the window itself or it reopens at full size.
+  expect(lastSize(appWindow.setSize)).toEqual({ width: 460, height: lines + 80 });
+});
+
+it("gives the roomy size back when compact is switched off", async () => {
+  bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
+    if (command === "get_config") return initial();
+    if (command === "save_settings") return { ...initial(), settings: args!.incoming };
+  });
+  await import("./main");
+  await flush();
+
+  el("mode-toggle").click();
+  await flush();
+  const shrunk = lastSize(appWindow.setSize);
+  expect(shrunk.height).toBeLessThan(760);
+
+  el("mode-toggle").click();
+  await flush();
+  expect(lastSize(appWindow.setSize)).toEqual({ width: 940, height: 760 });
 });
