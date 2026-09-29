@@ -411,6 +411,7 @@ ui.playPause.addEventListener("click", () => void send(state.isPlaying ? "pause"
 ui.next.addEventListener("click", () => void send("next_track"));
 ui.previous.addEventListener("click", () => void send("previous_track"));
 ui.reload.addEventListener("click", () => void send("reload_lyrics"));
+element("refresh-playback").addEventListener("click", () => void send("refresh_playback"));
 ui.reconnect.addEventListener("click", () => void send("connect"));
 
 let config: Config | undefined;

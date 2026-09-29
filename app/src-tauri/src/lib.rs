@@ -24,10 +24,10 @@ mod token_store;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::RwLock;
@@ -40,8 +40,23 @@ use settings::Settings;
 use smtc::Smtc;
 use spotify::Spotify;
 
-/// Poll politely: 1.5 s keeps the highlight honest without burning rate limit.
-const POLL_INTERVAL: Duration = Duration::from_millis(1500);
+/// The system media session is local and free to ask, so it is polled briskly.
+const LOCAL_POLL_INTERVAL: Duration = Duration::from_millis(1500);
+/// Spotify counts every request against a daily quota. While a song plays the
+/// frontend extrapolates the position, so a sample only has to catch changes
+/// made elsewhere — a seek on the phone, a skip from another device.
+const SPOTIFY_PLAYING_INTERVAL: Duration = Duration::from_secs(5);
+/// Paused or nothing loaded. Playing from another device shows up this late;
+/// the refresh button, or any transport button here, asks at once.
+const SPOTIFY_STOPPED_INTERVAL: Duration = Duration::from_secs(5 * 60);
+/// After this long with nothing playing, Spotify is not asked at all until the
+/// window comes back to the front or the reader presses refresh.
+const SPOTIFY_DORMANT_AFTER: Duration = Duration::from_secs(60 * 60);
+/// Slack after the predicted end of a song, so the next sample already sees
+/// the next one rather than the last second of this one.
+const TRACK_END_SLACK: Duration = Duration::from_millis(500);
+/// Spotify reports a transport command's effect a moment after accepting it.
+const AFTER_COMMAND_DELAY: Duration = Duration::from_millis(400);
 
 /// The way back from a click-through window, which by definition cannot be
 /// clicked. The interface listens for this and flips the stored mode.
@@ -116,6 +131,9 @@ struct Session {
     /// straight away instead of waiting for the next poll.
     current_playback: RwLock<Option<Playback>>,
     polling: RwLock<bool>,
+    /// Cuts the poll loop's wait short, so a button press shows at once
+    /// instead of at the next sample.
+    wake: tokio::sync::Notify,
     connecting: tokio::sync::Mutex<()>,
 }
 
@@ -363,6 +381,9 @@ async fn start_polling(app: &AppHandle, state: &State<'_, AppState>) {
     {
         let mut polling = state.session.polling.write().await;
         if *polling {
+            // The running loop may be asleep for minutes, or until woken; make
+            // it pick up the new client now.
+            state.session.wake.notify_one();
             return;
         }
         *polling = true;
@@ -374,6 +395,8 @@ async fn start_polling(app: &AppHandle, state: &State<'_, AppState>) {
 }
 
 async fn poll_loop(app: AppHandle) {
+    // When Spotify was last seen not playing, or None while it plays.
+    let mut stopped_since: Option<Instant> = None;
     loop {
         let client = {
             let state = app.state::<AppState>();
@@ -393,7 +416,23 @@ async fn poll_loop(app: AppHandle) {
         // Outside the block, so both guards are released before the loop ends.
         let Some(client) = client else { break };
 
-        let mut delay = POLL_INTERVAL;
+        // Nobody is looking, or nothing has played for an hour: ask nothing
+        // until the window is focused again or refresh is pressed.
+        let dormant = stopped_since.is_some_and(|since| since.elapsed() >= SPOTIFY_DORMANT_AFTER);
+        if dormant || window_hidden(&app) {
+            if dormant {
+                emit_status(&app, "idle", "Nothing playing; press refresh to check", "");
+            }
+            app.state::<AppState>().session.wake.notified().await;
+            if dormant {
+                emit_status(&app, "connected", "Connected", "");
+            }
+            stopped_since = None;
+            continue;
+        }
+
+        let mut delay = LOCAL_POLL_INTERVAL;
+        let mut interruptible = true;
         let result = client.playback().await;
         // A response from a source replaced in Settings must not reset the new
         // one. The serial is unique per connection, which a pointer comparison
@@ -403,7 +442,15 @@ async fn poll_loop(app: AppHandle) {
             continue;
         }
         match result {
-            Ok(playback) => apply_playback(&app, playback).await,
+            Ok(playback) => {
+                delay = poll_delay(&playback);
+                if playback.source == PlayerKind::Spotify && !playback.is_playing {
+                    stopped_since.get_or_insert_with(Instant::now);
+                } else {
+                    stopped_since = None;
+                }
+                apply_playback(&app, playback).await;
+            }
             Err(PlayerError::NeedsAuth) => {
                 let state = app.state::<AppState>();
                 *state.session.player.write().await = None;
@@ -413,6 +460,8 @@ async fn poll_loop(app: AppHandle) {
             }
             Err(PlayerError::RateLimited { retry_after }) => {
                 delay = Duration::from_secs(retry_after.max(2));
+                // A refresh now would only be refused again.
+                interruptible = false;
                 emit_status(&app, "waiting", "Rate limited; waiting before retry", "");
             }
             Err(error) => {
@@ -420,7 +469,43 @@ async fn poll_loop(app: AppHandle) {
             }
         }
 
-        tokio::time::sleep(delay).await;
+        let state = app.state::<AppState>();
+        tokio::select! {
+            _ = tokio::time::sleep(delay) => {}
+            _ = state.session.wake.notified(), if interruptible => {
+                // Pressing refresh or a transport button counts as the reader
+                // being here, so the hour before going dormant starts over.
+                stopped_since = None;
+                tokio::time::sleep(AFTER_COMMAND_DELAY).await;
+            }
+        }
+    }
+}
+
+/// Minimized or hidden: nothing on screen would show a new sample.
+fn window_hidden(app: &AppHandle) -> bool {
+    app.get_webview_window("main").is_some_and(|window| {
+        window.is_minimized().unwrap_or(false) || !window.is_visible().unwrap_or(true)
+    })
+}
+
+/// How long to wait before the next sample. Spotify is asked as rarely as the
+/// display allows, but always right after the current song should have ended,
+/// so the lyrics change with the song rather than up to an interval later.
+fn poll_delay(playback: &Playback) -> Duration {
+    if playback.source != PlayerKind::Spotify {
+        return LOCAL_POLL_INTERVAL;
+    }
+    if !playback.has_track || !playback.is_playing {
+        return SPOTIFY_STOPPED_INTERVAL;
+    }
+    let remaining = playback
+        .progress_ms
+        .map(|progress| (playback.duration_ms - progress).max(0))
+        .map(|remaining| Duration::from_millis(remaining as u64) + TRACK_END_SLACK);
+    match remaining {
+        Some(remaining) => remaining.clamp(LOCAL_POLL_INTERVAL, SPOTIFY_PLAYING_INTERVAL),
+        None => SPOTIFY_PLAYING_INTERVAL,
     }
 }
 
@@ -633,7 +718,18 @@ where
         .await
         .clone()
         .ok_or_else(|| "Not connected to a player".to_string())?;
-    action(client).await.map_err(|error| error.to_string())
+    let result = action(client).await.map_err(|error| error.to_string());
+    if result.is_ok() {
+        state.session.wake.notify_one();
+    }
+    result
+}
+
+/// Ask the source now rather than at the next sample. Also wakes a loop that
+/// stopped asking after an hour of silence.
+#[tauri::command]
+fn refresh_playback(state: State<'_, AppState>) {
+    state.session.wake.notify_one();
 }
 
 #[tauri::command]
@@ -694,6 +790,27 @@ mod tests {
             device_name: Some("Device".into()),
             source: PlayerKind::Spotify,
         }
+    }
+
+    #[test]
+    fn spotify_is_polled_by_state_and_catches_the_end_of_a_song() {
+        let mut sample = playback();
+        assert_eq!(poll_delay(&sample), SPOTIFY_PLAYING_INTERVAL);
+
+        sample.progress_ms = Some(sample.duration_ms - 2000);
+        assert_eq!(poll_delay(&sample), Duration::from_millis(2500));
+        sample.progress_ms = Some(sample.duration_ms);
+        assert_eq!(poll_delay(&sample), LOCAL_POLL_INTERVAL);
+        sample.progress_ms = None;
+        assert_eq!(poll_delay(&sample), SPOTIFY_PLAYING_INTERVAL);
+
+        sample.is_playing = false;
+        assert_eq!(poll_delay(&sample), SPOTIFY_STOPPED_INTERVAL);
+        sample.has_track = false;
+        assert_eq!(poll_delay(&sample), SPOTIFY_STOPPED_INTERVAL);
+
+        sample.source = PlayerKind::Ytmusic;
+        assert_eq!(poll_delay(&sample), LOCAL_POLL_INTERVAL);
     }
 
     /// The interface reads these names literally. A flattened struct does not
@@ -893,6 +1010,13 @@ pub fn run() {
             }
             Ok(())
         })
+        .on_window_event(|window, event| {
+            // Coming back to the front resumes a loop paused while minimized,
+            // hidden, or dormant, and brings the display up to date.
+            if let WindowEvent::Focused(true) = event {
+                window.state::<AppState>().session.wake.notify_one();
+            }
+        })
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             connect,
@@ -901,6 +1025,7 @@ pub fn run() {
             clear_lyrics_cache,
             set_track_source,
             reload_lyrics,
+            refresh_playback,
             play,
             pause,
             next_track,
