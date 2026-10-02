@@ -22,7 +22,10 @@ const CLIENT_APP_ID: &str = "p1110417";
 const TERMINAL_TYPE: &str = "10";
 const SOURCE: &str = "PetitLyrics";
 
-pub async fn fetch(client: &reqwest::Client, query: &TrackQuery) -> Result<LyricsResult, ProviderError> {
+pub async fn fetch(
+    client: &reqwest::Client,
+    query: &TrackQuery,
+) -> Result<LyricsResult, ProviderError> {
     // Word-synced first; it is the only tier that carries a usable timeline.
     if let Some(song) = request(client, query, "3").await? {
         if let Some(cues) = parse_word_synced(&song.payload) {
@@ -35,6 +38,7 @@ pub async fn fetch(client: &reqwest::Client, query: &TrackQuery) -> Result<Lyric
                 return Ok(LyricsResult {
                     text,
                     source: SOURCE.to_string(),
+                    matched_title: song.title,
                     cues,
                     errors: Vec::new(),
                 });
@@ -47,7 +51,7 @@ pub async fn fetch(client: &reqwest::Client, query: &TrackQuery) -> Result<Lyric
     if let Some(song) = request(client, query, "1").await? {
         let text = song.payload.trim();
         if !text.is_empty() {
-            return Ok(LyricsResult::from_raw(text, SOURCE));
+            return Ok(LyricsResult::from_raw(text, SOURCE).with_title(&song.title));
         }
     }
 
@@ -55,6 +59,7 @@ pub async fn fetch(client: &reqwest::Client, query: &TrackQuery) -> Result<Lyric
 }
 
 struct Song {
+    title: String,
     /// The decoded `lyricsData` payload: XML for type 3, plain text for type 1.
     payload: String,
 }
@@ -69,7 +74,10 @@ async fn request(
         ("terminalType", TERMINAL_TYPE),
         ("lyricsType", lyrics_type),
         ("key_title", query.track.as_str()),
-        ("key_artist", query.artists.first().map(String::as_str).unwrap_or("")),
+        (
+            "key_artist",
+            query.artists.first().map(String::as_str).unwrap_or(""),
+        ),
         ("key_album", query.album.as_str()),
     ];
 
@@ -112,7 +120,14 @@ async fn request(
     }
     let decoded = base64_decode(&encoded).ok_or(ProviderError::BadPayload)?;
     let payload = String::from_utf8(decoded).map_err(|_| ProviderError::BadPayload)?;
-    Ok(Some(Song { payload }))
+    Ok(Some(Song {
+        payload,
+        title: if returned_title.is_empty() {
+            query.track.clone()
+        } else {
+            returned_title
+        },
+    }))
 }
 
 /// Fold the per-word timings of a `<wsy>` document into one cue per line.
@@ -120,7 +135,10 @@ pub fn parse_word_synced(xml: &str) -> Option<Vec<Cue>> {
     let document = Document::parse(xml).ok()?;
     let mut cues: Vec<Cue> = Vec::new();
 
-    for line in document.descendants().filter(|node| node.has_tag_name("line")) {
+    for line in document
+        .descendants()
+        .filter(|node| node.has_tag_name("line"))
+    {
         let words: Vec<_> = line
             .children()
             .filter(|node| node.has_tag_name("word"))
@@ -212,8 +230,20 @@ mod tests {
                    <word><starttime>1200</starttime><endtime>1800</endtime><wordstring>W3</wordstring></word></line></wsy>";
         let cues = parse_word_synced(xml).unwrap();
         assert_eq!(cues.len(), 2);
-        assert_eq!(cues[0], Cue { time_ms: 0, text: "LINE_A".into() });
-        assert_eq!(cues[1], Cue { time_ms: 1200, text: "LINE_B".into() });
+        assert_eq!(
+            cues[0],
+            Cue {
+                time_ms: 0,
+                text: "LINE_A".into()
+            }
+        );
+        assert_eq!(
+            cues[1],
+            Cue {
+                time_ms: 1200,
+                text: "LINE_B".into()
+            }
+        );
     }
 
     #[test]
@@ -222,21 +252,42 @@ mod tests {
                    <word><starttime>500</starttime><wordstring>W1</wordstring></word>\
                    <word><starttime>900</starttime><wordstring>W2</wordstring></word></line></wsy>";
         let cues = parse_word_synced(xml).unwrap();
-        assert_eq!(cues[0], Cue { time_ms: 500, text: "W1W2".into() });
+        assert_eq!(
+            cues[0],
+            Cue {
+                time_ms: 500,
+                text: "W1W2".into()
+            }
+        );
     }
 
     #[test]
     fn lines_without_timings_are_dropped_and_payloads_without_lines_fail() {
-        assert!(parse_word_synced("<wsy><line><linestring>LINE_A</linestring></line></wsy>").is_none());
+        assert!(
+            parse_word_synced("<wsy><line><linestring>LINE_A</linestring></line></wsy>").is_none()
+        );
         assert!(parse_word_synced("not xml at all").is_none());
     }
 
     #[test]
     fn mxm_subtitle_cues_convert_seconds_to_milliseconds() {
-        let body = r#"[{"text":"LINE_A","time":{"total":12.34}},{"text":"LINE_B","time":{"total":0.5}}]"#;
+        let body =
+            r#"[{"text":"LINE_A","time":{"total":12.34}},{"text":"LINE_B","time":{"total":0.5}}]"#;
         let cues = parse_mxm_subtitle(body).unwrap();
-        assert_eq!(cues[0], Cue { time_ms: 500, text: "LINE_B".into() });
-        assert_eq!(cues[1], Cue { time_ms: 12_340, text: "LINE_A".into() });
+        assert_eq!(
+            cues[0],
+            Cue {
+                time_ms: 500,
+                text: "LINE_B".into()
+            }
+        );
+        assert_eq!(
+            cues[1],
+            Cue {
+                time_ms: 12_340,
+                text: "LINE_A".into()
+            }
+        );
     }
 
     #[test]

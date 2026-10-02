@@ -57,10 +57,10 @@ function playback(trackId = "song-a", generation = 1) {
     canSkipNext: true, canSkipPrevious: true, canSeek: true, deviceName: null,
   } });
 }
-function lyrics(generation: number, text: string) {
+function lyrics(generation: number, text: string, matchedTitle = "") {
   bridge.listeners.get("lyrics")!({ payload: {
     generation, trackId: generation === 1 ? "song-a" : "song-b", source: "LRCLIB",
-    synced: false, cues: [], text, partial: false, requested: "",
+    synced: false, cues: [], text, matchedTitle, partial: false, requested: "",
   } });
 }
 
@@ -176,6 +176,37 @@ it("connects straight away on first run when the player needs no Client ID", asy
   // An empty Client ID is only a blocker for Spotify.
   expect(el<HTMLDialogElement>("settings-dialog").open).toBe(false);
   expect(bridge.invoke).toHaveBeenCalledWith("connect", undefined);
+});
+
+it("shows the matched title beside the player title and keeps it through playback polls", async () => {
+  await import("./main");
+  await flush();
+  playback();
+  lyrics(1, "Lyrics", "丽都假日");
+  expect(el("track-name").textContent).toBe("song-a (丽都假日)");
+  playback();
+  expect(el("track-name").textContent).toBe("song-a (丽都假日)");
+  lyrics(1, "Lyrics", "song-a");
+  expect(el("track-name").textContent).toBe("song-a");
+  lyrics(1, "Lyrics");
+  expect(el("track-name").textContent).toBe("song-a");
+});
+
+it("clears matched titles on empty results, refreshes and track changes, ignoring stale answers", async () => {
+  await import("./main");
+  await flush();
+  playback();
+  lyrics(1, "Lyrics", "Alternate A");
+  lyrics(1, "", "Unmatched");
+  expect(el("track-name").textContent).toBe("song-a");
+  lyrics(1, "Lyrics", "Alternate A");
+  playback("song-a", 2);
+  expect(el("track-name").textContent).toBe("song-a");
+  lyrics(2, "Lyrics", "Alternate A");
+  playback("song-b", 3);
+  expect(el("track-name").textContent).toBe("song-b");
+  lyrics(2, "Old lyrics", "Alternate A");
+  expect(el("track-name").textContent).toBe("song-b");
 });
 
 it("keeps refresh separate from source selection and closes the picker when tracks change", async () => {

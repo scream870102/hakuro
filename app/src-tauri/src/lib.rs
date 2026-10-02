@@ -34,8 +34,8 @@ use tokio::sync::RwLock;
 
 use db::Db;
 use lrc::Cue;
-use providers::{LyricsResult, TrackQuery};
 use player::{Playback, Player, PlayerError, PlayerKind};
+use providers::{LyricsResult, TrackQuery};
 use settings::Settings;
 use smtc::Smtc;
 use spotify::Spotify;
@@ -86,6 +86,7 @@ struct LyricsEvent {
     generation: u64,
     track_id: String,
     source: String,
+    matched_title: String,
     synced: bool,
     cues: Vec<Cue>,
     text: String,
@@ -438,7 +439,10 @@ async fn poll_loop(app: AppHandle) {
         // one. The serial is unique per connection, which a pointer comparison
         // can no longer be now that two kinds of client share one slot.
         let active = app.state::<AppState>().session.player.read().await.clone();
-        if !active.as_ref().is_some_and(|open| open.serial == client.serial) {
+        if !active
+            .as_ref()
+            .is_some_and(|open| open.serial == client.serial)
+        {
             continue;
         }
         match result {
@@ -632,6 +636,7 @@ fn emit_lyrics(
             generation,
             track_id: track_id.to_string(),
             source: result.source.clone(),
+            matched_title: result.matched_title,
             synced: !result.cues.is_empty(),
             cues: result.cues,
             text: result.text,
@@ -864,6 +869,7 @@ mod tests {
             generation: 3,
             track_id: "id".into(),
             source: "LRCLIB".into(),
+            matched_title: "Alternate title".into(),
             synced: true,
             cues: vec![Cue {
                 time_ms: 1000,
@@ -880,6 +886,7 @@ mod tests {
             "generation",
             "trackId",
             "source",
+            "matchedTitle",
             "synced",
             "cues",
             "text",
@@ -1006,7 +1013,9 @@ pub fn run() {
             // The same toggle still lives in the settings panel.
             let chord = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyP);
             if let Err(error) = app.global_shortcut().register(chord) {
-                eprintln!("Ctrl+Alt+P is unavailable, click-through keeps its panel toggle: {error}");
+                eprintln!(
+                    "Ctrl+Alt+P is unavailable, click-through keeps its panel toggle: {error}"
+                );
             }
             Ok(())
         })

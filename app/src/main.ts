@@ -36,6 +36,7 @@ interface LyricsEvent {
   generation: number;
   trackId: string;
   source: string;
+  matchedTitle: string;
   synced: boolean;
   cues: Cue[];
   text: string;
@@ -112,6 +113,8 @@ const ui = {
 
 const state = {
   trackId: "",
+  trackName: "No track playing",
+  matchedTitle: "",
   requestedSource: "",
   sample: emptySample(performance.now()),
   generation: -1,
@@ -154,7 +157,14 @@ function dismissNotice() {
   ui.notice.hidden = true;
 }
 
+function renderTrackName() {
+  const alternate = state.matchedTitle && state.matchedTitle !== state.trackName;
+  ui.trackName.textContent = state.trackName + (alternate ? ` (${state.matchedTitle})` : "");
+}
+
 function clearLyrics(placeholder: string) {
+  state.matchedTitle = "";
+  renderTrackName();
   ui.lyricsList.replaceChildren();
   state.lines = [];
   state.cues = [];
@@ -192,6 +202,8 @@ function renderLyrics(event: LyricsEvent) {
   }
 
   clearLyrics("");
+  state.matchedTitle = event.matchedTitle?.trim() || "";
+  renderTrackName();
   ui.lyricsEmpty.hidden = true;
   state.cues = event.synced ? event.cues : [];
   state.cueTimes = state.cues.map((cue) => cue.time_ms);
@@ -702,14 +714,17 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
   if (changed) state.generation = payload.generation;
 
   if (!payload.hasTrack) {
-    ui.trackName.textContent = "No track playing";
+    state.trackName = "No track playing";
+    state.matchedTitle = "";
+    renderTrackName();
     ui.trackArtist.textContent = "";
     showAlbumArt(null);
     if (changed) clearLyrics("Waiting for playback…");
     return;
   }
 
-  ui.trackName.textContent = payload.name;
+  state.trackName = payload.name;
+  renderTrackName();
   ui.trackArtist.textContent = payload.artists.join(", ");
   showAlbumArt(payload.albumArt);
   if (changed) clearLyrics("Looking for lyrics…");

@@ -20,6 +20,8 @@ const MAX_RESPONSE_BYTES: usize = 2_000_000;
 pub struct LyricsResult {
     pub text: String,
     pub source: String,
+    /// Provider's returned title, or the successful query title when omitted.
+    pub matched_title: String,
     pub cues: Vec<Cue>,
     pub errors: Vec<String>,
 }
@@ -29,6 +31,7 @@ impl LyricsResult {
         Self {
             text: String::new(),
             source: source.to_string(),
+            matched_title: String::new(),
             cues: Vec::new(),
             errors: Vec::new(),
         }
@@ -53,6 +56,7 @@ impl LyricsResult {
         Self {
             text,
             source: source.to_string(),
+            matched_title: String::new(),
             cues,
             errors: Vec::new(),
         }
@@ -60,6 +64,13 @@ impl LyricsResult {
 
     pub fn is_empty(&self) -> bool {
         self.text.is_empty() && self.cues.is_empty()
+    }
+
+    pub fn with_title(mut self, title: &str) -> Self {
+        if !self.is_empty() {
+            self.matched_title = title.to_string();
+        }
+        self
     }
 }
 
@@ -85,6 +96,36 @@ impl TrackQuery {
             Some(artist) => format!("{} {}", self.track, artist),
             None => self.track.clone(),
         }
+    }
+
+    /// Verified recording alias, not a translation guess. The Japanese and
+    /// Chinese Spotify releases use different ids. NetEase 3334395674 has the
+    /// Chinese title, HOYO-MiX credit and the same 258640 ms duration.
+    fn alternate_query(&self) -> Option<Self> {
+        // ponytail: one verified recording; extend this table only with verified
+        // identities, until a reliable cross-catalogue alias service is available.
+        if self.spotify_id.as_deref() != Some("0XEwwNeNDbk5KaBJcg0389")
+            || !matches(
+                "エリーの休日",
+                &["HOYO-MiX".into()],
+                258_640,
+                &self.track,
+                &self.artists,
+                Some(self.duration_ms),
+            )
+        {
+            return None;
+        }
+        let mut alternate = self.clone();
+        alternate.track = "丽都假日".into();
+        // This shared credit is searchable in both catalogues; Sān-Z is listed
+        // as 三Z-STUDIO on NetEase. Keep every artist for identity validation.
+        let index = alternate
+            .artists
+            .iter()
+            .position(|a| normalize(a) == normalize("HOYO-MiX"))?;
+        alternate.artists.swap(0, index);
+        Some(alternate)
     }
 }
 
@@ -224,13 +265,13 @@ pub async fn lrclib(client: &reqwest::Client, query: &TrackQuery) -> ProviderRes
     let synced = str_field(&data, "syncedLyrics");
     let result = LyricsResult::from_raw(&synced, "LRCLIB");
     if !result.cues.is_empty() {
-        return Ok(result);
+        return Ok(result.with_title(&str_field(&data, "trackName")));
     }
     let plain = str_field(&data, "plainLyrics");
-    Ok(LyricsResult::from_raw(
-        if plain.is_empty() { &synced } else { &plain },
-        "LRCLIB",
-    ))
+    Ok(
+        LyricsResult::from_raw(if plain.is_empty() { &synced } else { &plain }, "LRCLIB")
+            .with_title(&str_field(&data, "trackName")),
+    )
 }
 
 // --------------------------------------------------------------- NetEase
@@ -299,7 +340,7 @@ pub async fn netease(client: &reqwest::Client, query: &TrackQuery) -> ProviderRe
             return Err(ProviderError::Rejected);
         }
         let raw = str_field(lyric.get("lrc").unwrap_or(&Value::Null), "lyric");
-        return Ok(LyricsResult::from_raw(&raw, "NetEase"));
+        return Ok(LyricsResult::from_raw(&raw, "NetEase").with_title(&str_field(song, "name")));
     }
 
     Ok(LyricsResult::empty("NetEase"))
@@ -376,7 +417,9 @@ pub async fn qqmusic(client: &reqwest::Client, query: &TrackQuery) -> ProviderRe
         let encoded = str_field(&lyric, "lyric");
         let decoded = base64_decode(&encoded).ok_or(ProviderError::BadPayload)?;
         let raw = String::from_utf8(decoded).map_err(|_| ProviderError::BadPayload)?;
-        return Ok(LyricsResult::from_raw(&raw, "QQ Music"));
+        return Ok(
+            LyricsResult::from_raw(&raw, "QQ Music").with_title(&str_field(song, "songname"))
+        );
     }
 
     Ok(LyricsResult::empty("QQ Music"))
@@ -433,6 +476,16 @@ pub async fn fetch_lyrics(
         }
     }
 
+    if let Some(alternate) = query.alternate_query() {
+        for id in order {
+            let label = crate::settings::provider_label(id).unwrap_or(id.as_str());
+            let outcome = fetch_one(client, musixmatch_session, id, &alternate).await;
+            if let Some(result) = chain.consider(label, outcome) {
+                return result;
+            }
+        }
+    }
+
     chain.finish()
 }
 
@@ -454,6 +507,14 @@ pub async fn fetch_pinned(
         fetch_one(client, musixmatch_session, id, query).await,
     ) {
         return result;
+    }
+    if let Some(alternate) = query.alternate_query() {
+        if let Some(result) = chain.consider(
+            label,
+            fetch_one(client, musixmatch_session, id, &alternate).await,
+        ) {
+            return result;
+        }
     }
     let mut result = chain.finish();
     // A plain-text-only answer still came from the pinned source.
@@ -502,6 +563,99 @@ impl Chain {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn localized_query() -> TrackQuery {
+        TrackQuery {
+            track: "エリーの休日".into(),
+            artists: vec!["Sān-Z".into(), "HOYO-MiX".into()],
+            album: "スターズ・オブ・リラ+".into(),
+            duration_ms: 258_640,
+            spotify_id: Some("0XEwwNeNDbk5KaBJcg0389".into()),
+        }
+    }
+
+    #[test]
+    fn recording_alias_requires_verified_identity() {
+        let original = localized_query();
+        let alternate = original.alternate_query().unwrap();
+        assert_eq!(alternate.search_phrase(), "丽都假日 HOYO-MiX");
+        assert!(matches(
+            &alternate.track,
+            &alternate.artists,
+            alternate.duration_ms,
+            "丽都假日",
+            &["三Z-STUDIO".into(), "HOYO-MiX".into(), "于梓贝".into()],
+            Some(258_640)
+        ));
+        assert!(alternate.alternate_query().is_none());
+        let mut wrong = original.clone();
+        wrong.spotify_id = None;
+        assert!(wrong.alternate_query().is_none());
+        wrong = original.clone();
+        wrong.track.push_str(" - Instrumental");
+        assert!(wrong.alternate_query().is_none());
+        wrong = original.clone();
+        wrong.artists = vec!["Cover Artist".into()];
+        assert!(wrong.alternate_query().is_none());
+        wrong = original;
+        wrong.duration_ms = 120_000;
+        assert!(wrong.alternate_query().is_none());
+    }
+
+    #[test]
+    fn matched_title_belongs_to_winning_lyrics_only() {
+        assert!(LyricsResult::empty("test")
+            .with_title("Unused")
+            .matched_title
+            .is_empty());
+        let mut chain = Chain::default();
+        assert!(chain
+            .consider(
+                "plain",
+                Ok(LyricsResult::from_raw("plain", "plain").with_title("Plain title"))
+            )
+            .is_none());
+        let result = chain
+            .consider(
+                "synced",
+                Ok(LyricsResult::from_raw("[00:01]line", "synced").with_title("Synced title")),
+            )
+            .unwrap();
+        assert_eq!(result.matched_title, "Synced title");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live lyric providers"]
+    async fn live_localized_spotify_lyrics() {
+        let client = super::client().unwrap();
+        let session = crate::musixmatch::Session::new();
+        let query = localized_query();
+        let result = fetch_lyrics(&client, &session, &query, &["netease".into()]).await;
+        println!(
+            "localized auto: source={} title={} cues={} errors={:?}",
+            result.source,
+            result.matched_title,
+            result.cues.len(),
+            result.errors
+        );
+        assert_eq!(result.source, "NetEase");
+        assert_eq!(result.matched_title, "丽都假日");
+        assert!(!result.cues.is_empty());
+        let pinned = fetch_pinned(&client, &session, "netease", &query).await;
+        assert_eq!(pinned.source, "NetEase");
+        assert_eq!(pinned.matched_title, "丽都假日");
+        assert!(!pinned.cues.is_empty());
+        let disabled = fetch_lyrics(&client, &session, &query, &[]).await;
+        assert!(disabled.is_empty());
+        let order = crate::settings::Settings::default().lookup_order();
+        let automatic = fetch_lyrics(&client, &session, &query, &order).await;
+        println!(
+            "localized default: source={} title={} cues={} errors={:?}",
+            automatic.source, automatic.matched_title, automatic.cues.len(), automatic.errors
+        );
+        assert!(!automatic.cues.is_empty());
+        assert!(!automatic.matched_title.is_empty());
+    }
 
     #[test]
     fn synced_payload_wins_over_its_own_plain_text() {

@@ -1,5 +1,22 @@
 # hakuro session recovery
 
+## Active task — 2026-10-02 localized lyric titles
+
+Goal: find lyrics for Spotify's `エリーの休日` and show the matched lyric title in parentheses beside the player title when different.
+Acceptance:
+- [x] Live automatic/default-order and pinned NetEase lookups return 68 synced cues under `丽都假日` for the supplied Spotify recording.
+- [x] Alias requires the verified Spotify ID, title, HOYO-MiX credit and duration; retries use only enabled/pinned sources. Regression and independent review passed.
+- [x] Matched title survives SQLite cache migration/events/playback polls; UI clears it on track change, refresh or empty lyrics and rejects stale events.
+- [x] Rust: 74 passed, 2 live tests ignored by default; targeted live regression passed. Frontend: 35 passed. `npm run build` and diff whitespace check passed; independent review completed.
+Known: current title equality rejects translations; no alias lookup exists. Chinese title is 麗都假日 / 丽都假日. No user config changes or commits authorized.
+Plan: verified provider metadata supplied no automatic cross-language bridge. Implement a bounded alias for this recording, then persist/display the title and test/review.
+Progress: complete. Live default lookup: NetEase, title `丽都假日`, 68 cues; QQ Music returned Http but fallback succeeded. No installed app/config changes or commits.
+Limits: this is a verified alias for the reported recording, not a general song-title translator. NetEase must be enabled (or pinned) for the verified successful path. Old cached lyrics without title metadata retain their original display until refreshed. No interactive desktop playback test performed.
+Review decision: when a provider omits its returned title, record the successful query title, matching the user's request to show which title found the lyrics. Otherwise show the provider's actual title.
+Reusable finding: same song can have different localized Spotify release IDs; title-only translation is unsafe. This recording shares HOYO-MiX and exactly 258640 ms with NetEase 3334395674; Sān-Z is credited there as 三Z-STUDIO.
+
+## Previous completed task
+
 Goal: add a YouTube Music playback source alongside Spotify, switchable in Settings, one active at a time.
 
 Acceptance:

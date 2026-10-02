@@ -82,6 +82,21 @@ impl Db {
                  );",
             )
             .map_err(|error| error.to_string())?;
+        let has_matched_title: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('lyrics') WHERE name = 'matched_title')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| error.to_string())?;
+        if !has_matched_title {
+            connection
+                .execute(
+                    "ALTER TABLE lyrics ADD COLUMN matched_title TEXT NOT NULL DEFAULT ''",
+                    [],
+                )
+                .map_err(|error| error.to_string())?;
+        }
         Ok(connection)
     }
 
@@ -104,7 +119,7 @@ impl Db {
         let row = self.with(|connection| {
             connection
                 .query_row(
-                    "SELECT source, text, cues, fetched_at FROM lyrics
+                    "SELECT source, text, cues, fetched_at, matched_title FROM lyrics
                      WHERE track_key = ?1 AND requested = ?2",
                     params![track_key, requested],
                     |row| {
@@ -113,19 +128,21 @@ impl Db {
                             row.get::<_, String>(1)?,
                             row.get::<_, String>(2)?,
                             row.get::<_, i64>(3)?,
+                            row.get::<_, String>(4)?,
                         ))
                     },
                 )
                 .optional()
         })??;
 
-        let (source, text, cues, fetched_at) = row;
+        let (source, text, cues, fetched_at, matched_title) = row;
         if now_seconds().saturating_sub(fetched_at) > MAX_AGE_SECONDS {
             return None;
         }
         Some(LyricsResult {
             text,
             source,
+            matched_title,
             cues: serde_json::from_str::<Vec<Cue>>(&cues).unwrap_or_default(),
             errors: Vec::new(),
         })
@@ -147,8 +164,8 @@ impl Db {
         self.with(|connection| {
             connection.execute(
                 "INSERT INTO lyrics
-                     (track_key, requested, track_name, artist, source, synced, text, cues, fetched_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                     (track_key, requested, track_name, artist, source, synced, text, cues, fetched_at, matched_title)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
                  ON CONFLICT(track_key, requested) DO UPDATE SET
                      track_name = excluded.track_name,
                      artist     = excluded.artist,
@@ -156,7 +173,8 @@ impl Db {
                      synced     = excluded.synced,
                      text       = excluded.text,
                      cues       = excluded.cues,
-                     fetched_at = excluded.fetched_at",
+                     fetched_at = excluded.fetched_at,
+                     matched_title = excluded.matched_title",
                 params![
                     track_key,
                     requested,
@@ -167,6 +185,7 @@ impl Db {
                     result.text,
                     cues,
                     now_seconds(),
+                    result.matched_title,
                 ],
             )
         });
@@ -261,6 +280,7 @@ mod tests {
         LyricsResult {
             text: "LINE_A\nLINE_B".into(),
             source: "LRCLIB".into(),
+            matched_title: "丽都假日".into(),
             cues: vec![
                 Cue {
                     time_ms: 1000,
@@ -281,6 +301,32 @@ mod tests {
     };
 
     #[test]
+    fn old_cache_migrates_without_losing_lyrics_or_source_choices() {
+        with_temp_data_dir(|_| {
+            {
+                let db = Db::open();
+                db.save_lyrics("track-1", AUTO, TRACK, &sample());
+                db.set_preferred_source("track-1", Some("netease")).unwrap();
+                db.with(|connection| {
+                    connection.execute("ALTER TABLE lyrics DROP COLUMN matched_title", [])
+                })
+                .expect("simulate the previous schema");
+            }
+            let db = Db::open();
+            assert!(db.warning().is_none());
+            let stored = db.lyrics("track-1", AUTO).expect("old lyrics retained");
+            assert!(stored.matched_title.is_empty());
+            assert_eq!(stored.text, sample().text);
+            assert_eq!(db.preferred_source("track-1").as_deref(), Some("netease"));
+            db.save_lyrics("track-1", AUTO, TRACK, &sample());
+            assert_eq!(
+                db.lyrics("track-1", AUTO).unwrap().matched_title,
+                "丽都假日"
+            );
+        });
+    }
+
+    #[test]
     fn lyrics_survive_reopening_the_database() {
         with_temp_data_dir(|_| {
             {
@@ -295,6 +341,7 @@ mod tests {
             let db = Db::open();
             let stored = db.lyrics("track-1", AUTO).expect("cached across sessions");
             assert_eq!(stored.source, "LRCLIB");
+            assert_eq!(stored.matched_title, "丽都假日");
             assert_eq!(stored.cues.len(), 2);
             assert_eq!(stored.cues[1].time_ms, 2000);
             // Errors belong to one lookup attempt, not to the cached lyrics.

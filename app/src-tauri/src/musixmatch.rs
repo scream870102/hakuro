@@ -142,8 +142,14 @@ pub async fn fetch(
         ("app_id", app_id),
         ("usertoken", token),
         ("q_track", query.track.clone()),
-        ("q_artist", query.artists.first().cloned().unwrap_or_default()),
-        ("q_artists", query.artists.first().cloned().unwrap_or_default()),
+        (
+            "q_artist",
+            query.artists.first().cloned().unwrap_or_default(),
+        ),
+        (
+            "q_artists",
+            query.artists.first().cloned().unwrap_or_default(),
+        ),
         ("q_album", query.album.clone()),
         ("q_duration", duration_seconds.to_string()),
         ("f_subtitle_length", duration_seconds.to_string()),
@@ -189,6 +195,11 @@ pub async fn fetch(
     if !identity_matches(&macro_calls, query) {
         return Ok(LyricsResult::empty(SOURCE));
     }
+    let matched_title = macro_calls
+        .pointer("/matcher.track.get/message/body/track/track_name")
+        .and_then(Value::as_str)
+        .filter(|title| !title.is_empty())
+        .unwrap_or(&query.track);
 
     if let Some(body) = subtitle_body(&macro_calls) {
         if let Some(cues) = subtitle_cues(&body) {
@@ -200,6 +211,7 @@ pub async fn fetch(
             return Ok(LyricsResult {
                 text,
                 source: SOURCE.to_string(),
+                matched_title: matched_title.to_string(),
                 cues,
                 errors: Vec::new(),
             });
@@ -208,7 +220,7 @@ pub async fn fetch(
 
     if let Some(plain) = plain_body(&macro_calls) {
         if !plain.trim().is_empty() {
-            return Ok(LyricsResult::from_raw(&plain, SOURCE));
+            return Ok(LyricsResult::from_raw(&plain, SOURCE).with_title(matched_title));
         }
     }
 
@@ -241,7 +253,10 @@ fn identity_matches(macro_calls: &Value, query: &TrackQuery) -> bool {
         &query.track,
         &query.artists,
         query.duration_ms,
-        track.get("track_name").and_then(Value::as_str).unwrap_or(""),
+        track
+            .get("track_name")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
         &[artist],
         candidate_ms,
     )
@@ -303,16 +318,30 @@ mod tests {
         // The all-zero token the retired desktop identity now hands out.
         assert!(is_degenerate(&"0".repeat(56)));
         assert!(is_degenerate("UpgradeRequired"));
-        assert!(!is_degenerate("2203269256ff7abcb649269df00e14c833dbf4ddfb5b36a1aae8b0"));
+        assert!(!is_degenerate(
+            "2203269256ff7abcb649269df00e14c833dbf4ddfb5b36a1aae8b0"
+        ));
     }
 
     #[test]
     fn subtitle_body_is_read_as_lrc_or_as_cue_json() {
         let lrc = subtitle_cues("[00:01.00]LINE_A\n[00:02.00]LINE_B").unwrap();
-        assert_eq!(lrc[0], Cue { time_ms: 1000, text: "LINE_A".into() });
+        assert_eq!(
+            lrc[0],
+            Cue {
+                time_ms: 1000,
+                text: "LINE_A".into()
+            }
+        );
 
         let json = subtitle_cues(r#"[{"text":"LINE_A","time":{"total":1.0}}]"#).unwrap();
-        assert_eq!(json[0], Cue { time_ms: 1000, text: "LINE_A".into() });
+        assert_eq!(
+            json[0],
+            Cue {
+                time_ms: 1000,
+                text: "LINE_A".into()
+            }
+        );
     }
 
     #[test]
@@ -324,7 +353,8 @@ mod tests {
 
     #[test]
     fn inner_envelope_status_is_read_not_the_transport_status() {
-        let data: Value = serde_json::from_str(r#"{"message":{"header":{"status_code":401}}}"#).unwrap();
+        let data: Value =
+            serde_json::from_str(r#"{"message":{"header":{"status_code":401}}}"#).unwrap();
         assert_eq!(inner_status(&data), Some(401));
         assert_eq!(inner_status(&Value::Null), None);
     }
