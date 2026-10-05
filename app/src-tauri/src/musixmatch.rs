@@ -239,6 +239,21 @@ fn identity_matches(macro_calls: &Value, query: &TrackQuery) -> bool {
         return true;
     };
 
+    // Musixmatch listing the playing Spotify id settles the identity outright.
+    // Spotify often carries a romanized title or artist ("Setsugekka", "yangskinny")
+    // while Musixmatch keeps the original script, so the name check below would
+    // reject the very recording Spotify's own lyrics come from.
+    if let Some(spotify_id) = query.spotify_id.as_deref().filter(|id| !id.is_empty()) {
+        let listed = track.get("track_spotify_id").and_then(Value::as_str) == Some(spotify_id)
+            || track
+                .get("commontrack_spotify_ids")
+                .and_then(Value::as_array)
+                .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(spotify_id)));
+        if listed {
+            return true;
+        }
+    }
+
     let candidate_ms = track
         .get("track_length")
         .and_then(Value::as_f64)
@@ -375,5 +390,26 @@ mod tests {
         assert!(!identity_matches(&macro_calls, &query));
         // With no identity block the query we sent is trusted.
         assert!(identity_matches(&Value::Null, &query));
+    }
+
+    #[test]
+    fn a_listed_spotify_id_overrides_a_romanized_name() {
+        let macro_calls: Value = serde_json::from_str(
+            r#"{"matcher.track.get":{"message":{"body":{"track":{"track_name":"雪月花","artist_name":"ヤングスキニー","track_length":0,"track_spotify_id":"OTHER","commontrack_spotify_ids":["OTHER","PLAYING"]}}}}}"#,
+        )
+        .unwrap();
+        let mut query = TrackQuery {
+            track: "Setsugekka".into(),
+            artists: vec!["yangskinny".into()],
+            album: "Album".into(),
+            duration_ms: 316_080,
+            spotify_id: Some("PLAYING".into()),
+        };
+        assert!(identity_matches(&macro_calls, &query));
+        // Without the id, the romanized names alone are still rejected.
+        query.spotify_id = Some("ELSEWHERE".into());
+        assert!(!identity_matches(&macro_calls, &query));
+        query.spotify_id = None;
+        assert!(!identity_matches(&macro_calls, &query));
     }
 }
