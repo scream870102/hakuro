@@ -1,6 +1,6 @@
 [package]
 name = "hakuro"
-version = "1.2.1"
+version = "1.2.2"
 description = "Original-language lyrics for whatever Spotify is playing."
 authors = ["Eccentric Studio"]
 edition = "2021"
