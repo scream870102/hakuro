@@ -103,8 +103,11 @@ body {
 /* ---------- compact mode ---------- */
 
 /* Art, title, lyrics and the scrubber; nothing else earns the room. The window
-   buttons go too, which is why the mode toggle sits with the ones that stay. */
+   buttons go too, which is why the mode toggle sits with the ones that stay.
+   The status text goes at every width: the scrubber only reserves room for the
+   buttons, so a status beside them would sit on top of it. */
 body.is-compact .titlebar__status,
+body.is-compact .window-controls .status,
 body.is-compact .controls__row,
 body.is-compact .controls__row--secondary,
 body.is-compact #win-minimize,
@@ -143,14 +146,14 @@ body.is-compact .lyrics {
   mask-image: none;
 }
 
-/* The scrubber joins the chrome row, filling whatever the three remaining
-   buttons leave. Out of the grid, so the header is the whole of the chrome the
-   minimum height has to pay for. */
+/* The scrubber joins the chrome row, filling whatever the four remaining
+   buttons leave (settings, refresh, mode, pin). Out of the grid, so the header
+   is the whole of the chrome the minimum height has to pay for. */
 body.is-compact .controls {
   position: absolute;
   top: 0;
   left: 12px;
-  right: calc(3 * var(--chrome-button));
+  right: calc(4 * var(--chrome-button));
   height: var(--chrome-height);
   display: flex;
   align-items: center;
