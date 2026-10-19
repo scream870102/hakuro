@@ -1,0 +1,55 @@
+/* The panel windows (settings, Find lyrics, lyrics source): a header to drag
+   them by, the content scrolling beneath, and the buttons pinned to the bottom
+   so they are always in reach. */
+
+@import "./base.css";
+@import "./sheet.css";
+
+html, body { background: #0c0c0c; }
+body {
+  display: grid; grid-template-rows: 36px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid #343432;
+  user-select: none;
+}
+
+.win-head { display: flex; align-items: center; gap: 10px; padding-left: 12px; border-bottom: 1px solid var(--line); background: #0a0a0a; }
+.win-head__title { min-width: 0; overflow: hidden; font: 700 10px var(--mono); letter-spacing: .22em; color: var(--ink-3); white-space: nowrap; text-overflow: ellipsis; }
+.win-head .window-button { align-self: stretch; margin-left: auto; width: 44px; }
+
+.panel { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; }
+.panel__body {
+  min-height: 0; overflow-y: auto; padding: 0 22px 18px;
+  overscroll-behavior: contain; user-select: text;
+  scrollbar-width: thin; scrollbar-color: #2a2a2a transparent;
+}
+.panel__foot { padding: 10px 22px 12px; border-top: 1px solid var(--line); background: #0a0a0a; }
+.panel__foot .dialog-actions { margin-top: 0; }
+#settings-error, #source-error { margin: 0 0 8px; color: var(--accent); }
+#settings-error:empty, #source-error:empty { display: none; }
+
+/* Find lyrics */
+.lyrics-match-actions { flex-wrap: wrap; }
+.lyrics-candidates { max-height: 220px; margin: 10px 0; padding: 0; overflow-y: auto; list-style: none; }
+.lyric-candidate {
+  width: 100%; margin-bottom: 6px; padding: 9px 12px; overflow-wrap: anywhere; text-align: left;
+  border: 1.5px solid #2c2c2a; color: var(--ink);
+  transition: border-color .15s, background .15s;
+}
+.lyric-candidate:hover { border-color: var(--ink-3); }
+.lyric-candidate strong, .lyric-candidate span { display: block; }
+.lyric-candidate strong { font: 900 14px/1.3 var(--display); letter-spacing: .03em; }
+.lyric-candidate span { margin-top: 4px; font: 700 10.5px/1.5 var(--mono); color: var(--ink-3); }
+.lyric-candidate[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+#lyrics-preview { max-height: 240px; margin: 0; padding: 10px 12px; overflow-y: auto; background: #000; border: 1.5px solid #2c2c2a; font: 500 12.5px/1.7 var(--jp); white-space: pre-wrap; overflow-wrap: anywhere; }
+#lyrics-search-form > label { display: block; margin-top: 12px; }
+
+/* Narrow windows stack each dial's name above its slider. */
+@media (max-width: 520px) {
+  .range-setting { grid-template-columns: minmax(0, 1fr) auto; }
+  .range-setting span { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+}

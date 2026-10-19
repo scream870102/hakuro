@@ -1,0 +1,75 @@
+/* Hakuro — shared by every window: the bundled type, the colour tokens and the
+   resets. Concrete black, three greys and one accent (acid yellow unless the
+   reader picks another). */
+
+/* Bundled, so the poster type survives being offline. Noto Sans JP carries the
+   heavy CJK weights the lyrics are set in; Anton and JetBrains Mono are Latin. */
+@import "@fontsource/anton/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
+@import "@fontsource-variable/noto-sans-jp/wght.css";
+
+:root {
+  --accent: #e6ff1f;
+  --active-line: #f4f6f5;
+  --past-line: #3e4040;
+  --ink: #f1f1ec;
+  --ink-2: #a8a8a3;
+  --ink-3: #62625e;
+  --line: #272727;
+  /* Background opacity. The lyrics never use it, so thinning the window keeps
+     the words readable over whatever is behind them. */
+  --ui-opacity: 1;
+  /* Lyric type size. One variable for both modes: the interface writes the
+     value belonging to whichever mode is showing. */
+  --lyric-size: 26px;
+  --accent-glow: color-mix(in srgb, var(--accent) 55%, transparent);
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --display: "Anton", "Noto Sans JP Variable", "Yu Gothic UI", "Microsoft JhengHei UI", sans-serif;
+  /* Japanese and Chinese lyrics need a CJK-capable stack, not just a Latin face. */
+  --jp: "Noto Sans JP Variable", "Yu Gothic UI", "Meiryo", "Microsoft JhengHei UI", sans-serif;
+  --tc: "Microsoft JhengHei UI", "Noto Sans JP Variable", "Yu Gothic UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+
+body {
+  color: var(--ink);
+  font-family: var(--jp);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+[hidden] { display: none !important; }
+button, input, select { font: inherit; color: inherit; }
+button { background: none; border: 0; padding: 0; cursor: pointer; }
+button:disabled { cursor: default; }
+button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* The app icon's outline, drawn in the accent: the mark keeps the brand colour
+   without a solid block, so it sits as lightly as the wordmark beside it. The
+   icon is white lines on black, so its brightness is the mask; the canvas
+   around the mark is cropped by sizing the mask past the box. */
+.brand__mark {
+  flex-shrink: 0; width: 34px; height: 22px;
+  background: var(--accent);
+  mask: url("../src-tauri/icons/128x128.png") center / 39px no-repeat luminance;
+}
+
+/* Window buttons: the main window's header and the settings window's. */
+.window-button {
+  display: grid; place-items: center; width: 40px; color: var(--ink-2);
+  transition: background .12s, color .12s, transform .12s;
+}
+.window-button svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.2; stroke-linecap: square; }
+.window-button:hover:not(:disabled) { background: var(--accent); color: #000; }
+.window-button:active:not(:disabled) { transform: scale(.82); }
+.window-button:disabled { opacity: .3; }
+.window-button:focus-visible { outline-offset: -3px; }
+/* Closing is the one destructive control up here, so it reads differently. */
+.window-button--close:hover { background: var(--ink); }

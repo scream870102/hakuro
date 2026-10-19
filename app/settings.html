@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hakuro Settings</title>
+    <link rel="stylesheet" href="/src/panel.css" />
+  </head>
+  <body class="sheet">
+    <!-- Frameless like the main window; the header drags it, the button closes
+         it without saving. -->
+    <header class="win-head" data-tauri-drag-region="deep">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="win-head__title">HAKURO / PREFERENCES</span>
+      <button class="window-button window-button--close" id="panel-close" type="button"
+              title="Close without saving" aria-label="Close without saving">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 2.6l6.8 6.8M9.4 2.6l-6.8 6.8"/></svg>
+      </button>
+    </header>
+    <form class="panel" id="settings-form" aria-labelledby="settings-title">
+      <div class="panel__body">
+        <div class="dialog-head">
+          <h2 id="settings-title">Settings</h2>
+          <div class="version"><span>VERSION</span><b id="app-version">—</b></div>
+        </div>
+        <h3>Player</h3>
+        <label for="settings-player">Player</label>
+        <select id="settings-player">
+          <option value="spotify">Spotify</option>
+          <option value="ytmusic">YouTube Music</option>
+        </select>
+        <p>Hakuro follows one player at a time. YouTube Music is read from the Windows media session, so it needs no sign-in: play it in your browser or in the desktop app and Hakuro follows along.</p>
+        <div id="spotify-settings">
+          <label for="client-id">Spotify Client ID</label>
+          <input id="client-id" type="text" autocomplete="off" spellcheck="false" placeholder="32-character Client ID" />
+          <p>Copy the Client ID from your Spotify Developer app. Set its redirect URI to <code>http://127.0.0.1:8787/callback</code>. No Client Secret is needed.</p>
+        </div>
+        <h3>Lyrics search order</h3>
+        <p>Move sources up or down and select which ones to search. A song's preferred source takes priority.</p>
+        <ol id="source-order" class="source-order"></ol>
+        <h3>Colors</h3>
+        <div class="color-settings">
+          <label><input id="color-accent" type="color" /> Buttons and controls</label>
+          <label><input id="color-active" type="color" /> Current lyric</label>
+          <label><input id="color-past" type="color" /> Past lyrics</label>
+        </div>
+        <h3>Window</h3>
+        <label class="range-setting">
+          <span>Background opacity</span>
+          <input id="settings-opacity" type="range" min="30" max="100" step="5" />
+          <output id="opacity-value" for="settings-opacity">100%</output>
+        </label>
+        <label class="range-setting">
+          <span>Background opacity (compact)</span>
+          <input id="settings-compact-opacity" type="range" min="30" max="100" step="5" />
+          <output id="compact-opacity-value" for="settings-compact-opacity">85%</output>
+        </label>
+        <p>Thins the background so the desktop shows through. The lyrics stay fully opaque. Compact mode keeps its own value, because it is the one meant to sit over other work.</p>
+        <label class="range-setting">
+          <span>Lyric size</span>
+          <input id="settings-lyric-size" type="range" min="12" max="44" step="1" />
+          <output id="lyric-size-value" for="settings-lyric-size">26px</output>
+        </label>
+        <label class="range-setting">
+          <span>Lyric size (compact)</span>
+          <input id="settings-compact-lyric-size" type="range" min="12" max="44" step="1" />
+          <output id="compact-lyric-size-value" for="settings-compact-lyric-size">18px</output>
+        </label>
+        <p>Compact mode always keeps room for three lines: the line being sung, and the one on either side.</p>
+        <label for="settings-click-through">Click-through</label>
+        <select id="settings-click-through">
+          <option value="off">Off — the window always answers the mouse</option>
+          <option value="auto">Auto — pass clicks through while another window has focus</option>
+          <option value="always">Always pass clicks through</option>
+        </select>
+        <p>Only acts while the window is pinned on top. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> switches between off and always from any application, which is the way back once clicks pass through.</p>
+
+        <label class="follow-setting"><input id="settings-follow" type="checkbox" /> Follow lyrics automatically</label>
+        <p id="storage-info"></p>
+      </div>
+      <div class="panel__foot">
+        <p id="settings-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="ghost-button" id="settings-cancel" type="button">Cancel</button>
+          <button class="ghost-button ghost-button--go" id="settings-save" type="submit">Save settings</button>
+        </div>
+      </div>
+    </form>
+    <script type="module" src="/src/settings.ts"></script>
+  </body>
+</html>

@@ -1,6 +1,46 @@
 # hakuro session recovery
 
-## Active task — 2026-10-19 Cube Deck redesign, v1.3.0
+## Completed task — 2026-10-19 Find lyrics and source in their own windows, quieter brand mark
+
+Goal: (user) move Find lyrics and Lyrics source out of the main window like settings; the icon on the accent plate looks out of place — offer alternatives.
+Acceptance:
+- [x] Four brand variants rendered side by side (scratchpad shots/brand-variants-2x.png); C chosen: accent-coloured outline of the icon, no plate (CSS luminance mask on `--accent`), full and compact.
+- [x] Find lyrics: own panel window (search.html/search.ts), opened by FIND, the back face and the palette; song passed in the URL (track key, title, query, manual, translations); search/preview/apply/restore as before; closes on save, Close/×/Esc and when the song changes; translation switch drives main via `search:translations`.
+- [x] Lyrics source: own panel window (source.html/source.ts); Automatic + providers, requested source preselected; apply sends the URL's track key; failure stays open; closes on Cancel/×/Esc and song change.
+- [x] Shared panel helpers (panel.ts, panel.css, windows.ts `openPanel`); settings moved onto them; in-window dialogs and click-away code removed from main.
+- [x] Tests: search.test (9) and source.test (6) added, main.test adapted; 73 pass; tsc clean; vite builds five pages; children capability covers search/source.
+- [x] Real-app check of both windows and the brand mark; installer rebuilt at 16:38; not committed.
+
+Handoff verification (Codex, 2026-10-19): Claude stopped at the session limit after the real-app checks, before updating this file. The user confirmed the installer was already rebuilt; its successful build log and `app/src-tauri/target/release/bundle/nsis/Hakuro_1.3.0_x64-setup.exe` timestamp were verified. No rebuild or implementation changes were needed. Fresh checks: all 73 frontend tests pass, `npx tsc --noEmit` and `git diff --check` pass. Rust source is unchanged; Rust tests were not rerun.
+
+Real-app evidence: attached to Claude's release test instance (separate WebView2 profile, debug port 9333). Find lyrics opens at 600x680 with the synthetic song/query, enabled searchable sources and selected query; Lyrics source opens at 480x380 with Automatic plus all five providers. Both receive no-track close requests and actually disappear after releasing the temporary screenshot hold. Main is 940x760 with a 34x22 accent outline mark; the existing compact screenshot at 460x198 was visually checked. Claude's final recorded checks also cover Escape/Cancel, source-save failure remaining open, settings opening/closing through the shared helper, and compact/full switching. Fresh screenshots: `C:/Users/User/AppData/Local/Temp/claude/C--Projects-hakuro/56719b9e-b540-41bd-8cd0-0081ccff9329/scratchpad/shots/codex-{main,search,source}.png`.
+
+Limit: no actual song was playing during the real-app check, so live search/preview/apply/restore against a playing track is not verified in this handoff. Those paths, stale responses, save failures, translations and track changes pass the frontend regression tests. Synthetic playback was used only to inspect the windows; the real backend correctly rejects track operations with "Nothing is playing."
+
+Cleanup: the release test process (PID 7056, verified executable path) was closed through its own close button and confirmed exited. Claude's temporary release-folder `settings.json` was moved to the scratchpad as `codex-verified-test-settings.json`; installed-app settings were untouched. No commit/push. Keep the existing installer for user testing.
+
+## Previous task (same session, uncommitted) — 2026-10-19 brand icon, palette and settings in their own windows
+
+Goal: (user) top-left shows the project icon on the accent plate instead of "H"; the command palette and the settings panel open as their own windows so a small (compact) main window cannot cramp them.
+Already done this session, uncommitted: bar play/pause icon replaces FOLLOW/RELOAD (no idle fade), bar 64->48px, background shards drift.
+Acceptance:
+- [x] Brand mark is the HR icon (src-tauri/icons) on the accent plate, full and compact.
+- [x] Palette: own window (owned by main, so above a pinned main), placed over main and clamped to the monitor work area; Ctrl+K / COMMANDS open it; commands and lyric jumps still run in main; Esc, Enter-run, click-away and blur close it; IME guard kept.
+- [x] Settings: own window (owned by main); opened by the header button, the palette and first run; dials preview live on main; Cancel/Esc/close restore; Save applies; version and storage info shown; save failure keeps the window and values.
+- [x] In-window palette/settings dialogs removed; source and Find-lyrics dialogs unchanged.
+- [x] Frontend tests moved/extended (main, palette, settings), tsc, vite multi-page build, cargo test if Rust touched; real-app check of both windows; installer rebuilt; not committed.
+Decisions: windows created from JS (`WebviewWindow`, `parent: "main"`), pages palette.html/settings.html as Vite inputs; children get their own capability. Palette is created on first use and then hidden/shown (snappy reopen); settings is created per open and destroyed on close. Main re-reads `get_config` when the settings window is destroyed (covers save, cancel and Alt+F4 in one path). Palette receives a plain-data snapshot (commands, lyric lines, track key) and sends back {command id | line index}; closures stay in main.
+Progress:
+- Brand icon done (img of src-tauri/icons/64x64.png, bundled by Vite). Compact accent band sized to the 124px cube column (user report: cube's right side fell off the band); verified by screenshot 460x198/258.
+- CSS split: base.css (fonts, tokens, resets, brand, window buttons), sheet.css (form styles, `.sheet`), palette.css, settings.css; styles.css imports base+sheet.
+- palette.html + palette-window.ts + palette.ts (snapshot/actions), settings.html + settings.ts, windows.ts (placement, owned child options), config.ts (shared types, applyTheme). Capabilities: main gains create-webview-window/set-position/set-focus; children.json for palette+settings.
+- Tests: 61 pass (main 40, palette 7, settings 6, clock 8); tsc clean; vite build emits three pages. Test helper isolateListeners fixes a cross-test listener leak (fresh module per test, one jsdom window per file).
+- Real app (release exe, own WebView2 profile + debug port, temporary ytmusic settings.json removed afterwards): palette window created/placed over main (334,190 for main 956x769 at 156,156), commands run in main (Compact mode), Escape hides and main regains focus, palette full-size over compact main (476x207); settings window opens focused, compact dial previews on main (30px), Cancel reverts (18px), Save applies (22px) and writes settings.json, settings stays above a pinned main (desktop capture).
+- Fixes from the real-app check: first open after launch hid the palette at once (momentary blur while the webview takes focus) -> blur must last 150 ms and isFocused() must be false; palette list scrollbar styled thin/dark. Re-verified on two fresh launches (button and Ctrl+K paths). Main dialogs (Find lyrics, source) re-checked after the CSS split.
+- Tests 62 pass, tsc clean, Rust untouched (capabilities validated by `tauri build`). README updated. Installer rebuilt (still 1.3.0). Not committed.
+Reusable findings: a frameless child window's first show can report focus-lost while WebView2 takes focus, so blur-to-dismiss needs a grace check. jsdom keeps one window per test file while each test re-imports the page module, so window/document listeners must be removed between tests (src/test-listeners.ts). The scratchpad stub bridge must send `trackKey`, or every track-dependent control stays disabled.
+
+## Previous completed task — 2026-10-19 Cube Deck redesign, v1.3.0
 
 Goal: replace the interface with design concept A (Cube Deck, `design/concepts/a-cube.html`), bump to 1.3.0, commit, and build a local installer for the user to test.
 Acceptance:

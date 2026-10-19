@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hakuro Find Lyrics</title>
+    <link rel="stylesheet" href="/src/panel.css" />
+  </head>
+  <body class="sheet">
+    <header class="win-head" data-tauri-drag-region="deep">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="win-head__title">HAKURO / FIND LYRICS</span>
+      <button class="window-button window-button--close" id="panel-close" type="button" title="Close" aria-label="Close">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 2.6l6.8 6.8M9.4 2.6l-6.8 6.8"/></svg>
+      </button>
+    </header>
+    <div class="panel" role="dialog" aria-labelledby="lyrics-search-title">
+      <div class="panel__body">
+        <h2 id="lyrics-search-title">Find lyrics</h2>
+        <p id="lyrics-search-track"></p>
+        <form id="lyrics-search-form">
+          <label for="lyrics-query">Song title or artist (any language)</label>
+          <input id="lyrics-query" type="text" required maxlength="300" autocomplete="off" />
+          <label for="lyrics-search-source">Search source</label>
+          <select id="lyrics-search-source"></select>
+          <div class="dialog-actions"><button class="ghost-button ghost-button--go" id="lyrics-search-submit" type="submit">Search</button></div>
+        </form>
+        <p id="lyrics-search-status" role="status" aria-live="polite"></p>
+        <ol id="lyrics-candidates" class="lyrics-candidates" aria-label="Matching songs"></ol>
+        <section id="lyrics-preview-panel" hidden aria-labelledby="lyrics-preview-title">
+          <h3 id="lyrics-preview-title">Preview</h3>
+          <pre id="lyrics-preview"></pre>
+        </section>
+        <label class="follow-setting"><input id="show-translations" type="checkbox" checked /> Show translations when available</label>
+      </div>
+      <div class="panel__foot">
+        <div class="dialog-actions lyrics-match-actions">
+          <button class="ghost-button" id="lyrics-match-clear" type="button" disabled>Restore automatic</button>
+          <button class="ghost-button" id="lyrics-search-close" type="button">Close</button>
+          <button class="ghost-button ghost-button--go" id="lyrics-match-apply" type="button" disabled>Use these lyrics</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/search.ts"></script>
+  </body>
+</html>

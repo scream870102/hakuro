@@ -24,7 +24,7 @@
       <!-- Native chrome is off, so the window's own controls live here. Buttons
            block dragging by themselves, which is why the whole bar can be
            "deep": the brand and the status drag the window, these do not. -->
-      <div class="brand"><span class="brand__mark">H</span><span class="brand__name">HAKURO</span></div>
+      <div class="brand"><span class="brand__mark" aria-hidden="true"></span><span class="brand__name">HAKURO</span></div>
       <span class="status" id="status-text">Connecting…</span>
       <button class="cmdk" id="cmdk-open" type="button" title="Command palette (Ctrl+K)"
               aria-label="Command palette" aria-haspopup="dialog">
@@ -131,6 +131,8 @@
                 <button class="tool" type="button" data-proxy="lyrics-search-open">FIND <b>⌕</b></button>
                 <button class="tool" type="button" data-proxy="reload">RELOAD <b>↻</b></button>
               </div>
+              <!-- The tool is drawn; this button is the real control, for main.ts. -->
+              <button id="reload" type="button" disabled hidden>Reload lyrics</button>
             </div>
             <div class="face face--left" data-face="left">
               <span class="face__label">04 WINDOW</span>
@@ -139,6 +141,8 @@
                 <button class="tool" type="button" data-proxy="pin" aria-pressed="false">PIN <b>TOP</b></button>
                 <button class="tool" type="button" data-proxy="mode-toggle" aria-pressed="false">MINI <b>◱</b></button>
               </div>
+              <!-- The tool is drawn; this checkbox is the real control, for main.ts. -->
+              <input id="follow" type="checkbox" checked hidden aria-label="Follow lyrics" />
             </div>
             <div class="face face--bottom" data-face="bottom"><span class="logo">H</span></div>
           </div>
@@ -180,130 +184,13 @@
       <button class="bar__skip" id="bar-next" type="button" disabled title="Next track" aria-label="Next track">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg>
       </button>
-      <div class="bar__aside">
-        <label class="bar__btn bar__follow" title="Follow lyrics">
-          <input type="checkbox" id="follow" checked /><i></i><span>FOLLOW</span>
-        </label>
-        <button class="bar__btn" id="reload" type="button" disabled title="Download lyrics again, bypassing the cache">↻ RELOAD</button>
-      </div>
+      <button class="bar__play" id="bar-play" type="button" disabled title="Play" aria-label="Play">
+        <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.8v14.4a.8.8 0 0 0 1.22.68l11.3-7.2a.8.8 0 0 0 0-1.36L8.22 4.12A.8.8 0 0 0 7 4.8Z"/></svg>
+        <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5h4v15H6zM14 4.5h4v15h-4z"/></svg>
+      </button>
       <button class="bar__btn bar__btn--alert" id="reconnect" type="button" hidden>RETRY CONNECTION</button>
     </footer>
 
-    <dialog class="palette" id="palette" aria-label="Command palette">
-      <div class="pal__head"><span>COMMAND PALETTE</span><span id="pal-version">HAKURO</span></div>
-      <label class="pal__field"><b aria-hidden="true">›</b>
-        <input class="pal__input" id="pal-input" type="text" placeholder="Type a command or a lyric…"
-               autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="pal-list" />
-      </label>
-      <div class="pal__list" id="pal-list" role="listbox" aria-label="Commands"></div>
-      <div class="pal__foot"><span><kbd>↑↓</kbd> MOVE</span><span><kbd>ENTER</kbd> RUN</span><span><kbd>ESC</kbd> CLOSE</span></div>
-    </dialog>
-
-    <dialog id="source-dialog" aria-labelledby="source-title">
-      <h2 id="source-title">Source for this song</h2>
-      <p id="source-track"></p>
-      <p>Choose a preferred source, or use your global search order.</p>
-      <p>Applying a source replaces any manually selected lyrics for this song.</p>
-      <label for="track-source">Preferred source</label>
-      <select id="track-source"></select>
-      <p id="source-error" role="alert"></p>
-      <div class="dialog-actions">
-        <button class="ghost-button" id="source-cancel">Cancel</button>
-        <button class="ghost-button ghost-button--go" id="source-save">Apply</button>
-      </div>
-    </dialog>
-
-    <dialog id="lyrics-search-dialog" aria-labelledby="lyrics-search-title">
-      <h2 id="lyrics-search-title">Find lyrics</h2>
-      <p id="lyrics-search-track"></p>
-      <form id="lyrics-search-form">
-        <label for="lyrics-query">Song title or artist (any language)</label>
-        <input id="lyrics-query" type="text" required maxlength="300" autocomplete="off" />
-        <label for="lyrics-search-source">Search source</label>
-        <select id="lyrics-search-source"></select>
-        <div class="dialog-actions"><button class="ghost-button ghost-button--go" id="lyrics-search-submit" type="submit">Search</button></div>
-      </form>
-      <p id="lyrics-search-status" role="status" aria-live="polite"></p>
-      <ol id="lyrics-candidates" class="lyrics-candidates" aria-label="Matching songs"></ol>
-      <section id="lyrics-preview-panel" hidden aria-labelledby="lyrics-preview-title">
-        <h3 id="lyrics-preview-title">Preview</h3>
-        <pre id="lyrics-preview"></pre>
-      </section>
-      <label class="follow-setting"><input id="show-translations" type="checkbox" checked /> Show translations when available</label>
-      <div class="dialog-actions lyrics-match-actions">
-        <button class="ghost-button" id="lyrics-match-clear" type="button" disabled>Restore automatic</button>
-        <button class="ghost-button" id="lyrics-search-close" type="button">Close</button>
-        <button class="ghost-button ghost-button--go" id="lyrics-match-apply" type="button" disabled>Use these lyrics</button>
-      </div>
-    </dialog>
-
-    <dialog id="settings-dialog" aria-labelledby="settings-title">
-      <form id="settings-form">
-        <div class="dialog-head">
-          <h2 id="settings-title"><small>HAKURO / PREFERENCES</small>Settings</h2>
-          <div class="version"><span>VERSION</span><b id="app-version">—</b></div>
-        </div>
-        <h3>Player</h3>
-        <label for="settings-player">Player</label>
-        <select id="settings-player">
-          <option value="spotify">Spotify</option>
-          <option value="ytmusic">YouTube Music</option>
-        </select>
-        <p>Hakuro follows one player at a time. YouTube Music is read from the Windows media session, so it needs no sign-in: play it in your browser or in the desktop app and Hakuro follows along.</p>
-        <div id="spotify-settings">
-          <label for="client-id">Spotify Client ID</label>
-          <input id="client-id" type="text" autocomplete="off" spellcheck="false" placeholder="32-character Client ID" />
-          <p>Copy the Client ID from your Spotify Developer app. Set its redirect URI to <code>http://127.0.0.1:8787/callback</code>. No Client Secret is needed.</p>
-        </div>
-        <h3>Lyrics search order</h3>
-        <p>Move sources up or down and select which ones to search. A song's preferred source takes priority.</p>
-        <ol id="source-order" class="source-order"></ol>
-        <h3>Colors</h3>
-        <div class="color-settings">
-          <label><input id="color-accent" type="color" /> Buttons and controls</label>
-          <label><input id="color-active" type="color" /> Current lyric</label>
-          <label><input id="color-past" type="color" /> Past lyrics</label>
-        </div>
-        <h3>Window</h3>
-        <label class="range-setting">
-          <span>Background opacity</span>
-          <input id="settings-opacity" type="range" min="30" max="100" step="5" />
-          <output id="opacity-value" for="settings-opacity">100%</output>
-        </label>
-        <label class="range-setting">
-          <span>Background opacity (compact)</span>
-          <input id="settings-compact-opacity" type="range" min="30" max="100" step="5" />
-          <output id="compact-opacity-value" for="settings-compact-opacity">85%</output>
-        </label>
-        <p>Thins the background so the desktop shows through. The lyrics stay fully opaque. Compact mode keeps its own value, because it is the one meant to sit over other work.</p>
-        <label class="range-setting">
-          <span>Lyric size</span>
-          <input id="settings-lyric-size" type="range" min="12" max="44" step="1" />
-          <output id="lyric-size-value" for="settings-lyric-size">26px</output>
-        </label>
-        <label class="range-setting">
-          <span>Lyric size (compact)</span>
-          <input id="settings-compact-lyric-size" type="range" min="12" max="44" step="1" />
-          <output id="compact-lyric-size-value" for="settings-compact-lyric-size">18px</output>
-        </label>
-        <p>Compact mode always keeps room for three lines: the line being sung, and the one on either side.</p>
-        <label for="settings-click-through">Click-through</label>
-        <select id="settings-click-through">
-          <option value="off">Off — the window always answers the mouse</option>
-          <option value="auto">Auto — pass clicks through while another window has focus</option>
-          <option value="always">Always pass clicks through</option>
-        </select>
-        <p>Only acts while the window is pinned on top. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> switches between off and always from any application, which is the way back once clicks pass through.</p>
-
-        <label class="follow-setting"><input id="settings-follow" type="checkbox" /> Follow lyrics automatically</label>
-        <p id="storage-info"></p>
-        <p id="settings-error" role="alert"></p>
-        <div class="dialog-actions">
-          <button class="ghost-button" id="settings-cancel" type="button">Cancel</button>
-          <button class="ghost-button ghost-button--go" id="settings-save" type="submit">Save settings</button>
-        </div>
-      </form>
-    </dialog>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hakuro Commands</title>
+    <link rel="stylesheet" href="/src/palette.css" />
+  </head>
+  <body>
+    <div class="palette" id="palette" role="dialog" aria-label="Command palette">
+      <div class="pal__head"><span>COMMAND PALETTE</span><span id="pal-version">HAKURO</span></div>
+      <label class="pal__field"><b aria-hidden="true">›</b>
+        <input class="pal__input" id="pal-input" type="text" placeholder="Type a command or a lyric…"
+               autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="pal-list" />
+      </label>
+      <div class="pal__list" id="pal-list" role="listbox" aria-label="Commands"></div>
+      <div class="pal__foot"><span><kbd>↑↓</kbd> MOVE</span><span><kbd>ENTER</kbd> RUN</span><span><kbd>ESC</kbd> CLOSE</span></div>
+    </div>
+    <script type="module" src="/src/palette-window.ts"></script>
+  </body>
+</html>

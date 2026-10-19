@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hakuro Lyrics Source</title>
+    <link rel="stylesheet" href="/src/panel.css" />
+  </head>
+  <body class="sheet">
+    <header class="win-head" data-tauri-drag-region="deep">
+      <span class="brand__mark" aria-hidden="true"></span>
+      <span class="win-head__title">HAKURO / LYRICS SOURCE</span>
+      <button class="window-button window-button--close" id="panel-close" type="button" title="Close" aria-label="Close">
+        <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 2.6l6.8 6.8M9.4 2.6l-6.8 6.8"/></svg>
+      </button>
+    </header>
+    <div class="panel" role="dialog" aria-labelledby="source-title">
+      <div class="panel__body">
+        <h2 id="source-title">Source for this song</h2>
+        <p id="source-track"></p>
+        <p>Choose a preferred source, or use your global search order.</p>
+        <p>Applying a source replaces any manually selected lyrics for this song.</p>
+        <label for="track-source">Preferred source</label>
+        <select id="track-source"></select>
+      </div>
+      <div class="panel__foot">
+        <p id="source-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button class="ghost-button" id="source-cancel" type="button">Cancel</button>
+          <button class="ghost-button ghost-button--go" id="source-save" type="button">Apply</button>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/source.ts"></script>
+  </body>
+</html>

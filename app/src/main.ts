@@ -6,35 +6,24 @@
 
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen, once } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { LogicalSize } from "@tauri-apps/api/dpi";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { activeLine, emptySample, formatTime, positionAt, type Sample } from "./clock";
+import { applyTheme, SEARCH_TRANSLATIONS, SETTINGS_PREVIEW, type ClickThrough, type Config, type Settings, type WindowStylePreview } from "./config";
 import { createDeck, type CubeFace } from "./deck";
-import { createPalette, type Command } from "./palette";
+import {
+  describeCommands, PALETTE_CLOSED, PALETTE_READY, PALETTE_RUN, PALETTE_SHOW,
+  type Command, type PaletteAction, type PaletteSnapshot,
+} from "./palette";
+import { CHILD_WINDOW, created, openPanel, placeOverMain } from "./windows";
 
 interface Cue {
   time_ms: number;
   text: string;
   translation?: string | null;
   words?: { start_ms: number; end_ms: number; text: string }[];
-}
-
-interface LyricCandidate {
-  source: string;
-  id: string;
-  title: string;
-  artists: string[];
-  album: string;
-  duration_ms: number;
-}
-
-interface LyricsResult {
-  text: string;
-  source: string;
-  matched_title: string;
-  cues: Cue[];
-  errors: unknown[];
 }
 
 interface PlaybackEvent {
@@ -72,34 +61,6 @@ interface LyricsEvent {
   manual?: boolean;
 }
 
-type ClickThrough = "off" | "auto" | "always";
-/** Which player Hakuro follows. Exactly one is live at a time. */
-type PlayerKind = "spotify" | "ytmusic";
-
-interface Settings {
-  player: PlayerKind;
-  clientId: string;
-  sources: { id: string; enabled: boolean }[];
-  theme: { accent: string; activeLine: string; pastLine: string };
-  followLyrics: boolean;
-  alwaysOnTop: boolean;
-  /** Background opacity as a percentage; the lyrics stay opaque regardless. */
-  opacity: number;
-  clickThrough: ClickThrough;
-  compact: boolean;
-  compactOpacity: number;
-  lyricSize: number;
-  compactLyricSize: number;
-}
-
-interface Config {
-  settings: Settings;
-  providers: { id: string; label: string }[];
-  dataDir: string;
-  storedTracks: number;
-  storageWarning: string;
-}
-
 interface StatusEvent {
   state: string;
   message: string;
@@ -131,6 +92,7 @@ const ui = {
   next: element<HTMLButtonElement>("next"),
   barPrevious: element<HTMLButtonElement>("bar-prev"),
   barNext: element<HTMLButtonElement>("bar-next"),
+  barPlay: element<HTMLButtonElement>("bar-play"),
   lineNow: element("line-now"),
   lineTotal: element("line-total"),
   follow: element<HTMLInputElement>("follow"),
@@ -156,6 +118,8 @@ const state = {
   lines: [] as HTMLLIElement[],
   wordSpans: [] as HTMLSpanElement[][],
   manual: false,
+  /** Shown under each line when the song has them; Find lyrics and the palette toggle it. */
+  showTranslations: true,
   highlighted: -1,
   synced: false,
   canSeek: false,
@@ -559,7 +523,7 @@ const compactMinHeight = (lyricSize: number) =>
   Math.ceil(3 * (document.body.classList.contains("has-translations") ? lyricSize * 2.23 + 22 : lyricSize * 1.32 + 18)) + COMPACT_CHROME;
 
 function updateTranslationLayout() {
-  const visible = element<HTMLInputElement>("show-translations").checked;
+  const visible = state.showTranslations;
   document.body.classList.toggle("hide-translations", !visible);
   document.body.classList.toggle("has-translations", visible && state.cues.some((cue) => Boolean(cue.translation)));
   if (config?.settings.compact) void applyWindowBounds(config.settings);
@@ -607,23 +571,6 @@ ui.pin.addEventListener("click", () => {
   void patchSettings({ alwaysOnTop }, ui.pin);
 });
 
-/** How long the follow toggle and refresh button wait before stepping aside. */
-const IDLE_AFTER_MS = 3000;
-let idleTimer = 0;
-
-function wake() {
-  document.body.classList.remove("is-idle");
-  clearTimeout(idleTimer);
-  idleTimer = window.setTimeout(() => document.body.classList.add("is-idle"), IDLE_AFTER_MS);
-}
-
-for (const name of ["pointermove", "pointerdown", "keydown", "wheel"]) {
-  window.addEventListener(name, wake, { passive: true });
-}
-
-// Start the clock at launch: "nothing has happened yet" is also idle.
-wake();
-
 element("win-minimize").addEventListener("click", () => void appWindow.minimize());
 element("win-maximize").addEventListener("click", () => void appWindow.toggleMaximize());
 element("win-close").addEventListener("click", () => void appWindow.close());
@@ -649,6 +596,7 @@ ui.reconnect.addEventListener("click", () => void send("connect"));
 // Compact's skip buttons are the cube's, moved to the bar.
 ui.barPrevious.addEventListener("click", () => ui.previous.click());
 ui.barNext.addEventListener("click", () => ui.next.click());
+ui.barPlay.addEventListener("click", () => ui.playPause.click());
 
 /** Seek relative to where the song is now: the record's spin and the palette. */
 function seekBy(deltaMs: number) {
@@ -668,93 +616,11 @@ function nudgeVolume(delta: number) {
 }
 
 let config: Config | undefined;
-let draft: Settings;
-/** The four per-mode dials in the panel, each with its own readout. */
-const DIALS = [
-  { input: "settings-opacity", output: "opacity-value", unit: "%", key: "opacity" },
-  { input: "settings-compact-opacity", output: "compact-opacity-value", unit: "%", key: "compactOpacity" },
-  { input: "settings-lyric-size", output: "lyric-size-value", unit: "px", key: "lyricSize" },
-  { input: "settings-compact-lyric-size", output: "compact-lyric-size-value", unit: "px", key: "compactLyricSize" },
-] as const;
-
-const dialValue = (id: string) => Number(element<HTMLInputElement>(id).value);
-
-/** The slider track fills up to the thumb; CSS cannot read a range's value. */
-function paintRange(input: HTMLInputElement) {
-  const min = Number(input.min);
-  const max = Number(input.max);
-  input.style.setProperty("--p", `${((Number(input.value) - min) / (max - min)) * 100}%`);
-}
-
-/**
- * Show the panel's numbers on the window behind it, for whichever mode is on.
- * Judging an opacity or a type size from a number alone is guesswork; Cancel
- * puts the stored values back.
- */
-function previewWindowStyle() {
-  const compact = document.body.classList.contains("is-compact");
-  setWindowStyle(
-    dialValue(compact ? "settings-compact-opacity" : "settings-opacity"),
-    dialValue(compact ? "settings-compact-lyric-size" : "settings-lyric-size"),
-  );
-}
-
-for (const dial of DIALS) {
-  const input = element<HTMLInputElement>(dial.input);
-  input.addEventListener("input", () => {
-    element(dial.output).textContent = `${input.value}${dial.unit}`;
-    paintRange(input);
-    previewWindowStyle();
-  });
-}
-const settingsDialog = element<HTMLDialogElement>("settings-dialog");
-const sourceDialog = element<HTMLDialogElement>("source-dialog");
-const sourceSelect = element<HTMLSelectElement>("track-source");
-let sourceTrackId = "";
-const settingsError = element("settings-error");
-
-/**
- * Dismiss a modal dialog by clicking away from it, or by pressing Escape.
- *
- * A modal dialog's backdrop is the dialog element itself, and the dialog is
- * padded, so the target of the event cannot say whether the click landed
- * outside — a click in the padding targets the dialog too. The box it occupies
- * can say, so that is what is measured.
- *
- * Both the press and the release have to land outside. Selecting text or
- * dragging a slider often ends beyond the edge, and throwing away the panel
- * because a drag overshot would be its own bug.
- */
-function dismissOnClickAway(dialog: HTMLDialogElement, dismiss: () => void) {
-  const outside = (event: MouseEvent) => {
-    const box = dialog.getBoundingClientRect();
-    return (
-      event.clientX < box.left ||
-      event.clientX > box.right ||
-      event.clientY < box.top ||
-      event.clientY > box.bottom
-    );
-  };
-  let pressedOutside = false;
-  dialog.addEventListener("pointerdown", (event) => { pressedOutside = outside(event); });
-  dialog.addEventListener("click", (event) => {
-    const away = pressedOutside && outside(event);
-    pressedOutside = false;
-    if (away) dismiss();
-  });
-  // Escape dismisses a dialog without reaching either button, which would
-  // otherwise leave a preview applied that was never saved.
-  dialog.addEventListener("cancel", dismiss);
-}
-
 function applyConfig(value: Config) {
   const changedPlayer = config && config.settings.player !== value.settings.player;
   config = value;
   if (changedPlayer) resetVolume();
-  const { theme } = value.settings;
-  document.documentElement.style.setProperty("--accent", theme.accent);
-  document.documentElement.style.setProperty("--active-line", theme.activeLine);
-  document.documentElement.style.setProperty("--past-line", theme.pastLine);
+  applyTheme(value.settings.theme);
   ui.follow.checked = value.settings.followLyrics;
 
   const { compact } = value.settings;
@@ -778,281 +644,78 @@ function setWindowStyle(opacity: number, lyricSize: number) {
   root.setProperty("--lyric-size", `${lyricSize}px`);
 }
 
-function renderSourceOrder() {
-  const list = element("source-order");
-  list.replaceChildren();
-  draft.sources.forEach((source, index) => {
-    const row = document.createElement("li");
-    const label = document.createElement("label");
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.checked = source.enabled;
-    checkbox.addEventListener("change", () => { source.enabled = checkbox.checked; });
-    const name = config?.providers.find((provider) => provider.id === source.id)?.label ?? source.id;
-    label.append(checkbox, document.createTextNode(name));
-    row.append(label);
-    for (const [direction, text] of [[-1, "↑"], [1, "↓"]] as const) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "ghost-button";
-      button.textContent = text;
-      button.setAttribute("aria-label", `Move ${name} ${direction < 0 ? "up" : "down"}`);
-      const target = index + direction;
-      button.disabled = target < 0 || target >= draft.sources.length;
-      button.addEventListener("click", () => {
-        [draft.sources[index], draft.sources[target]] = [draft.sources[target], draft.sources[index]];
-        renderSourceOrder();
-        (list.children[target]?.querySelectorAll("button")[direction < 0 ? 0 : 1] as HTMLButtonElement)?.focus();
-      });
-      row.append(button);
-    }
-    list.append(row);
-  });
-}
+// ------------------------------------------------------------- panel windows
 
-/** Only Spotify has anything to configure, so the rest of the panel is hidden. */
-function showPlayerSettings(player: PlayerKind) {
-  element("spotify-settings").hidden = player !== "spotify";
-}
-
-element<HTMLSelectElement>("settings-player").addEventListener("change", (event) => {
-  showPlayerSettings((event.target as HTMLSelectElement).value as PlayerKind);
-});
-
+/** Open the settings window, or bring it forward if it is already open. */
 async function openSettings() {
   try {
-    const value = await invoke<Config>("get_config");
-    config = value;
-    draft = structuredClone(value.settings);
-    element<HTMLSelectElement>("settings-player").value = draft.player;
-    showPlayerSettings(draft.player);
-    element<HTMLInputElement>("client-id").value = draft.clientId;
-    element<HTMLInputElement>("color-accent").value = draft.theme.accent;
-    element<HTMLInputElement>("color-active").value = draft.theme.activeLine;
-    element<HTMLInputElement>("color-past").value = draft.theme.pastLine;
-    element<HTMLInputElement>("settings-follow").checked = draft.followLyrics;
-    for (const dial of DIALS) {
-      element<HTMLInputElement>(dial.input).value = String(draft[dial.key]);
-      element(dial.output).textContent = `${draft[dial.key]}${dial.unit}`;
-      paintRange(element<HTMLInputElement>(dial.input));
-    }
-    element<HTMLSelectElement>("settings-click-through").value = draft.clickThrough;
-    element("storage-info").textContent = `Data folder: ${value.dataDir} · Cached songs: ${value.storedTracks}`;
-    settingsError.textContent = value.storageWarning;
-    renderSourceOrder();
-    if (!settingsDialog.open) settingsDialog.showModal();
-  } catch (error) { setNotice(String(error)); }
+    const settings = await openPanel("settings", {
+      url: "settings.html", title: "Hakuro Settings",
+      width: 640, height: 780, minWidth: 420, minHeight: 360, drop: 0.5,
+    });
+    // Saved, cancelled or closed some other way: show what is stored now, which
+    // also takes back anything the dials previewed.
+    void settings?.once("tauri://destroyed", async () => {
+      try { applyConfig(await invoke<Config>("get_config")); }
+      catch (error) { setNotice(String(error)); }
+    });
+  } catch (error) {
+    setNotice(String(error));
+  }
 }
 
 element("settings-open").addEventListener("click", () => void openSettings());
 
-/**
- * Leaving without saving puts back what was stored, because the size and
- * opacity dials preview themselves on the live window as they move.
- */
-function cancelSettings() {
-  settingsDialog.close();
-  if (config) applyConfig(config);
-}
-element("settings-cancel").addEventListener("click", cancelSettings);
-dismissOnClickAway(settingsDialog, cancelSettings);
-element("settings-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const button = element<HTMLButtonElement>("settings-save");
-  button.disabled = true;
-  settingsError.textContent = "";
-  draft.player = element<HTMLSelectElement>("settings-player").value as PlayerKind;
-  draft.clientId = element<HTMLInputElement>("client-id").value.trim();
-  draft.theme = {
-    accent: element<HTMLInputElement>("color-accent").value,
-    activeLine: element<HTMLInputElement>("color-active").value,
-    pastLine: element<HTMLInputElement>("color-past").value,
-  };
-  draft.followLyrics = element<HTMLInputElement>("settings-follow").checked;
-  for (const dial of DIALS) draft[dial.key] = dialValue(dial.input);
-  draft.clickThrough = element<HTMLSelectElement>("settings-click-through").value as ClickThrough;
-  try {
-    applyConfig(await invoke<Config>("save_settings", { incoming: draft }));
-    settingsDialog.close();
-  } catch (error) { settingsError.textContent = String(error); }
-  finally { button.disabled = false; }
+const previewReady = listen<WindowStylePreview>(SETTINGS_PREVIEW, ({ payload }) => {
+  const compact = document.body.classList.contains("is-compact");
+  setWindowStyle(
+    compact ? payload.compactOpacity : payload.opacity,
+    compact ? payload.compactLyricSize : payload.lyricSize,
+  );
 });
 
-ui.sourceBadge.addEventListener("click", () => {
+// Find lyrics and the source picker work on the song playing when they open.
+// It goes to them in the URL, with what they show of it; each closes itself if
+// the song changes, so an open one is always about the current song.
+
+function openSearch() {
   if (!config || !state.trackId) return;
-  sourceTrackId = state.trackId;
-  element("source-track").textContent = ui.trackName.textContent;
-  element("source-error").textContent = "";
-  sourceSelect.replaceChildren(new Option("Automatic (global preferences)", ""));
-  config.providers.forEach((provider) => sourceSelect.add(new Option(provider.label, provider.id)));
-  sourceSelect.value = state.requestedSource;
-  sourceDialog.showModal();
-});
-element("source-cancel").addEventListener("click", () => sourceDialog.close());
-dismissOnClickAway(sourceDialog, () => sourceDialog.close());
-element("source-save").addEventListener("click", async () => {
-  const button = element<HTMLButtonElement>("source-save");
-  button.disabled = true;
-  try {
-    await invoke("set_track_source", { source: sourceSelect.value || null, trackId: sourceTrackId });
-    sourceDialog.close();
-  } catch (error) { element("source-error").textContent = String(error); }
-  finally { button.disabled = false; }
-});
-
-// Manual matching has one request serial shared by search and preview. Editing
-// a query, closing, or changing tracks invalidates any outstanding response.
-const searchDialog = element<HTMLDialogElement>("lyrics-search-dialog");
-const searchQuery = element<HTMLInputElement>("lyrics-query");
-const searchSource = element<HTMLSelectElement>("lyrics-search-source");
-const searchStatus = element("lyrics-search-status");
-const candidatesList = element("lyrics-candidates");
-const previewPanel = element("lyrics-preview-panel");
-const previewText = element("lyrics-preview");
-const matchApply = element<HTMLButtonElement>("lyrics-match-apply");
-const matchClear = element<HTMLButtonElement>("lyrics-match-clear");
-let searchTrackId = "";
-let searchSerial = 0;
-let selectedCandidate: LyricCandidate | undefined;
-let matchSaving = false;
-
-function resetSearch() {
-  searchSerial++;
-  selectedCandidate = undefined;
-  matchApply.disabled = true;
-  previewPanel.hidden = true;
-  previewText.textContent = "";
-  candidatesList.replaceChildren();
-  searchStatus.textContent = "";
+  const artist = ui.trackArtist.textContent ?? "";
+  const song = new URLSearchParams({
+    track: state.trackId,
+    title: `${state.trackName} · ${artist}`,
+    query: `${state.trackName} ${artist}`.trim(),
+    manual: state.manual ? "1" : "",
+    translations: state.showTranslations ? "1" : "",
+  });
+  openPanel("search", {
+    url: `search.html?${song}`, title: "Hakuro Find Lyrics",
+    width: 600, height: 680, minWidth: 420, minHeight: 360, drop: 0.3,
+  }).catch((error) => setNotice(String(error)));
 }
 
-function closeSearch() {
-  resetSearch();
-  searchDialog.close();
-  ui.search.focus();
+function openSource() {
+  if (!config || !state.trackId) return;
+  const song = new URLSearchParams({
+    track: state.trackId,
+    title: ui.trackName.textContent ?? "",
+    source: state.requestedSource,
+  });
+  openPanel("source", {
+    url: `source.html?${song}`, title: "Hakuro Lyrics Source",
+    width: 480, height: 380, minWidth: 380, minHeight: 300, drop: 0.4,
+  }).catch((error) => setNotice(String(error)));
 }
 
-const searchIsCurrent = (serial: number, trackId: string) =>
-  searchDialog.open && serial === searchSerial && trackId === state.trackId && trackId === searchTrackId;
+ui.search.addEventListener("click", openSearch);
+ui.sourceBadge.addEventListener("click", openSource);
 
-ui.search.addEventListener("click", () => {
-  if (!config || !state.trackId || matchSaving) return;
-  resetSearch();
-  searchTrackId = state.trackId;
-  element("lyrics-search-track").textContent = `${state.trackName} · ${ui.trackArtist.textContent}`;
-  searchQuery.value = `${state.trackName} ${ui.trackArtist.textContent}`.trim();
-  searchSource.replaceChildren();
-  for (const source of config.settings.sources) {
-    if (!source.enabled || !["lrclib", "netease", "qqmusic"].includes(source.id)) continue;
-    const label = config.providers.find((provider) => provider.id === source.id)?.label ?? source.id;
-    searchSource.add(new Option(label, source.id));
-  }
-  element<HTMLButtonElement>("lyrics-search-submit").disabled = !searchSource.options.length;
-  if (!searchSource.options.length) searchStatus.textContent = "Enable LRCLIB, NetEase or QQ Music in Settings to search.";
-  matchClear.disabled = !state.manual || matchSaving;
-  searchDialog.showModal();
-  searchQuery.focus();
-  searchQuery.select();
-});
-
-element("lyrics-search-close").addEventListener("click", closeSearch);
-dismissOnClickAway(searchDialog, closeSearch);
-searchDialog.addEventListener("close", () => { searchSerial++; });
-searchQuery.addEventListener("input", resetSearch);
-searchSource.addEventListener("change", resetSearch);
-element("show-translations").addEventListener("change", updateTranslationLayout);
-
-async function previewCandidate(candidate: LyricCandidate, button: HTMLButtonElement) {
-  const serial = ++searchSerial;
-  const trackId = searchTrackId;
-  selectedCandidate = undefined;
-  matchApply.disabled = true;
-  previewPanel.hidden = true;
-  searchStatus.textContent = "Loading preview…";
-  candidatesList.querySelectorAll("button").forEach((row) => row.setAttribute("aria-pressed", String(row === button)));
-  try {
-    const result = await invoke<LyricsResult>("preview_lyric_candidate", { trackId, candidate });
-    if (!searchIsCurrent(serial, trackId)) return;
-    const text = result.cues.length
-      ? result.cues.map((cue) => `${formatTime(cue.time_ms)}  ${cue.text}${cue.translation ? `\n    ${cue.translation}` : ""}`).join("\n")
-      : result.text;
-    previewText.textContent = text;
-    previewPanel.hidden = !text;
-    searchStatus.textContent = text ? "Preview ready. Use these lyrics to remember this match for this song." : "This candidate has no lyrics. Try another result.";
-    if (text) {
-      selectedCandidate = candidate;
-      matchApply.disabled = matchSaving;
-    }
-  } catch (error) {
-    if (searchIsCurrent(serial, trackId)) searchStatus.textContent = String(error);
-  }
+function setTranslations(visible: boolean) {
+  state.showTranslations = visible;
+  updateTranslationLayout();
 }
 
-element("lyrics-search-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (matchSaving || !searchQuery.value.trim() || !searchSource.value || searchTrackId !== state.trackId) return;
-  resetSearch();
-  const serial = searchSerial;
-  const trackId = searchTrackId;
-  searchStatus.textContent = "Searching…";
-  try {
-    const candidates = await invoke<LyricCandidate[]>("search_lyrics", {
-      trackId, query: searchQuery.value.trim(), source: searchSource.value,
-    });
-    if (!searchIsCurrent(serial, trackId)) return;
-    searchStatus.textContent = candidates.length ? `${candidates.length} results. Choose one to preview.` : "No results. Try another title, artist or source.";
-    for (const candidate of candidates) {
-      const row = document.createElement("li");
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "lyric-candidate";
-      button.setAttribute("aria-pressed", "false");
-      const title = document.createElement("strong");
-      title.textContent = candidate.title;
-      const detail = document.createElement("span");
-      detail.textContent = [candidate.artists.join(", "), candidate.album, candidate.duration_ms > 0 ? formatTime(candidate.duration_ms) : "", candidate.source].filter(Boolean).join(" · ");
-      button.append(title, detail);
-      button.addEventListener("click", () => { if (!matchSaving) void previewCandidate(candidate, button); });
-      row.append(button);
-      candidatesList.append(row);
-    }
-  } catch (error) {
-    if (searchIsCurrent(serial, trackId)) searchStatus.textContent = String(error);
-  }
-});
-
-async function saveMatch(clear: boolean) {
-  if (matchSaving || searchTrackId !== state.trackId || !searchDialog.open || (!clear && !selectedCandidate)) return;
-  const serial = ++searchSerial;
-  const trackId = searchTrackId;
-  matchSaving = true;
-  ui.search.disabled = true;
-  searchQuery.disabled = true;
-  searchSource.disabled = true;
-  element<HTMLButtonElement>("lyrics-search-submit").disabled = true;
-  matchApply.disabled = true;
-  matchClear.disabled = true;
-  searchStatus.textContent = clear ? "Restoring automatic search…" : "Saving match…";
-  try {
-    await invoke(clear ? "clear_lyric_match" : "apply_lyric_match", clear ? { trackId } : { trackId, candidate: selectedCandidate });
-    if (searchIsCurrent(serial, trackId)) closeSearch();
-  } catch (error) {
-    if (searchIsCurrent(serial, trackId)) searchStatus.textContent = String(error);
-  } finally {
-    matchSaving = false;
-    ui.search.disabled = !state.trackId || !config;
-    if (!searchDialog.open) ui.search.focus();
-    searchQuery.disabled = false;
-    searchSource.disabled = false;
-    element<HTMLButtonElement>("lyrics-search-submit").disabled = !searchSource.options.length;
-    if (searchIsCurrent(serial, trackId)) {
-      matchApply.disabled = !selectedCandidate;
-      matchClear.disabled = !state.manual;
-    }
-  }
-}
-matchApply.addEventListener("click", () => void saveMatch(false));
-matchClear.addEventListener("click", () => void saveMatch(true));
+const translationsReady = listen<boolean>(SEARCH_TRANSLATIONS, ({ payload }) => setTranslations(payload));
 
 ui.notice.addEventListener("click", dismissNotice);
 
@@ -1099,8 +762,6 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
   // match commands check it, so a key rebuilt here would never match theirs.
   const trackId = payload.hasTrack ? payload.trackKey : "";
   if (state.trackId !== trackId) {
-    sourceDialog.close();
-    if (searchDialog.open) closeSearch();
     state.requestedSource = "";
     // A new song spins the cube; its cover goes on while the front faces away.
     if (state.trackId && trackId) deck.trackChanged();
@@ -1108,7 +769,7 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
   state.trackId = trackId;
   ui.sourceBadge.disabled = !payload.hasTrack || !config;
   ui.reload.disabled = !payload.hasTrack;
-  ui.search.disabled = !payload.hasTrack || !config || matchSaving;
+  ui.search.disabled = !payload.hasTrack || !config;
   state.sample = {
     positionMs: payload.progressMs,
     playing: payload.isPlaying,
@@ -1125,6 +786,10 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
   ui.previous.disabled = !payload.hasTrack || !payload.canSkipPrevious;
   ui.barNext.disabled = ui.next.disabled;
   ui.barPrevious.disabled = ui.previous.disabled;
+  ui.barPlay.disabled = ui.playPause.disabled;
+  // The icon swaps in CSS (body.is-playing); the name says what a press does.
+  ui.barPlay.title = payload.isPlaying ? "Pause" : "Play";
+  ui.barPlay.setAttribute("aria-label", ui.barPlay.title);
   ui.scrubber.classList.toggle("is-disabled", !state.canSeek);
   ui.scrubber.setAttribute("aria-disabled", String(!state.canSeek));
 
@@ -1167,15 +832,12 @@ const statusReady = listen<StatusEvent>("status", ({ payload }) => {
   state.statusNotice = payload.notice;
   setNotice(state.notice);
   ui.reconnect.hidden = payload.state !== "error" && payload.state !== "needs-auth";
-  // A connection that needs attention should not be hidden by the idle fade.
-  if (!ui.reconnect.hidden) wake();
 });
 
 // ------------------------------------------------------------ command palette
 
-/** Shown in Settings and the palette; Tauri reads it from the bundle. */
+/** Shown beside the palette's Settings command; Tauri reads it from the bundle. */
 let appVersion = "";
-const showTranslations = element<HTMLInputElement>("show-translations");
 const onOff = (on: boolean) => ({ text: on ? "ON" : "OFF", on });
 const usable = (button: HTMLButtonElement) => () => !button.disabled;
 const turn = (face: CubeFace, label: string, hint: string, words: string): Command =>
@@ -1200,11 +862,7 @@ const COMMANDS: Command[] = [
   { group: "LYRICS", icon: "↧", label: "Follow lyrics", hint: "自動跟隨歌詞", words: "scroll auto", state: () => onOff(ui.follow.checked), enabled: () => !ui.follow.disabled, run: () => ui.follow.click() },
   {
     group: "LYRICS", icon: "文", label: "Show translations", hint: "顯示翻譯", words: "translation bilingual",
-    state: () => onOff(showTranslations.checked),
-    run: () => {
-      showTranslations.checked = !showTranslations.checked;
-      showTranslations.dispatchEvent(new Event("change"));
-    },
+    state: () => onOff(state.showTranslations), run: () => setTranslations(!state.showTranslations),
   },
   { group: "LYRICS", icon: "⌕", label: "Find lyrics…", hint: "搜尋歌詞", words: "search match", enabled: usable(ui.search), run: () => ui.search.click() },
   { group: "LYRICS", icon: "⇄", label: "Lyrics source…", hint: "歌詞來源", words: "provider", enabled: usable(ui.sourceBadge), run: () => ui.sourceBadge.click() },
@@ -1220,41 +878,89 @@ const COMMANDS: Command[] = [
   turn("left", "Window tools", "方塊轉到視窗工具", "left follow pin"),
 ];
 
-/** Typing a fragment of the lyrics finds the line; picking it seeks there. */
-function lyricHits(query: string) {
+/** The timed lines the palette can jump to by their words. */
+function paletteLines() {
   if (!state.synced) return [];
-  const hits = [];
-  for (const [index, cue] of state.cues.entries()) {
+  return state.cues.flatMap((cue, index) => {
     const text = cue.text.trim();
-    if (!text) continue;
-    if (!text.toLowerCase().includes(query) && !(cue.translation ?? "").toLowerCase().includes(query)) continue;
-    hits.push({
-      number: index + 1,
-      text,
-      translation: cue.translation ?? "",
-      time: formatTime(cue.time_ms),
-      run: () => {
-        if (!state.canSeek) return;
-        state.manualScrollUntil = 0;
-        void send("seek", { positionMs: cue.time_ms });
-      },
-    });
-    if (hits.length === 8) break;
-  }
-  return hits;
+    return text ? [{ index, text, translation: cue.translation ?? "", time: formatTime(cue.time_ms) }] : [];
+  });
 }
 
-const palette = createPalette({ commands: COMMANDS, lyrics: lyricHits, lyricsTitle: () => state.trackName });
-const paletteDialog = element<HTMLDialogElement>("palette");
-element("cmdk-open").addEventListener("click", () => palette.open());
-dismissOnClickAway(paletteDialog, () => paletteDialog.close());
+const PALETTE_WIDTH = 600;
+const PALETTE_HEIGHT = 540;
+/** Settles once the palette window has loaded and is listening; made on first use. */
+let paletteReady: Promise<WebviewWindow> | undefined;
+
+function paletteWindow() {
+  paletteReady ??= new Promise<WebviewWindow>((resolve, reject) => {
+    const palette = new WebviewWindow("palette", {
+      ...CHILD_WINDOW,
+      url: "palette.html",
+      title: "Hakuro Commands",
+      width: PALETTE_WIDTH,
+      height: PALETTE_HEIGHT,
+      resizable: false,
+      transparent: true,
+      shadow: false,
+    });
+    void once(PALETTE_READY, () => resolve(palette));
+    created(palette).catch(reject);
+  }).catch((error) => {
+    paletteReady = undefined;
+    throw error;
+  });
+  return paletteReady;
+}
+
+async function openPalette() {
+  try {
+    const palette = await paletteWindow();
+    const place = await placeOverMain(PALETTE_WIDTH, PALETTE_HEIGHT, 0.15);
+    await palette.setSize(new LogicalSize(place.width, place.height));
+    await palette.setPosition(new LogicalPosition(place.x, place.y));
+    const snapshot: PaletteSnapshot = {
+      commands: describeCommands(COMMANDS),
+      lines: paletteLines(),
+      title: state.trackName,
+      trackKey: state.trackId,
+      accent: config?.settings.theme.accent,
+    };
+    // The palette draws this, then shows itself and takes the focus.
+    await emitTo("palette", PALETTE_SHOW, snapshot);
+  } catch (error) {
+    setNotice(String(error));
+  }
+}
+
+element("cmdk-open").addEventListener("click", () => void openPalette());
+window.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    void openPalette();
+  }
+});
+
+const paletteRunReady = listen<PaletteAction>(PALETTE_RUN, ({ payload }) => {
+  void appWindow.setFocus();
+  if ("command" in payload) {
+    // Checked again here: the palette saw the window as it was when it opened.
+    const command = COMMANDS[payload.command];
+    if (command && (command.enabled?.() ?? true)) command.run();
+    return;
+  }
+  // A line from a song that has since changed has nowhere to go.
+  const cue = payload.trackKey === state.trackId ? state.cues[payload.line] : undefined;
+  if (!cue || !state.canSeek) return;
+  state.manualScrollUntil = 0;
+  void send("seek", { positionMs: cue.time_ms });
+});
+const paletteClosedReady = listen(PALETTE_CLOSED, () => void appWindow.setFocus());
 
 async function showVersion() {
   try {
     appVersion = await getVersion();
-    element("app-version").textContent = `v${appVersion}`;
-    palette.setVersion(appVersion);
-  } catch { /* outside Tauri there is no bundle to ask; the dash stays */ }
+  } catch { /* outside Tauri there is no bundle to ask */ }
 }
 
 requestAnimationFrame(frame);
@@ -1263,7 +969,10 @@ requestAnimationFrame(frame);
 // void. A saved session resumes without the user pressing anything.
 async function start() {
   try {
-    await Promise.all([playbackReady, lyricsReady, statusReady, clickThroughReady]);
+    await Promise.all([
+      playbackReady, lyricsReady, statusReady, clickThroughReady, previewReady, translationsReady,
+      paletteRunReady, paletteClosedReady,
+    ]);
     void syncMaximized();
     void showVersion();
     applyConfig(await invoke<Config>("get_config"));

@@ -2,9 +2,13 @@
 /// <reference types="vite/client" />
 import { beforeEach, expect, it, vi } from "vitest";
 import html from "../index.html?raw";
+import { isolateListeners } from "./test-listeners";
+
+isolateListeners(window, document);
 
 const bridge = vi.hoisted(() => ({
   invoke: vi.fn(),
+  emitTo: vi.fn(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
   focus: [] as ((event: { payload: boolean }) => void)[],
 }));
@@ -21,15 +25,46 @@ const appWindow = vi.hoisted(() => ({
   setSize: vi.fn(),
   innerSize: vi.fn(),
   scaleFactor: vi.fn(),
+  outerPosition: vi.fn(),
+  outerSize: vi.fn(),
+  setFocus: vi.fn(),
 }));
-vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => appWindow }));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => appWindow, currentMonitor: async () => null }));
+/** Every child window main.ts opens, by label, with the options it was given. */
+const children = vi.hoisted(() => new Map<string, {
+  options: Record<string, unknown>;
+  events: Map<string, (event: { payload: unknown }) => void>;
+  setFocus: ReturnType<typeof vi.fn>;
+  setSize: ReturnType<typeof vi.fn>;
+  setPosition: ReturnType<typeof vi.fn>;
+}>());
+vi.mock("@tauri-apps/api/webviewWindow", () => ({
+  WebviewWindow: class {
+    options: Record<string, unknown>;
+    events = new Map<string, (event: { payload: unknown }) => void>();
+    setFocus = vi.fn();
+    setSize = vi.fn();
+    setPosition = vi.fn();
+    constructor(label: string, options: Record<string, unknown>) {
+      this.options = options;
+      children.set(label, this);
+      queueMicrotask(() => this.events.get("tauri://created")?.({ payload: null }));
+    }
+    async once(name: string, callback: (event: { payload: unknown }) => void) {
+      this.events.set(name, callback);
+      return () => {};
+    }
+    static async getByLabel(label: string) { return children.get(label) ?? null; }
+  },
+}));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(async () => "1.3.0") }));
-vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (name: string, callback: (event: { payload: unknown }) => void) => {
+vi.mock("@tauri-apps/api/event", () => {
+  const listen = vi.fn(async (name: string, callback: (event: { payload: unknown }) => void) => {
     bridge.listeners.set(name, callback);
     return () => {};
-  }),
-}));
+  });
+  return { listen, once: listen, emitTo: bridge.emitTo };
+});
 
 const initial = () => ({
   settings: {
@@ -50,14 +85,6 @@ const initial = () => ({
   dataDir: "C:/Hakuro", storedTracks: 2, storageWarning: "",
 });
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const candidate = { source: "lrclib", id: "123", title: "別名 <b>Song</b>", artists: ["Singer"], album: "Record", duration_ms: 123000 };
-const preview = { source: "LRCLIB", matched_title: candidate.title, text: "Original", cues: [
-  { time_ms: 1000, text: "Original", translation: "翻譯" },
-], errors: [] };
-function submitSearch(query = "別名") {
-  el<HTMLInputElement>("lyrics-query").value = query;
-  el("lyrics-search-form").dispatchEvent(new Event("submit", { cancelable: true }));
-}
 function runFrame() {
   const callbacks = vi.mocked(requestAnimationFrame).mock.calls;
   callbacks[callbacks.length - 1][0](performance.now());
@@ -88,126 +115,21 @@ beforeEach(async () => {
   appWindow.isMaximized.mockResolvedValue(false);
   appWindow.scaleFactor.mockResolvedValue(1);
   appWindow.innerSize.mockResolvedValue({ toLogical: () => ({ width: 940, height: 760 }) });
+  appWindow.outerPosition.mockResolvedValue({ x: 100, y: 50 });
+  appWindow.outerSize.mockResolvedValue({ width: 940, height: 760 });
+  bridge.emitTo.mockReset().mockResolvedValue(undefined);
+  children.clear();
   appWindow.onFocusChanged.mockImplementation(async (cb: (e: { payload: boolean }) => void) => {
     bridge.focus.push(cb);
     return () => {};
   });
   document.documentElement.innerHTML = html;
   vi.stubGlobal("requestAnimationFrame", vi.fn());
-  HTMLDialogElement.prototype.showModal = function () { this.open = true; };
-  HTMLDialogElement.prototype.close = function () { this.open = false; };
   HTMLElement.prototype.scrollTo = vi.fn();
   bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
     if (command === "get_config") return initial();
     if (command === "save_settings") return { ...initial(), settings: args!.incoming };
   });
-});
-
-it("searches enabled providers, safely previews metadata and saves the chosen match", async () => {
-  await import("./main");
-  await flush();
-  playback();
-  el("lyrics-search-open").click();
-  expect(document.activeElement).toBe(el("lyrics-query"));
-  expect(Array.from(el<HTMLSelectElement>("lyrics-search-source").options).map((option) => option.value)).toEqual(["lrclib"]);
-  bridge.invoke.mockResolvedValueOnce([candidate]);
-  submitSearch("  別名  ");
-  expect(el("lyrics-search-status").textContent).toBe("Searching…");
-  await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("search_lyrics", { trackId: "spotify:song-a", query: "別名", source: "lrclib" });
-  expect(el("lyrics-candidates").textContent).toContain("Singer · Record · 02:03 · lrclib");
-  expect(el("lyrics-candidates").querySelector("b")).toBeNull();
-  bridge.invoke.mockResolvedValueOnce(preview);
-  el("lyrics-candidates").querySelector("button")!.click();
-  await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("preview_lyric_candidate", { trackId: "spotify:song-a", candidate });
-  expect(el("lyrics-preview").textContent).toContain("00:01  Original\n    翻譯");
-  expect(el<HTMLButtonElement>("lyrics-match-apply").disabled).toBe(false);
-  el("lyrics-match-apply").click();
-  await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("apply_lyric_match", { trackId: "spotify:song-a", candidate });
-  expect(el<HTMLDialogElement>("lyrics-search-dialog").open).toBe(false);
-  expect(document.activeElement).toBe(el("lyrics-search-open"));
-});
-
-it("ignores superseded searches, preview responses after editing, and results after a track change", async () => {
-  await import("./main");
-  await flush();
-  playback();
-  el("lyrics-search-open").click();
-  let oldSearch!: (value: unknown) => void;
-  bridge.invoke.mockImplementationOnce(() => new Promise((resolve) => { oldSearch = resolve; }));
-  submitSearch("first");
-  bridge.invoke.mockResolvedValueOnce([candidate]);
-  submitSearch("second");
-  await flush();
-  oldSearch([{ ...candidate, title: "Stale" }]);
-  await flush();
-  expect(el("lyrics-candidates").textContent).not.toContain("Stale");
-  let oldPreview!: (value: unknown) => void;
-  bridge.invoke.mockImplementationOnce(() => new Promise((resolve) => { oldPreview = resolve; }));
-  el("lyrics-candidates").querySelector("button")!.click();
-  el("lyrics-query").dispatchEvent(new Event("input"));
-  oldPreview(preview);
-  await flush();
-  expect(el("lyrics-preview-panel").hidden).toBe(true);
-  expect(el<HTMLButtonElement>("lyrics-match-apply").disabled).toBe(true);
-  bridge.invoke.mockImplementationOnce(() => new Promise((resolve) => { oldSearch = resolve; }));
-  submitSearch();
-  playback("song-b", 2);
-  oldSearch([candidate]);
-  await flush();
-  expect(el<HTMLDialogElement>("lyrics-search-dialog").open).toBe(false);
-  expect(el("lyrics-candidates").children).toHaveLength(0);
-  el("lyrics-match-apply").click();
-  expect(bridge.invoke.mock.calls.some(([command]) => command === "apply_lyric_match")).toBe(false);
-});
-
-it("shows empty/error states, rejects empty previews and restores an existing manual match", async () => {
-  await import("./main");
-  await flush();
-  playback();
-  bridge.listeners.get("lyrics")!({ payload: { generation: 1, trackId: "spotify:song-a", source: "LRCLIB", synced: false, cues: [], text: "saved", partial: false, requested: "", manual: true } });
-  expect(el("source-badge").textContent).toContain("Manual");
-  el("lyrics-search-open").click();
-  expect(el<HTMLButtonElement>("lyrics-match-clear").disabled).toBe(false);
-  bridge.invoke.mockResolvedValueOnce([]);
-  submitSearch();
-  await flush();
-  expect(el("lyrics-search-status").textContent).toContain("No results");
-  bridge.invoke.mockRejectedValueOnce("Source unavailable");
-  submitSearch();
-  await flush();
-  expect(el("lyrics-search-status").textContent).toBe("Source unavailable");
-  bridge.invoke.mockResolvedValueOnce([candidate]);
-  submitSearch();
-  await flush();
-  bridge.invoke.mockResolvedValueOnce({ ...preview, cues: [], text: "" });
-  el("lyrics-candidates").querySelector("button")!.click();
-  await flush();
-  expect(el("lyrics-search-status").textContent).toContain("no lyrics");
-  expect(el<HTMLButtonElement>("lyrics-match-apply").disabled).toBe(true);
-  el("lyrics-match-clear").click();
-  await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("clear_lyric_match", { trackId: "spotify:song-a" });
-});
-
-it("dismisses search with Escape and invalidates an in-flight preview", async () => {
-  await import("./main");
-  await flush();
-  playback();
-  el("lyrics-search-open").click();
-  bridge.invoke.mockResolvedValueOnce([candidate]);
-  submitSearch();
-  await flush();
-  let finish!: (value: unknown) => void;
-  bridge.invoke.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
-  el("lyrics-candidates").querySelector("button")!.click();
-  el("lyrics-search-dialog").dispatchEvent(new Event("cancel"));
-  finish(preview);
-  await flush();
-  expect(el<HTMLDialogElement>("lyrics-search-dialog").open).toBe(false);
-  expect(el<HTMLButtonElement>("lyrics-match-apply").disabled).toBe(true);
 });
 
 it("highlights words from the playback clock across pause and seeks, displays translations, and accepts old cues", async () => {
@@ -243,8 +165,7 @@ it("highlights words from the playback clock across pause and seeks, displays tr
   runFrame();
   expect(spans[0].classList.contains("is-singing")).toBe(true);
   expect(spans[1].classList.contains("is-sung")).toBe(false);
-  el<HTMLInputElement>("show-translations").checked = false;
-  el("show-translations").dispatchEvent(new Event("change"));
+  bridge.listeners.get("search:translations")!({ payload: false });
   expect(document.body.classList.contains("hide-translations")).toBe(true);
   expect(document.body.classList.contains("has-translations")).toBe(false);
   lyrics(1, "Old plain text");
@@ -324,8 +245,12 @@ it("disables unsupported volume and discards pending replies when the player cha
   volume.dispatchEvent(new Event("change"));
   el("settings-open").click();
   await flush();
-  el<HTMLSelectElement>("settings-player").value = "ytmusic";
-  el("settings-form").dispatchEvent(new Event("submit", { cancelable: true }));
+  await flush();
+  // YouTube Music is saved in the settings window, which then closes.
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, player: "ytmusic" } };
+  });
+  children.get("settings")!.events.get("tauri://destroyed")!({ payload: null });
   await flush();
   playback("ytmusic:song-b", 2, 0, false, { volumePercent: null, canSetVolume: false });
   reject("Old Spotify error");
@@ -356,79 +281,55 @@ it("does not apply an old volume reply to a different device with the same name"
 it("opens settings instead of connecting on first run", async () => {
   bridge.invoke.mockImplementation(async (command: string) => {
     if (command === "get_config") return { ...initial(), settings: { ...initial().settings, clientId: "" } };
-    if (command === "connect") expect(bridge.listeners.size).toBe(4);
   });
   await import("./main");
   await flush();
-  expect(bridge.listeners.size).toBe(4);
-  expect(el<HTMLDialogElement>("settings-dialog").open).toBe(true);
+  await flush();
+  expect(children.get("settings")?.options).toMatchObject({ url: "settings.html", parent: "main", visible: false });
   expect(bridge.invoke).not.toHaveBeenCalledWith("connect", undefined);
 });
 
 it("registers all event listeners before connecting an existing identity", async () => {
   bridge.invoke.mockImplementation(async (command: string) => {
     if (command === "get_config") return initial();
-    if (command === "connect") expect([...bridge.listeners.keys()].sort())
-      .toEqual(["lyrics", "playback", "status", "toggle-click-through"]);
+    if (command === "connect") expect([...bridge.listeners.keys()].sort()).toEqual([
+      "lyrics", "palette:closed", "palette:run", "playback", "search:translations", "settings:preview", "status",
+      "toggle-click-through",
+    ]);
   });
   await import("./main");
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("connect", undefined);
 });
 
-it("saves Client ID, provider order/enabled state, colors and follow as one settings update", async () => {
+it("opens settings as a window of its own, previews its dials and re-reads what is stored when it closes", async () => {
   await import("./main");
   await flush();
   el("settings-open").click();
   await flush();
-  el<HTMLInputElement>("client-id").value = `  ${"b".repeat(32)}  `;
-  el<HTMLInputElement>("color-accent").value = "#abcdef";
-  el<HTMLInputElement>("color-active").value = "#fedcba";
-  el<HTMLInputElement>("color-past").value = "#112233";
-  el<HTMLInputElement>("settings-follow").checked = false;
-  const enabled = el("source-order").querySelector("input")!;
-  enabled.checked = false;
-  enabled.dispatchEvent(new Event("change"));
-  el("source-order").querySelectorAll("button")[1].click();
-  el("settings-form").dispatchEvent(new Event("submit", { cancelable: true }));
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("save_settings", { incoming: {
-    player: "spotify",
-    clientId: "b".repeat(32),
-    sources: [{ id: "musixmatch", enabled: true }, { id: "lrclib", enabled: false }],
-    theme: { accent: "#abcdef", activeLine: "#fedcba", pastLine: "#112233" },
-    followLyrics: false,
-    alwaysOnTop: false,
-    opacity: 100,
-    clickThrough: "off",
-    compact: false,
-    compactOpacity: 85,
-    lyricSize: 26,
-    compactLyricSize: 18,
-  } });
+  const settings = children.get("settings")!;
+  expect(settings.options).toMatchObject({ url: "settings.html", parent: "main", decorations: false });
+  // Centred over the 940x760 main window at (100, 50).
+  expect(settings.options).toMatchObject({ x: 250, y: 50, width: 640, height: 780 });
+
+  // A second press brings the open window forward instead of making another.
+  el("settings-open").click();
+  await flush();
+  expect(settings.setFocus).toHaveBeenCalled();
+
+  bridge.listeners.get("settings:preview")!({ payload: { opacity: 60, compactOpacity: 85, lyricSize: 40, compactLyricSize: 18 } });
+  expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("40px");
+  expect(document.documentElement.style.getPropertyValue("--ui-opacity")).toBe("0.6");
+
+  // Closed (saved elsewhere): what is stored now comes back, preview or not.
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, theme: { ...initial().settings.theme, accent: "#abcdef" } } };
+  });
+  settings.events.get("tauri://destroyed")!({ payload: null });
+  await flush();
   expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#abcdef");
-  expect(el<HTMLInputElement>("follow").checked).toBe(false);
-  expect(el<HTMLDialogElement>("settings-dialog").open).toBe(false);
-});
-
-it("hides the Spotify setup when the player is switched to YouTube Music, and saves the choice", async () => {
-  await import("./main");
-  await flush();
-  el("settings-open").click();
-  await flush();
-  // Spotify is the stored choice, so its setup starts visible.
-  expect(el("spotify-settings").hidden).toBe(false);
-
-  const player = el<HTMLSelectElement>("settings-player");
-  player.value = "ytmusic";
-  player.dispatchEvent(new Event("change"));
-  // YouTube Music has nothing to sign in to, so the Client ID stops being asked for.
-  expect(el("spotify-settings").hidden).toBe(true);
-
-  el("settings-form").dispatchEvent(new Event("submit", { cancelable: true }));
-  await flush();
-  const saved = bridge.invoke.mock.calls.find(([command]) => command === "save_settings")!;
-  expect((saved[1] as { incoming: { player: string } }).incoming.player).toBe("ytmusic");
+  expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("26px");
 });
 
 it("connects straight away on first run when the player needs no Client ID", async () => {
@@ -440,7 +341,7 @@ it("connects straight away on first run when the player needs no Client ID", asy
   await import("./main");
   await flush();
   // An empty Client ID is only a blocker for Spotify.
-  expect(el<HTMLDialogElement>("settings-dialog").open).toBe(false);
+  expect(children.has("settings")).toBe(false);
   expect(bridge.invoke).toHaveBeenCalledWith("connect", undefined);
 });
 
@@ -475,118 +376,68 @@ it("clears matched titles on empty results, refreshes and track changes, ignorin
   expect(el("track-name").textContent).toBe("song-b");
 });
 
-it("keeps refresh separate from source selection and closes the picker when tracks change", async () => {
+/** The song a panel window was opened for, as the main window put it in the URL. */
+const song = (label: string) =>
+  Object.fromEntries(new URLSearchParams(String(children.get(label)!.options.url).split("?")[1]));
+
+it("opens the lyrics source picker as a window for the current song, apart from refresh", async () => {
   await import("./main");
   await flush();
   playback();
+  bridge.listeners.get("lyrics")!({ payload: {
+    generation: 1, trackId: "spotify:song-a", source: "Musixmatch", synced: false, cues: [], text: "Words",
+    matchedTitle: "", partial: false, requested: "musixmatch",
+  } });
   el("source-badge").click();
-  expect(el<HTMLDialogElement>("source-dialog").open).toBe(true);
-  expect(el<HTMLSelectElement>("track-source").options.length).toBe(3);
-  el<HTMLSelectElement>("track-source").value = "musixmatch";
-  el("source-save").click();
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("set_track_source", { source: "musixmatch", trackId: "spotify:song-a" });
+  await flush();
+  const source = children.get("source")!;
+  expect(source.options).toMatchObject({ parent: "main", visible: false, decorations: false, width: 480, height: 380 });
+  expect(song("source")).toEqual({ track: "spotify:song-a", title: "song-a", source: "musixmatch" });
+  // A second press brings the open window forward instead of making another.
+  el("source-badge").click();
+  await flush();
+  expect(source.setFocus).toHaveBeenCalled();
+
   el("reload").click();
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("reload_lyrics", undefined);
-  el("source-badge").click();
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "set_track_source")).toBe(false);
   playback("song-b", 2);
-  expect(el<HTMLDialogElement>("source-dialog").open).toBe(false);
   lyrics(2, "Current song lyrics");
   lyrics(1, "Old song lyrics");
   expect(el("lyrics-list").textContent).toBe("Current song lyrics");
 });
 
-/** jsdom gives every element a zero-sized box, so the panel needs a real one. */
-function boxed(dialog: HTMLDialogElement) {
-  dialog.getBoundingClientRect = () =>
-    ({ left: 100, right: 400, top: 100, bottom: 400, x: 100, y: 100, width: 300, height: 300 }) as DOMRect;
-  return dialog;
-}
-
-const at = (clientX: number, clientY: number) => ({ clientX, clientY, bubbles: true });
-
-it("treats a click away from the settings panel as cancelling it", async () => {
+it("opens Find lyrics as a window for the current song and follows its translation switch", async () => {
   await import("./main");
   await flush();
-  el("settings-open").click();
+  el("lyrics-search-open").click();
   await flush();
-  const dialog = boxed(el<HTMLDialogElement>("settings-dialog"));
-  el<HTMLInputElement>("color-accent").value = "#abcdef";
+  // No song yet, so nothing to find lyrics for.
+  expect(children.has("search")).toBe(false);
 
-  dialog.dispatchEvent(new MouseEvent("pointerdown", at(20, 20)));
-  dialog.dispatchEvent(new MouseEvent("click", at(20, 20)));
-  await flush();
-  expect(dialog.open).toBe(false);
-  // Cancelling, not saving: the edit is dropped and the stored colour comes back.
-  expect(bridge.invoke).not.toHaveBeenCalledWith("save_settings", expect.anything());
-  expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#123456");
-});
-
-it("keeps the settings panel open when a click merely starts or ends inside it", async () => {
-  await import("./main");
-  await flush();
-  el("settings-open").click();
-  await flush();
-  const dialog = boxed(el<HTMLDialogElement>("settings-dialog"));
-
-  // Dragging a slider or selecting text often releases past the edge.
-  dialog.dispatchEvent(new MouseEvent("pointerdown", at(200, 200)));
-  dialog.dispatchEvent(new MouseEvent("click", at(20, 20)));
-  expect(dialog.open).toBe(true);
-
-  // The dialog is padded, so a click inside its box is never "away" even when
-  // it lands on the dialog element rather than on a control.
-  dialog.dispatchEvent(new MouseEvent("pointerdown", at(110, 110)));
-  dialog.dispatchEvent(new MouseEvent("click", at(110, 110)));
-  expect(dialog.open).toBe(true);
-});
-
-it("treats a click away from the source picker as cancelling it", async () => {
-  await import("./main");
-  await flush();
   playback();
-  el("source-badge").click();
-  const dialog = boxed(el<HTMLDialogElement>("source-dialog"));
-  expect(dialog.open).toBe(true);
+  bridge.listeners.get("lyrics")!({ payload: {
+    generation: 1, trackId: "spotify:song-a", source: "LRCLIB", synced: false, cues: [], text: "Saved",
+    matchedTitle: "", partial: false, requested: "", manual: true,
+  } });
+  el("lyrics-search-open").click();
+  await flush();
+  await flush();
+  expect(children.get("search")!.options).toMatchObject({ parent: "main", visible: false, decorations: false, width: 600, height: 680 });
+  expect(song("search")).toEqual({
+    track: "spotify:song-a", title: "song-a · Artist", query: "song-a Artist", manual: "1", translations: "1",
+  });
 
-  dialog.dispatchEvent(new MouseEvent("pointerdown", at(20, 20)));
-  dialog.dispatchEvent(new MouseEvent("click", at(20, 20)));
-  await flush();
-  expect(dialog.open).toBe(false);
-  expect(bridge.invoke).not.toHaveBeenCalledWith("set_track_source", expect.anything());
-});
-
-it("puts back a previewed setting when Escape dismisses the panel", async () => {
-  await import("./main");
-  await flush();
-  el("settings-open").click();
-  await flush();
-  const dialog = el<HTMLDialogElement>("settings-dialog");
-  const size = el<HTMLInputElement>("settings-lyric-size");
-  size.value = "40";
-  size.dispatchEvent(new Event("input"));
-  expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("40px");
-
-  // Escape never reaches either button, so without this the preview would stay.
-  dialog.dispatchEvent(new Event("cancel"));
-  dialog.close();
-  expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("26px");
-});
-
-it("keeps the settings dialog and entered values when saving fails", async () => {
-  await import("./main");
-  await flush();
-  el("settings-open").click();
-  await flush();
-  bridge.invoke.mockRejectedValueOnce("Settings folder is read-only");
-  el<HTMLInputElement>("client-id").value = "invalid";
-  el("settings-form").dispatchEvent(new Event("submit", { cancelable: true }));
-  await flush();
-  expect(el<HTMLDialogElement>("settings-dialog").open).toBe(true);
-  expect(el<HTMLInputElement>("client-id").value).toBe("invalid");
-  expect(el("settings-error").textContent).toContain("read-only");
-  expect(el<HTMLButtonElement>("settings-save").disabled).toBe(false);
+  bridge.listeners.get("search:translations")!({ payload: false });
+  expect(document.body.classList.contains("hide-translations")).toBe(true);
+  // The palette's switch shows, and flips, the same setting.
+  const snapshot = await openPalette();
+  const translations = snapshot.commands.find((command) => command.label === "Show translations")!;
+  expect(translations.state).toEqual({ text: "OFF", on: false });
+  bridge.listeners.get("palette:run")!({ payload: { command: translations.id } });
+  expect(document.body.classList.contains("hide-translations")).toBe(false);
 });
 
 it("uses the durable fallback key for a track without a Spotify ID", async () => {
@@ -594,10 +445,11 @@ it("uses the durable fallback key for a track without a Spotify ID", async () =>
   await flush();
   playback("");
   el("source-badge").click();
-  expect(el<HTMLDialogElement>("source-dialog").open).toBe(true);
-  el("source-save").click();
+  el("lyrics-search-open").click();
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("set_track_source", { source: null, trackId: "spotify:|100000" });
+  await flush();
+  expect(song("source").track).toBe("spotify:|100000");
+  expect(song("search").track).toBe("spotify:|100000");
 });
 
 it("pins the window on top and stores the choice", async () => {
@@ -709,18 +561,24 @@ it("thins only the background, never the lyrics", async () => {
   expect(document.documentElement.style.getPropertyValue("--ui-opacity")).toBe("0.45");
 });
 
-it("steps the secondary controls aside once nothing is happening", async () => {
-  vi.useFakeTimers();
-  try {
-    await import("./main");
-    await vi.advanceTimersByTimeAsync(3100);
-    expect(document.body.classList.contains("is-idle")).toBe(true);
+it("keeps play and pause in the bar, named for what a press does", async () => {
+  await import("./main");
+  await flush();
+  const button = el<HTMLButtonElement>("bar-play");
+  expect(button.disabled).toBe(true);
 
-    window.dispatchEvent(new Event("pointermove"));
-    expect(document.body.classList.contains("is-idle")).toBe(false);
-  } finally {
-    vi.useRealTimers();
-  }
+  playback("song-a", 1, 0, false);
+  expect(button.disabled).toBe(false);
+  expect(button.getAttribute("aria-label")).toBe("Play");
+  button.click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("play", undefined);
+
+  playback("song-a", 1, 0, true);
+  expect(button.getAttribute("aria-label")).toBe("Pause");
+  button.click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("pause", undefined);
 });
 
 /** Compact's chrome and bar rows with their hairlines; mirrors COMPACT_CHROME. */
@@ -799,8 +657,7 @@ it("never lets compact be dragged below three lines of lyrics", async () => {
   await flush();
   // Reserve the translated line-height AND its 4px top margin for each row.
   expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: Math.ceil(3 * (30 * (1.32 + 0.65 * 1.4) + 18 + 4)) + CHROME });
-  el<HTMLInputElement>("show-translations").checked = false;
-  el("show-translations").dispatchEvent(new Event("change"));
+  bridge.listeners.get("search:translations")!({ payload: false });
   await flush();
   expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: lines + CHROME });
 });
@@ -906,79 +763,85 @@ it("lets the tool faces stand in for the controls they name", async () => {
 
 const key = (target: EventTarget, init: KeyboardEventInit) =>
   target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
-function typeInPalette(text: string) {
-  const input = el<HTMLInputElement>("pal-input");
-  input.value = text;
-  input.dispatchEvent(new Event("input"));
-  return input;
-}
 
-it("opens the command palette with Ctrl+K and runs the best match on Enter", async () => {
+/** Ctrl+K, the palette window loading, and the snapshot main.ts sends it. */
+async function openPalette() {
+  key(window, { key: "k", ctrlKey: true });
+  await flush();
+  bridge.listeners.get("palette:ready")?.({ payload: null });
+  await flush();
+  await flush();
+  const call = [...bridge.emitTo.mock.calls].reverse().find(([, event]) => event === "palette:show");
+  return call?.[2] as { commands: { id: number; label: string; enabled: boolean; state: unknown }[]; lines: unknown[]; trackKey: string; accent: string };
+}
+const runInPalette = (payload: unknown) => bridge.listeners.get("palette:run")!({ payload });
+
+it("opens the palette as a window of its own with Ctrl+K and sends it what the window looks like now", async () => {
   await import("./main");
   await flush();
-  playback("song-a", 1, 0, true);
-  key(window, { key: "k", ctrlKey: true });
-  expect(el<HTMLDialogElement>("palette").open).toBe(true);
+  const snapshot = await openPalette();
+  expect(children.get("palette")?.options).toMatchObject({ url: "palette.html", parent: "main", transparent: true, visible: false });
+  expect(children.get("palette")!.setPosition).toHaveBeenCalled();
+  expect(snapshot.accent).toBe("#123456");
+  // No track yet: listed, but not runnable.
+  expect(snapshot.commands.find((command) => command.label === "Next track")?.enabled).toBe(false);
+  expect(snapshot.commands.find((command) => command.label === "Compact mode")?.state).toEqual({ text: "OFF", on: false });
+  // Retry only appears when the connection needs it.
+  expect(snapshot.commands.some((command) => command.label === "Retry connection")).toBe(false);
 
-  key(typeInPalette("next"), { key: "Enter" });
+  // The window is made once and reused.
+  await openPalette();
+  el("cmdk-open").click();
+  await flush();
+  expect(bridge.emitTo.mock.calls.filter(([, event]) => event === "palette:show")).toHaveLength(3);
+});
+
+it("runs what the palette picked, checking again that it still can", async () => {
+  await import("./main");
+  await flush();
+  const snapshot = await openPalette();
+  const id = (label: string) => snapshot.commands.find((command) => command.label === label)!.id;
+
+  runInPalette({ command: id("Next track") });
+  await flush();
+  // Still no track: nothing is sent, whatever the palette believed.
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "next_track")).toBe(false);
+
+  playback("song-a", 1, 0, true);
+  runInPalette({ command: id("Next track") });
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("next_track", undefined);
-  expect(el<HTMLDialogElement>("palette").open).toBe(false);
+  expect(appWindow.setFocus).toHaveBeenCalled();
 
-  // Chinese names find commands too.
-  key(window, { key: "k", ctrlKey: true });
-  key(typeInPalette("精簡"), { key: "Enter" });
+  runInPalette({ command: id("Compact mode") });
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("save_settings", { incoming: { ...initial().settings, compact: true } });
 });
 
-it("jumps to a lyric line found by its words, and refuses commands that cannot run", async () => {
+it("sends the timed lines and seeks to the one picked, but never into a song that has changed", async () => {
   await import("./main");
   await flush();
-  key(window, { key: "k", ctrlKey: true });
-  key(typeInPalette("next track"), { key: "Enter" });
-  // No track: the command is listed but does nothing, and the palette stays open.
-  expect(bridge.invoke.mock.calls.some(([command]) => command === "next_track")).toBe(false);
-  expect(el<HTMLDialogElement>("palette").open).toBe(true);
-  el<HTMLDialogElement>("palette").close();
-
   playback("song-a", 1, 0, true);
   bridge.listeners.get("lyrics")!({ payload: {
     generation: 1, trackId: "spotify:song-a", source: "LRCLIB", synced: true, text: "", partial: false, requested: "",
-    matchedTitle: "", cues: [{ time_ms: 1000, text: "Hello <b>world</b>" }, { time_ms: 42000, text: "止まらない鼓動" }],
+    matchedTitle: "", cues: [{ time_ms: 1000, text: "Hello <b>world</b>" }, { time_ms: 2000, text: "  " }, { time_ms: 42000, text: "止まらない鼓動" }],
   } });
-  key(window, { key: "k", ctrlKey: true });
-  typeInPalette("鼓動");
-  const row = el("pal-list").querySelector(".pal__item.is-sel")!;
-  expect(row.textContent).toContain("止まらない鼓動");
-  expect(row.querySelector("mark")?.textContent).toBe("鼓動");
-  key(el("pal-input"), { key: "Enter" });
+  const snapshot = await openPalette();
+  expect(snapshot.trackKey).toBe("spotify:song-a");
+  // Blank lines have no words to find.
+  expect(snapshot.lines).toEqual([
+    { index: 0, text: "Hello <b>world</b>", translation: "", time: "00:01" },
+    { index: 2, text: "止まらない鼓動", translation: "", time: "00:42" },
+  ]);
+
+  runInPalette({ line: 2, trackKey: "spotify:song-a" });
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("seek", { positionMs: 42000 });
 
-  // Lyric text is shown as text, never parsed as markup.
-  key(window, { key: "k", ctrlKey: true });
-  typeInPalette("world");
-  expect(el("pal-list").querySelector("b")).toBeNull();
-  expect(el("pal-list").textContent).toContain("Hello <b>world</b>");
-});
-
-it("leaves Enter alone while an input method is still composing", async () => {
-  await import("./main");
+  bridge.invoke.mockClear();
+  runInPalette({ line: 2, trackKey: "spotify:song-b" });
   await flush();
-  playback("song-a", 1, 0, true);
-  key(window, { key: "k", ctrlKey: true });
-  key(typeInPalette("next"), { key: "Enter", isComposing: true });
-  await flush();
-  expect(bridge.invoke.mock.calls.some(([command]) => command === "next_track")).toBe(false);
-});
-
-it("shows the app version in settings and the palette", async () => {
-  await import("./main");
-  await flush();
-  await flush();
-  expect(el("app-version").textContent).toBe("v1.3.0");
-  expect(el("pal-version").textContent).toBe("HAKURO v1.3.0");
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "seek")).toBe(false);
 });
 
 it("matches lyrics and commands to the backend's track key, whatever its source prefix", async () => {
@@ -997,7 +860,7 @@ it("matches lyrics and commands to the backend's track key, whatever its source 
   expect(el("lyrics-list").textContent).toBe("Sung words");
 
   el("source-badge").click();
-  el("source-save").click();
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("set_track_source", { source: null, trackId: "ytm:Video|1105000" });
+  await flush();
+  expect(song("source").track).toBe("ytm:Video|1105000");
 });

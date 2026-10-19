@@ -1,7 +1,10 @@
 /**
- * Command palette (Ctrl+K). Every command is a closure handed in by main.ts,
- * which mostly clicks the control that already does the job; typing also
- * searches the current song's lyrics so a line can be jumped to by its words.
+ * Command palette (Ctrl+K). It lives in a window of its own, so the main
+ * window hands it a snapshot of plain data — every command's current label,
+ * state and availability, and the song's timed lines — and gets back which one
+ * was picked. The commands themselves stay closures in main.ts, which mostly
+ * click the control that already does the job; typing also searches the
+ * current song's lyrics so a line can be jumped to by its words.
  *
  * Text from lyrics providers is untrusted, so everything is built as DOM nodes,
  * never as HTML strings.
@@ -9,6 +12,7 @@
 
 type Value = string | (() => string);
 
+/** A command as main.ts defines it, live against its own state. */
 export interface Command {
   group: string;
   icon: Value;
@@ -25,17 +29,67 @@ export interface Command {
   run: () => void;
 }
 
-export interface LyricHit {
-  number: number;
+/** A command as the palette window sees it: read once, as it stood on opening. */
+export interface PaletteCommand {
+  /** Its index in main.ts's command list, sent back when it is picked. */
+  id: number;
+  group: string;
+  icon: string;
+  label: string;
+  hint: string;
+  words: string;
+  state: { text: string; on: boolean } | null;
+  enabled: boolean;
+}
+
+export interface PaletteLine {
+  /** The cue's index in the song's lyrics. */
+  index: number;
   text: string;
   translation: string;
   time: string;
-  run: () => void;
+}
+
+export interface PaletteSnapshot {
+  commands: PaletteCommand[];
+  /** Timed lines only: an untimed line has nowhere to jump to. */
+  lines: PaletteLine[];
+  title: string;
+  /** The song the lines belong to, so a jump can never land in the next one. */
+  trackKey: string;
+  accent?: string;
+}
+
+export type PaletteAction = { command: number } | { line: number; trackKey: string };
+
+/** Main → palette: draw this snapshot and take the focus. */
+export const PALETTE_SHOW = "palette:show";
+/** Palette → main: run this, then take the focus back. */
+export const PALETTE_RUN = "palette:run";
+/** Palette → main: closed by the keyboard or a click, so hand the focus back. */
+export const PALETTE_CLOSED = "palette:closed";
+/** Palette → main: the page has loaded and is listening. */
+export const PALETTE_READY = "palette:ready";
+
+const read = (value: Value | undefined) => (typeof value === "function" ? value() : value ?? "");
+
+export function describeCommands(commands: Command[]): PaletteCommand[] {
+  return commands.flatMap((command, id) => (command.visible?.() ?? true) ? [{
+    id,
+    group: command.group,
+    icon: read(command.icon),
+    label: read(command.label),
+    hint: read(command.hint),
+    words: command.words ?? "",
+    state: command.state?.() ?? null,
+    enabled: command.enabled?.() ?? true,
+  }] : []);
 }
 
 export interface Palette {
-  open(): void;
-  close(): void;
+  show(snapshot: PaletteSnapshot): void;
+  /** Put the caret back in the field, once the window itself has the focus. */
+  focus(): void;
   setVersion(version: string): void;
 }
 
@@ -47,7 +101,7 @@ interface Item {
   state: { text: string; on: boolean } | null;
   keys: string[];
   enabled: boolean;
-  run: () => void;
+  action: PaletteAction;
 }
 
 interface Match {
@@ -56,13 +110,11 @@ interface Match {
   picks?: number[];
 }
 
-const read = (value: Value | undefined) => (typeof value === "function" ? value() : value ?? "");
-
-function matchCommand(command: Command, query: string): Match | null {
-  const label = read(command.label).toLowerCase();
+function matchCommand(command: PaletteCommand, query: string): Match | null {
+  const label = command.label.toLowerCase();
   const at = label.indexOf(query);
   if (at >= 0) return { score: 300 - at + (at === 0 || label[at - 1] === " " ? 40 : 0), range: [at, at + query.length] };
-  if (`${read(command.hint)} ${command.words ?? ""}`.toLowerCase().includes(query)) return { score: 150 };
+  if (`${command.hint} ${command.words}`.toLowerCase().includes(query)) return { score: 150 };
   // Letters in order, anywhere: "cmp" finds "Compact mode".
   const picks: number[] = [];
   for (let k = 0, j = 0; k < label.length && j < query.length; k++) {
@@ -99,15 +151,18 @@ function retrigger(el: Element, name: string) {
   el.classList.add(name);
 }
 
+const MAX_LYRIC_HITS = 8;
+
 export function createPalette(options: {
-  commands: Command[];
-  lyrics(query: string): LyricHit[];
-  lyricsTitle(): string;
+  run(action: PaletteAction): void;
+  /** Escape, Ctrl+K again, or a click beside the palette. */
+  dismiss(): void;
 }): Palette {
-  const dialog = document.getElementById("palette") as HTMLDialogElement;
+  const box = document.getElementById("palette") as HTMLElement;
   const input = document.getElementById("pal-input") as HTMLInputElement;
   const list = document.getElementById("pal-list") as HTMLElement;
   const version = document.getElementById("pal-version") as HTMLElement;
+  let snapshot: PaletteSnapshot = { commands: [], lines: [], title: "", trackKey: "" };
   let items: Item[] = [];
   let selected = 0;
   let bar: HTMLElement | null = null;
@@ -120,43 +175,44 @@ export function createPalette(options: {
       rows.push(item);
       items.push(item);
     };
-    const fromCommand = (command: Command, match: Match | null): Item => ({
-      icon: read(command.icon),
-      label: read(command.label),
+    const fromCommand = (command: PaletteCommand, match: Match | null): Item => ({
+      icon: command.icon,
+      label: command.label,
       match,
-      hint: read(command.hint),
-      state: command.state?.() ?? null,
+      hint: command.hint,
+      state: command.state,
       keys: [],
-      enabled: command.enabled?.() ?? true,
-      run: command.run,
+      enabled: command.enabled,
+      action: { command: command.id },
     });
-    const shown = options.commands.filter((command) => command.visible?.() ?? true);
     if (!query) {
       let group = "";
-      for (const command of shown) {
+      for (const command of snapshot.commands) {
         if (command.group !== group) rows.push((group = command.group));
         add(fromCommand(command, null));
       }
     } else {
-      const hits = shown
+      const hits = snapshot.commands
         .map((command) => ({ command, match: matchCommand(command, query) }))
-        .filter((hit): hit is { command: Command; match: Match } => hit.match !== null)
+        .filter((hit): hit is { command: PaletteCommand; match: Match } => hit.match !== null)
         .sort((a, b) => b.match.score - a.match.score);
       if (hits.length) rows.push("COMMANDS");
       hits.forEach(({ command, match }) => add(fromCommand(command, match)));
-      const lines = options.lyrics(query);
-      if (lines.length) rows.push(`JUMP TO LYRIC · ${options.lyricsTitle()}`);
+      const lines = snapshot.lines
+        .filter((line) => line.text.toLowerCase().includes(query) || line.translation.toLowerCase().includes(query))
+        .slice(0, MAX_LYRIC_HITS);
+      if (lines.length) rows.push(`JUMP TO LYRIC · ${snapshot.title}`);
       for (const line of lines) {
         const at = line.text.toLowerCase().indexOf(query);
         add({
-          icon: String(line.number).padStart(2, "0"),
+          icon: String(line.index + 1).padStart(2, "0"),
           label: line.text,
           match: at >= 0 ? { score: 0, range: [at, at + query.length] } : null,
           hint: line.translation,
           state: null,
           keys: line.time ? [line.time] : [],
           enabled: true,
-          run: line.run,
+          action: { line: line.index, trackKey: snapshot.trackKey },
         });
       }
     }
@@ -241,22 +297,7 @@ export function createPalette(options: {
       return;
     }
     if (bar) retrigger(bar, "fire");
-    // Close first: a command may open a dialog of its own.
-    dialog.close();
-    item.run();
-  }
-
-  function open() {
-    if (dialog.open) {
-      dialog.close();
-      return;
-    }
-    // One modal at a time; Ctrl+K over the settings panel does nothing.
-    if (document.querySelector("dialog[open]")) return;
-    input.value = "";
-    dialog.showModal();
-    render();
-    input.focus();
+    options.run(item.action);
   }
 
   input.addEventListener("input", render);
@@ -282,15 +323,33 @@ export function createPalette(options: {
     runSelected();
   });
   window.addEventListener("keydown", (event) => {
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+    if (event.isComposing) return;
+    const chord = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k";
+    if (event.key === "Escape" || chord) {
       event.preventDefault();
-      open();
+      options.dismiss();
     }
+  });
+  // The margin around the box stands in for a backdrop. Both the press and the
+  // release have to land there, so a drag that overshoots the edge is harmless.
+  let pressedOutside = false;
+  const outside = (event: Event) => !box.contains(event.target as Node);
+  document.addEventListener("pointerdown", (event) => { pressedOutside = outside(event); });
+  document.addEventListener("click", (event) => {
+    const away = pressedOutside && outside(event);
+    pressedOutside = false;
+    if (away) options.dismiss();
   });
 
   return {
-    open,
-    close: () => dialog.close(),
+    show(next) {
+      snapshot = next;
+      input.value = "";
+      render();
+      retrigger(box, "is-in");
+      input.focus();
+    },
+    focus: () => input.focus(),
     setVersion(value) {
       version.textContent = `HAKURO v${value}`;
     },

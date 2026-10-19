@@ -1,0 +1,53 @@
+/**
+ * The settings shape the backend stores, shared by the main window and the
+ * settings window, and the few things both do with it.
+ */
+
+export type ClickThrough = "off" | "auto" | "always";
+/** Which player Hakuro follows. Exactly one is live at a time. */
+export type PlayerKind = "spotify" | "ytmusic";
+
+export interface Theme { accent: string; activeLine: string; pastLine: string }
+
+export interface Settings {
+  player: PlayerKind;
+  clientId: string;
+  sources: { id: string; enabled: boolean }[];
+  theme: Theme;
+  followLyrics: boolean;
+  alwaysOnTop: boolean;
+  /** Background opacity as a percentage; the lyrics stay opaque regardless. */
+  opacity: number;
+  clickThrough: ClickThrough;
+  compact: boolean;
+  compactOpacity: number;
+  lyricSize: number;
+  compactLyricSize: number;
+}
+
+export interface Config {
+  settings: Settings;
+  providers: { id: string; label: string }[];
+  dataDir: string;
+  storedTracks: number;
+  storageWarning: string;
+}
+
+/** The settings window's dials, sent to the main window as they move. */
+export interface WindowStylePreview {
+  opacity: number;
+  compactOpacity: number;
+  lyricSize: number;
+  compactLyricSize: number;
+}
+
+export const SETTINGS_PREVIEW = "settings:preview";
+/** Find lyrics → main: its translation toggle drives the main window's lyrics. */
+export const SEARCH_TRANSLATIONS = "search:translations";
+
+export function applyTheme(theme: Theme) {
+  const root = document.documentElement.style;
+  root.setProperty("--accent", theme.accent);
+  root.setProperty("--active-line", theme.activeLine);
+  root.setProperty("--past-line", theme.pastLine);
+}

@@ -10,6 +10,19 @@ export default defineConfig(() => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
+  // The palette and the panels (settings, Find lyrics, lyrics source) are
+  // windows of their own, each a page.
+  build: {
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        palette: "palette.html",
+        settings: "settings.html",
+        search: "search.html",
+        source: "source.html",
+      },
+    },
+  },
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
     port: 1420,
