@@ -426,6 +426,8 @@
   function bindKeys() {
     window.addEventListener("keydown", (e) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+      // Leave modifier chords (Ctrl+C, Ctrl+K...) and anything inside an open dialog alone.
+      if (e.ctrlKey || e.metaKey || e.altKey || (e.target instanceof Element && e.target.closest("dialog"))) return;
       const k = e.key;
       if (k === " ") toggle();
       else if (k === "ArrowRight") seek(position() + 5000);

@@ -9,8 +9,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@500;700&family=Noto+Sans+JP:wght@500;700;900&display=swap" rel="stylesheet">
 <style>
 /* Concept A — Cube Deck.
-   The controls live on a physical object you can grab and turn: transport on the
-   front, a volume dial on the side, the record on top, lyric tools round the back.
+   The controls live on a physical object you can grab and turn: the album cover on
+   the front (tap it to play or pause), volume and skip on the side, the record on top,
+   lyric tools round the back.
    Palette: concrete black, three greys, one acid yellow. */
 @property --s { syntax: "<length>"; inherits: true; initial-value: 200px; }
 
@@ -74,7 +75,8 @@ button:focus-visible { outline: 2px solid var(--acid); outline-offset: 3px; }
 }
 
 /* ---------- window chrome ---------- */
-.chrome { display: flex; align-items: center; gap: 14px; padding-left: 16px; position: relative; z-index: 5; }
+/* Solid, so the acid band never runs under the white brand or the COMMANDS chip. */
+.chrome { display: flex; align-items: center; gap: 14px; padding-left: 16px; position: relative; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand__mark { width: 22px; height: 22px; background: var(--acid); color: #000; display: grid; place-items: center; font: 15px/1 var(--display); transform: skewX(-8deg); }
 .brand__name { font: 15px/1 var(--display); letter-spacing: .32em; }
@@ -140,25 +142,44 @@ button:focus-visible { outline: 2px solid var(--acid); outline-offset: 3px; }
 }
 .spill.on { animation: spill .7s ease-out; }
 
-/* front: transport */
-.transport { display: flex; align-items: center; justify-content: center; gap: 9%; width: 100%; padding-top: 6%; }
 .glow-btn {
   width: 19%; aspect-ratio: 1; display: grid; place-items: center; color: var(--acid);
   filter: drop-shadow(0 0 2px rgb(var(--acid-rgb) / .95)) drop-shadow(0 0 calc(var(--s) * .05) rgb(var(--acid-rgb) / .5));
   transition: transform .14s cubic-bezier(.3, 1.6, .5, 1), filter .2s;
 }
 .glow-btn svg { width: 100%; height: 100%; fill: currentColor; }
-.glow-btn--main { width: 29%; }
 .glow-btn:hover { transform: scale(1.08); filter: drop-shadow(0 0 3px rgb(var(--acid-rgb))) drop-shadow(0 0 calc(var(--s) * .09) rgb(var(--acid-rgb) / .75)) brightness(1.1); }
 .glow-btn:active { transform: scale(.8); }
 .glow-btn.hit { animation: hit .5s cubic-bezier(.2, 1.8, .4, 1); }
 .glow-btn:disabled { opacity: .25; filter: none; }
-.icon-pause { display: none; }
-body.is-playing .icon-play { display: none; }
-body.is-playing .icon-pause { display: block; }
-
-/* right: volume dial */
-.dial { position: relative; width: 74%; aspect-ratio: 1; border-radius: 50%; touch-action: none; cursor: grab; --v: 64; }
+/* front: the album cover, full bleed, and its colour is the play state - colour while
+   playing, grey when paused. The lens under the pointer previews the other state; a tap
+   toggles playback and floods the whole cover with it. */
+.face--front { --mx: 50%; --my: 50%; --lk: 0; --gray: grayscale(1) contrast(1.1) brightness(.6); cursor: pointer; }
+.scene.is-dragging .face--front { cursor: grabbing; }
+.cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; -webkit-user-drag: none; }
+.cover--base { filter: var(--gray); }
+.face--front.is-color .cover--base { filter: none; }
+.face--front.is-color .cover--peek { filter: var(--gray); }
+.cover--peek {
+  -webkit-mask: radial-gradient(circle at var(--mx) var(--my), #000 calc(var(--s) * var(--lk) - 1px), transparent calc(var(--s) * var(--lk)));
+          mask: radial-gradient(circle at var(--mx) var(--my), #000 calc(var(--s) * var(--lk) - 1px), transparent calc(var(--s) * var(--lk)));
+}
+/* Darkens the cover only as the front turns away from the light, like the other faces. */
+.cover-shade {
+  position: absolute; inset: 0; pointer-events: none;
+  background: rgb(0 0 0 / calc((.45 - var(--l, .5)) * 1.6));
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / .06), inset 0 0 calc(var(--s) * .12) rgb(0 0 0 / .45);
+}
+.lens {
+  position: absolute; left: var(--mx); top: var(--my); width: calc(var(--s) * var(--lk) * 2); aspect-ratio: 1; translate: -50% -50%;
+  border: 2px solid var(--acid); border-radius: 50%; box-shadow: 0 0 0 1px #000, 0 0 14px rgb(var(--acid-rgb) / .6); pointer-events: none;
+}
+/* right: a big volume dial; the skip buttons sit in its middle, just under VOL */
+.dial { position: relative; width: 82%; aspect-ratio: 1; border-radius: 50%; touch-action: none; cursor: grab; --v: 64; }
+.dial .skip { display: flex; justify-content: center; gap: calc(var(--s) * .05); margin-top: calc(var(--s) * .035); pointer-events: auto; }
+.dial .skip .glow-btn { width: calc(var(--s) * .11); }
+.face--right .face__label { left: 50%; top: auto; bottom: 6%; translate: -50% 0; }
 .dial.is-held { cursor: grabbing; }
 .dial__ring {
   position: absolute; inset: 0; border-radius: 50%;
@@ -238,7 +259,7 @@ body.is-playing .icon-pause { display: block; }
 .lyric-list.drop .line { animation: drop .7s cubic-bezier(.2, 1.4, .4, 1) backwards; animation-delay: calc(var(--i) * 28ms); }
 .line {
   position: relative; padding: 9px 0 9px 46px; cursor: pointer;
-  font: 900 clamp(18px, 2.7vw, 30px)/1.14 var(--display); color: var(--ink-3);
+  font: 900 calc(clamp(18px, 2.7vw, 30px) * var(--ls, 1))/1.14 var(--display); color: var(--ink-3);
   transition: font-size .38s cubic-bezier(.2, 1.25, .3, 1), color .3s;
 }
 .line:hover { color: var(--ink-2); }
@@ -246,9 +267,9 @@ body.is-playing .icon-pause { display: block; }
 .line__text { display: block; }
 .line__tr { display: block; margin-top: 5px; font: 500 12.5px/1.5 var(--tc); letter-spacing: .05em; color: #4e4e4b; -webkit-text-stroke: 0; }
 .line.is-next { color: #8a8a85; }
-.line.is-past { color: transparent; -webkit-text-stroke: 1px #444442; }
+.line.is-past { color: transparent; -webkit-text-stroke: 1px var(--past, #444442); }
 .line.is-past .line__tr { color: #3a3a38; }
-.line.is-active { font-size: clamp(26px, 4.3vw, 54px); color: var(--ink); }
+.line.is-active { font-size: calc(clamp(26px, 4.3vw, 54px) * var(--ls, 1)); color: var(--active, var(--ink)); }
 .line.is-active .line__no { background: var(--acid); color: #000; top: 20px; }
 .line.is-active .line__text { animation: slam .55s cubic-bezier(.2, 1.5, .35, 1) both; }
 .line.is-active .line__tr { color: var(--ink-2); font-size: 14px; }
@@ -304,6 +325,119 @@ body.is-playing .icon-pause { display: block; }
 
 body.shake { animation: shake .28s linear; }
 
+/* ---------- command palette + settings ---------- */
+.cmdk {
+  display: flex; align-items: center; gap: 7px; height: 24px; padding: 0 5px 0 9px;
+  border: 1.5px solid #353533; font: 700 10px var(--mono); letter-spacing: .16em; color: var(--ink-2);
+  transition: border-color .15s, color .15s, transform .15s cubic-bezier(.3, 1.6, .5, 1);
+}
+.cmdk b { color: var(--acid); letter-spacing: 0; }
+.cmdk kbd { font: 700 9px var(--mono); padding: 2px 5px; background: #1f1f1e; color: var(--ink-2); border-radius: 2px; letter-spacing: .06em; }
+.cmdk:hover { border-color: var(--acid); color: var(--acid); }
+.cmdk:active { transform: scale(.9); }
+
+.bar__skip {
+  display: none; align-self: stretch; width: 34px; place-items: center; border-left: 1px solid var(--line); color: var(--acid);
+  filter: drop-shadow(0 0 4px rgb(var(--acid-rgb) / .7));
+  transition: background .15s, color .15s, transform .14s cubic-bezier(.3, 1.6, .5, 1);
+}
+.bar__skip svg { width: 13px; height: 13px; fill: currentColor; }
+.bar__skip:hover { background: var(--acid); color: #000; filter: none; }
+.bar__skip:active { transform: scale(.84); }
+.bar__skip.hit { animation: hit .5s cubic-bezier(.2, 1.8, .4, 1); }
+
+dialog.modal { padding: 0; border: 0; background: transparent; color: var(--ink); overflow: visible; max-width: none; }
+dialog.modal::backdrop { background: rgb(0 0 0 / .62); }
+dialog.modal.closing::backdrop { opacity: 0; transition: opacity .17s; }
+dialog.modal[open] .sheet { animation: sheet-in .42s cubic-bezier(.2, 1.4, .35, 1) both; }
+dialog.modal.closing .sheet { animation: sheet-out .17s ease-in both; }
+.sheet { background: #0c0c0c; border: 1.5px solid #343432; box-shadow: 8px 8px 0 var(--acid), 0 30px 70px rgb(0 0 0 / .65); }
+.sheet input { user-select: text; }
+
+dialog.palette { --max: calc(88vh - 12px); width: min(560px, calc(100vw - 40px)); margin: 12vh auto auto; max-height: var(--max); }
+.palette .sheet { display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; max-height: var(--max); }
+.pal__head { display: flex; align-items: center; justify-content: space-between; height: 24px; padding: 0 12px; background: var(--acid); color: #000; font: 700 10px var(--mono); letter-spacing: .22em; }
+.pal__field { display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+.pal__field b { font: 26px/1 var(--display); color: var(--acid); }
+.pal__input { flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--ink); font: 700 19px var(--jp); caret-color: var(--acid); }
+.pal__input::placeholder { color: var(--ink-3); }
+.pal__list { position: relative; overflow-y: auto; padding: 4px 0 8px; overscroll-behavior: contain; }
+.pal__group { padding: 12px 16px 5px; font: 700 9.5px var(--mono); letter-spacing: .22em; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal__item {
+  position: relative; z-index: 1; display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  height: 38px; padding: 0 18px; cursor: pointer; color: var(--ink-2);
+}
+.pal__item i { font: 700 12px/1 var(--mono); font-style: normal; color: var(--ink-3); text-align: center; }
+.pal__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 15px/1.1 var(--display); letter-spacing: .06em; }
+.pal__label mark { background: none; color: var(--acid); }
+.pal__label small { margin-left: 10px; font: 500 12px var(--tc); letter-spacing: .03em; color: var(--ink-3); }
+.pal__meta { display: flex; align-items: center; gap: 4px; }
+.pal__meta kbd { min-width: 20px; padding: 3px 5px; border: 1px solid #3a3a38; border-radius: 2px; font: 700 9.5px var(--mono); text-align: center; color: var(--ink-3); }
+.pal__meta .state { padding: 3px 6px; background: #1f1f1e; font: 700 9px var(--mono); letter-spacing: .14em; color: var(--ink-3); }
+.pal__meta .state.on { background: rgb(var(--acid-rgb) / .14); color: var(--acid); }
+.pal__item.is-sel, .pal__item.is-sel i, .pal__item.is-sel mark, .pal__item.is-sel small { color: #000; }
+.pal__item.is-sel kbd { border-color: rgb(0 0 0 / .35); color: #000; }
+.pal__item.is-sel .state { background: #000; color: var(--acid); }
+.pal__bar { position: absolute; left: 6px; right: 6px; top: 0; height: 38px; background: var(--acid); transform: translateY(var(--y, 0)) skewX(-8deg); pointer-events: none; }
+.pal__bar.fire { animation: fire .3s ease-out; }
+.pal__empty { padding: 26px 16px; font: 700 11px var(--mono); letter-spacing: .14em; text-align: center; color: var(--ink-3); }
+.pal__foot { display: flex; gap: 16px; padding: 9px 16px; border-top: 1px solid var(--line); font: 700 9.5px var(--mono); letter-spacing: .14em; color: var(--ink-3); }
+.pal__foot kbd { font: inherit; color: var(--ink-2); }
+.pal__foot span:last-child { margin-left: auto; }
+
+dialog.settings { width: min(640px, calc(100vw - 40px)); margin: auto; }
+.settings .sheet { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: calc(100vh - 40px); }
+.set__head { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding: 18px 22px 14px; border-bottom: 1px solid var(--line); }
+.set__title { margin: 0; font: 34px/1 var(--display); letter-spacing: .04em; }
+.set__title small { display: block; margin-bottom: 8px; font: 700 10px var(--mono); letter-spacing: .22em; color: var(--ink-3); }
+.ver { text-align: right; }
+.ver span { font: 700 9.5px var(--mono); letter-spacing: .22em; color: var(--ink-3); }
+.ver b { display: block; margin-top: 4px; padding: 4px 8px 3px; background: var(--acid); color: #000; font: 24px/1 var(--display); letter-spacing: .04em; transform: skewX(-8deg); }
+.set__body { overflow-y: auto; padding: 0 22px 14px; overscroll-behavior: contain; outline: none; }
+.set__sec { padding: 16px 0 8px; border-bottom: 1px dashed #282826; }
+.set__sec:last-child { border-bottom: 0; }
+.set__sec h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; font: 700 10px var(--mono); letter-spacing: .24em; color: var(--ink-3); }
+.set__sec h3::before { content: ""; width: 14px; height: 3px; background: var(--acid); }
+.set__row { display: grid; grid-template-columns: 170px minmax(0, 1fr) auto; align-items: center; gap: 14px; min-height: 40px; }
+.set__row[hidden] { display: none; }
+.set__row > span { font: 13px/1.2 var(--display); letter-spacing: .08em; color: var(--ink-2); }
+.set__row output { min-width: 46px; font: 700 12px var(--mono); text-align: right; color: var(--ink); }
+.set__note { margin: 4px 0 8px; font: 500 11.5px/1.6 var(--tc); color: var(--ink-3); }
+.seg { display: inline-flex; justify-self: start; border: 1.5px solid #3a3a38; }
+.seg button { padding: 7px 12px; font: 700 10.5px var(--mono); letter-spacing: .14em; color: var(--ink-3); transition: background .15s, color .15s; }
+.seg button + button { border-left: 1.5px solid #3a3a38; }
+.seg button:hover { color: var(--acid); }
+.seg button[aria-pressed="true"] { background: var(--acid); color: #000; }
+.set__input { width: 100%; height: 34px; padding: 0 10px; background: #000; border: 1.5px solid #3a3a38; outline: none; color: var(--ink); font: 700 12px var(--mono); }
+.set__input:focus { border-color: var(--acid); }
+.range { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: 0; background: transparent; cursor: pointer; --p: 50%; }
+.range::-webkit-slider-runnable-track { height: 8px; background: linear-gradient(90deg, var(--acid) var(--p), transparent var(--p)), repeating-linear-gradient(-45deg, #232322 0 4px, #191919 4px 8px); }
+.range::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 22px; margin-top: -7px; background: #0a0a0a; border: 3px solid var(--acid); transform: skewX(-12deg); }
+.range:active::-webkit-slider-thumb { transform: skewX(-12deg) scale(1.25); }
+.toggle { position: relative; justify-self: start; width: 44px; height: 22px; border: 1.5px solid #3a3a38; transition: border-color .15s; }
+.toggle::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; background: var(--ink-3); transition: transform .3s cubic-bezier(.3, 1.6, .5, 1), background .15s; }
+.toggle[aria-checked="true"] { border-color: var(--acid); }
+.toggle[aria-checked="true"]::after { transform: translateX(22px); background: var(--acid); box-shadow: 0 0 8px var(--acid); }
+.src-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; counter-reset: src; }
+.src-list li { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto auto auto; align-items: center; gap: 8px; height: 38px; padding: 0 6px 0 10px; border: 1.5px solid #2c2c2a; counter-increment: src; }
+.src-list li::before { content: counter(src, decimal-leading-zero); font: 700 10px var(--mono); color: var(--ink-3); }
+.src-list li span { font: 14px/1 var(--display); letter-spacing: .08em; }
+.src-list li.off span { color: var(--ink-3); text-decoration: line-through; }
+.src-list li.bump { animation: bump .35s cubic-bezier(.2, 1.8, .4, 1); border-color: var(--acid); }
+.mv { width: 26px; height: 26px; font-size: 10px; color: var(--ink-3); transition: color .15s, transform .15s; }
+.mv:hover { color: var(--acid); }
+.mv:active { transform: scale(.8); }
+.swatches { display: flex; flex-wrap: wrap; gap: 18px; padding: 4px 0 8px; }
+.swatch { display: flex; align-items: center; gap: 9px; font: 700 10px var(--mono); letter-spacing: .14em; color: var(--ink-2); cursor: pointer; }
+.swatch input { -webkit-appearance: none; appearance: none; width: 36px; height: 24px; padding: 0; border: 1.5px solid #3a3a38; background: none; cursor: pointer; }
+.swatch input::-webkit-color-swatch-wrapper { padding: 2px; }
+.swatch input::-webkit-color-swatch { border: 0; }
+.set__foot { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 22px; border-top: 1px solid var(--line); }
+.btn { height: 34px; padding: 0 18px; border: 1.5px solid var(--ink-2); font: 13px/1 var(--display); letter-spacing: .16em; transition: background .15s, color .15s, border-color .15s, transform .15s cubic-bezier(.3, 1.6, .5, 1); }
+.btn:hover { background: var(--ink); border-color: var(--ink); color: #000; }
+.btn--go { background: var(--acid); border-color: var(--acid); color: #000; }
+.btn:active { transform: scale(.9); }
+
 /* ---------- compact ---------- */
 body.is-compact { --s: 76px; grid-template-rows: 32px minmax(0, 1fr) 34px; }
 body.is-compact .status, body.is-compact .win .wide, body.is-compact .meta, body.is-compact .hint,
@@ -311,15 +445,33 @@ body.is-compact .lyrics-head, body.is-compact .bar__btn, body.is-compact .bg__wo
 body.is-compact .deck { grid-template-columns: 136px minmax(0, 1fr); }
 body.is-compact .object-zone { padding: 0; grid-template-rows: minmax(0, 1fr); }
 body.is-compact .lyrics-zone { padding: 4px 16px 0 4px; grid-template-rows: minmax(0, 1fr); }
-body.is-compact .line { font-size: 15px; padding: 3px 0; }
+body.is-compact .line { font-size: calc(15px * var(--cls, 1)); padding: 3px 0; }
 body.is-compact .line__no { display: none; }
-body.is-compact .line.is-active { font-size: 23px; }
+body.is-compact .line.is-active { font-size: calc(23px * var(--cls, 1)); }
 body.is-compact .line__tr { font-size: 10.5px; margin-top: 1px; }
 body.is-compact .line.is-active .line__tr { font-size: 11.5px; }
 body.is-compact .bar { padding-left: 14px; gap: 10px; }
 body.is-compact .time { font-size: 10.5px; min-width: 30px; }
 body.is-compact .bg__band { top: 26%; height: 60%; width: 34%; }
 body.is-compact .face__label, body.is-compact .tool b { display: none; }
+/* The skip buttons are too small to hit on a 76px cube; compact puts them in the bar. */
+body.is-compact .dial .skip { display: none; }
+body.is-compact .bar__skip { display: grid; }
+body.is-compact .bar { gap: 0; }
+body.is-compact .bar .time { margin-right: 10px; }
+body.is-compact .bar .scrub { margin-right: 10px; }
+body.is-compact .cmdk span, body.is-compact .cmdk kbd { display: none; }
+body.is-compact .cmdk { height: 20px; padding: 0 7px; }
+body.is-compact dialog.palette { --max: calc(100vh - 16px); margin-top: 8px; }
+body.is-compact .pal__field { height: 42px; }
+body.is-compact .pal__field b { font-size: 20px; }
+body.is-compact .pal__input { font-size: 16px; }
+body.is-compact .pal__item { height: 32px; }
+body.is-compact .pal__foot { display: none; }
+body.is-compact .settings .sheet { max-height: calc(100vh - 16px); }
+body.is-compact .set__head { padding: 10px 16px 8px; }
+body.is-compact .set__title { font-size: 22px; }
+body.is-compact .set__title small { display: none; }
 
 @keyframes blink { 50% { opacity: .2; } }
 @keyframes spin { from { transform: rotate(-360deg); } }
@@ -330,6 +482,9 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
 @keyframes slam { 0% { transform: translateX(-28px) skewX(-14deg); opacity: .3; } 55% { transform: translateX(6px) skewX(3deg); opacity: 1; } 100% { transform: none; } }
 @keyframes drop { 0% { transform: translateY(-40px); opacity: 0; } 100% { transform: none; opacity: 1; } }
 @keyframes eq { from { height: 20%; } to { height: 100%; } }
+@keyframes sheet-in { 0% { transform: translateY(-34px) skewX(-10deg) scale(.96); opacity: 0; } 60% { transform: translateY(4px) skewX(2deg); opacity: 1; } 100% { transform: none; } }
+@keyframes sheet-out { to { transform: translateY(-14px) skewX(-6deg) scale(.97); opacity: 0; } }
+@keyframes fire { 0% { filter: brightness(1.8); transform: translateY(var(--y, 0)) skewX(-8deg) scaleX(1.04); } 100% { transform: translateY(var(--y, 0)) skewX(-8deg); } }
 @keyframes shake { 0%, 100% { transform: none; } 20% { transform: translate(-4px, 2px); } 40% { transform: translate(4px, -2px); } 60% { transform: translate(-3px, -1px); } 80% { transform: translate(2px, 1px); } }
 </style>
 </head>
@@ -349,6 +504,7 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
 <header class="chrome" data-tauri-drag-region>
   <div class="brand"><span class="brand__mark">H</span><span class="brand__name">HAKURO</span></div>
   <span class="status"><i></i>SPOTIFY · LIVE</span>
+  <button class="cmdk" id="cmdk-open" title="Command palette (Ctrl+K)"><b>›_</b><span>COMMANDS</span><kbd>CTRL</kbd><kbd>K</kbd></button>
   <div class="chrome__spacer" data-tauri-drag-region></div>
   <nav class="win">
     <button class="wide" id="w-search" title="Find lyrics"><svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="3"/><path d="m7.3 7.3 3 3"/></svg></button>
@@ -377,22 +533,22 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
           </div>
         </div>
         <div class="face face--front" data-face="front">
-          <span class="face__label">01 TRANSPORT</span>
-          <div class="spill" id="spill"></div>
-          <div class="transport">
-            <button class="glow-btn" id="prev" aria-label="Previous track"><svg viewBox="0 0 24 24"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg></button>
-            <button class="glow-btn glow-btn--main" id="play" aria-label="Play or pause">
-              <svg class="icon-play" viewBox="0 0 24 24"><path d="M7 4.8v14.4a.9.9 0 0 0 1.38.76l11.2-7.2a.9.9 0 0 0 0-1.52L8.38 4.04A.9.9 0 0 0 7 4.8Z"/></svg>
-              <svg class="icon-pause" viewBox="0 0 24 24"><path d="M6 4h4.2v16H6zM13.8 4H18v16h-4.2z"/></svg>
-            </button>
-            <button class="glow-btn" id="next" aria-label="Next track"><svg viewBox="0 0 24 24"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg></button>
-          </div>
+          <img class="cover cover--base" id="cover" alt="" draggable="false">
+          <img class="cover cover--peek" id="cover-peek" alt="" draggable="false">
+          <div class="cover-shade"></div>
+          <i class="lens"></i>
         </div>
         <div class="face face--right" data-face="right">
           <span class="face__label">02 VOLUME</span>
+          <div class="spill"></div>
           <div class="dial" id="dial" role="slider" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" tabindex="0">
             <div class="dial__ticks"></div><div class="dial__ring"></div><div class="dial__cap"></div>
-            <div class="dial__read"><output id="vol">64</output><small>VOL</small></div>
+            <div class="dial__read"><output id="vol">64</output><small>VOL</small>
+              <div class="skip">
+                <button class="glow-btn" id="prev" aria-label="Previous track"><svg viewBox="0 0 24 24"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg></button>
+                <button class="glow-btn" id="next" aria-label="Next track"><svg viewBox="0 0 24 24"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg></button>
+              </div>
+            </div>
           </div>
         </div>
         <div class="face face--back" data-face="back">
@@ -439,10 +595,64 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
     <div class="scrub__knob"><span class="bubble" id="bubble">0:00</span></div>
   </div>
   <span class="time" id="t-total">0:00</span>
+  <button class="bar__skip" id="bar-prev" aria-label="Previous track"><svg viewBox="0 0 24 24"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg></button>
+  <button class="bar__skip" id="bar-next" aria-label="Next track"><svg viewBox="0 0 24 24"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg></button>
   <button class="bar__btn" id="follow" aria-pressed="true"><i></i>FOLLOW</button>
   <button class="bar__btn" id="reload">↻ RELOAD</button>
 </footer>
 <div class="toast" id="toast"></div>
+
+<dialog class="modal palette" id="palette" aria-label="Command palette">
+  <div class="sheet">
+    <div class="pal__head"><span>COMMAND PALETTE</span><span>HAKURO</span></div>
+    <label class="pal__field"><b>›</b><input class="pal__input" id="pal-input" type="text" placeholder="Type a command or a lyric…" autocomplete="off" spellcheck="false" aria-controls="pal-list"></label>
+    <div class="pal__list" id="pal-list" role="listbox"></div>
+    <div class="pal__foot"><span><kbd>↑↓</kbd> MOVE</span><span><kbd>ENTER</kbd> RUN</span><span><kbd>ESC</kbd> CLOSE</span><span id="pal-ver"></span></div>
+  </div>
+</dialog>
+
+<dialog class="modal settings" id="settings" aria-labelledby="set-title">
+  <form class="sheet" id="set-form" method="dialog">
+    <header class="set__head">
+      <h2 class="set__title" id="set-title"><small>HAKURO / PREFERENCES</small>SETTINGS</h2>
+      <div class="ver"><span>VERSION</span><b id="app-version"></b></div>
+    </header>
+    <div class="set__body">
+      <section class="set__sec">
+        <h3>PLAYER</h3>
+        <div class="set__row"><span>Player</span><div class="seg" id="set-player"><button type="button" data-v="spotify">SPOTIFY</button><button type="button" data-v="ytmusic">YOUTUBE MUSIC</button></div></div>
+        <label class="set__row" id="set-client-row"><span>Spotify Client ID</span><input class="set__input" id="set-client" type="text" placeholder="32-character Client ID" autocomplete="off" spellcheck="false"></label>
+        <p class="set__note">Hakuro follows one player at a time. YouTube Music is read from the Windows media session, so it needs no sign-in.</p>
+      </section>
+      <section class="set__sec">
+        <h3>LYRICS SEARCH ORDER</h3>
+        <ol class="src-list" id="set-sources"></ol>
+        <p class="set__note">Move sources up or down and select which ones to search. A song's preferred source takes priority.</p>
+      </section>
+      <section class="set__sec">
+        <h3>COLORS</h3>
+        <div class="swatches">
+          <label class="swatch"><input type="color" id="set-accent">CONTROLS</label>
+          <label class="swatch"><input type="color" id="set-active">CURRENT LYRIC</label>
+          <label class="swatch"><input type="color" id="set-past">PAST LYRICS</label>
+        </div>
+      </section>
+      <section class="set__sec">
+        <h3>WINDOW</h3>
+        <label class="set__row"><span>Background opacity</span><input class="range" type="range" min="30" max="100" step="5" data-key="opacity" data-unit="%"><output></output></label>
+        <label class="set__row"><span>Opacity (compact)</span><input class="range" type="range" min="30" max="100" step="5" data-key="compactOpacity" data-unit="%"><output></output></label>
+        <label class="set__row"><span>Lyric size</span><input class="range" type="range" min="12" max="44" step="1" data-key="lyricSize" data-unit="px"><output></output></label>
+        <label class="set__row"><span>Lyric size (compact)</span><input class="range" type="range" min="12" max="44" step="1" data-key="compactLyricSize" data-unit="px"><output></output></label>
+        <div class="set__row"><span>Click-through</span><div class="seg" id="set-click"><button type="button" data-v="off">OFF</button><button type="button" data-v="auto">AUTO</button><button type="button" data-v="always">ALWAYS</button></div></div>
+        <div class="set__row"><span>Follow lyrics</span><button type="button" class="toggle" id="set-follow" role="switch" aria-label="Follow lyrics automatically"></button></div>
+      </section>
+    </div>
+    <footer class="set__foot">
+      <button type="button" class="btn" id="set-cancel">CANCEL</button>
+      <button type="button" class="btn btn--go" id="set-save">SAVE</button>
+    </footer>
+  </form>
+</dialog>
 
 <script src="hk-mock.js"></script>
 <script>
@@ -622,6 +832,67 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
     glowLevel = Math.max(glowLevel, 0.45 + 0.55 * power);
   }
 
+  /* ---------- cover on the front face: colour = play state, lens previews the other one ---------- */
+  const front = cube.querySelector(".face--front");
+  const lens = new HK.Spring(0, 200, 17);
+  const lx = new HK.Spring(50, 320, 26), ly = new HK.Spring(50, 320, 26);
+  let lensOn = false, pendingCover = null, flood = null;
+  front.classList.toggle("is-color", HK.state.playing);
+
+  function setCover(url) { $("cover").src = $("cover-peek").src = url; }
+  function inFront(el) {
+    let x = 0, y = 0;
+    for (; el && el !== front; el = el.offsetParent) { x += el.offsetLeft; y += el.offsetTop; }
+    return [x, y];
+  }
+  front.addEventListener("pointerenter", () => { lensOn = true; });
+  front.addEventListener("pointerleave", () => { lensOn = false; });
+  function aimLens(e) {
+    if (!(e.target instanceof HTMLElement)) return;
+    // offsetX/Y are in the target's own (3D-transformed) space.
+    let [x, y] = inFront(e.target);
+    x += e.offsetX;
+    y += e.offsetY;
+    lx.target = (x / front.offsetWidth) * 100;
+    ly.target = (y / front.offsetHeight) * 100;
+    if (lens.value < 0.02) { lx.snap(lx.target); ly.snap(ly.target); }
+  }
+  front.addEventListener("pointermove", aimLens);
+  front.addEventListener("pointerdown", (e) => { aimLens(e); lens.kick(4); });
+
+  // The new state spreads from the lens (or pours down from the record if the toggle
+  // came from elsewhere) until it covers the face, then becomes the base.
+  function startFlood(playing) {
+    if (playing === front.classList.contains("is-color")) { flood = null; return; }
+    if (!lensOn) { lx.snap(50); ly.snap(0); }
+    flood = { t0: performance.now(), r0: Math.max(0, lens.value * 0.3), playing };
+  }
+
+  function coverFrame(dt, now) {
+    lens.target = lensOn && !(drag && drag.moved > 6) ? 1 : 0;
+    lens.step(dt);
+    lx.step(dt);
+    ly.step(dt);
+    let lk = Math.max(0, lens.value * 0.3);
+    if (flood) {
+      const p = HK.clamp((now - flood.t0) / 560, 0, 1);
+      lk = flood.r0 + (1.45 - flood.r0) * (1 - Math.pow(1 - p, 3));
+      if (p >= 1) {
+        front.classList.toggle("is-color", flood.playing);
+        flood = null;
+        lens.snap(0);
+        lk = 0;
+      }
+    }
+    front.style.setProperty("--lk", lk.toFixed(3));
+    front.style.setProperty("--mx", lx.value.toFixed(1) + "%");
+    front.style.setProperty("--my", ly.value.toFixed(1) + "%");
+    if (pendingCover && (Math.cos(ry.value * Math.PI / 180) < -0.2 || now - pendingCover.t > 1200)) {
+      setCover(pendingCover.url);
+      pendingCover = null;
+    }
+  }
+
   function cubeFrame(dt, now) {
     if (!drag) { rx.step(dt); ry.step(dt); }
     lift.step(dt);
@@ -632,6 +903,7 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
     const sy = squash.value, sxz = 1 + (1 - sy) * 0.55;
     cube.style.transform = `translate3d(0, ${(lift.value + bob).toFixed(2)}px, 0) rotateX(${rx.value.toFixed(2)}deg) rotateY(${(ry.value + sway).toFixed(2)}deg) scale3d(${sxz.toFixed(3)}, ${sy.toFixed(3)}, ${sxz.toFixed(3)})`;
     lightFaces();
+    coverFrame(dt, now);
     const h = lift.value + bob;
     $("shadow").style.transform = `translateX(-50%) scale(${(1 + h * 0.004).toFixed(3)})`;
     glowLevel += (0.22 - glowLevel) * Math.min(1, dt / 260);
@@ -647,7 +919,7 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
 
   scene.addEventListener("pointerdown", (e) => {
     if (e.target.closest("button, .vinyl, .dial")) return;
-    drag = { x: e.clientX, y: e.clientY, rx: rx.value, ry: ry.value, t: performance.now(), vel: 0, detent: Math.round((ry.value - REST_Y) / 90) };
+    drag = { x: e.clientX, y: e.clientY, rx: rx.value, ry: ry.value, t: performance.now(), vel: 0, detent: Math.round((ry.value - REST_Y) / 90), moved: 0, cover: !!e.target.closest(".face--front") };
     scene.setPointerCapture(e.pointerId);
     scene.classList.add("is-dragging");
     $("hint").classList.add("gone");
@@ -655,6 +927,7 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
   });
   scene.addEventListener("pointermove", (e) => {
     if (!drag) return;
+    drag.moved = Math.max(drag.moved, Math.hypot(e.clientX - drag.x, e.clientY - drag.y));
     const nyr = drag.ry + (e.clientX - drag.x) * 0.55;
     const nxr = HK.clamp(drag.rx - (e.clientY - drag.y) * 0.4, -78, 18);
     const now = performance.now();
@@ -665,8 +938,9 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
     const det = Math.round((nyr - REST_Y) / 90);
     if (det !== drag.detent) { drag.detent = det; HK.sfx("tick"); }
   });
-  function endDrag() {
+  function endDrag(e) {
     if (!drag) return;
+    const tap = drag.cover && drag.moved < 6 && e.type === "pointerup";
     ry.velocity = drag.vel * 0.5;
     const proj = ry.value + drag.vel * 0.12;
     ry.target = REST_Y + Math.round((proj - REST_Y) / 90) * 90;
@@ -674,7 +948,8 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
     rx.velocity = 0;
     drag = null;
     scene.classList.remove("is-dragging");
-    HK.sfx("snap");
+    if (tap) HK.toggle();
+    else HK.sfx("snap");
   }
   scene.addEventListener("pointerup", endDrag);
   scene.addEventListener("pointercancel", endDrag);
@@ -729,6 +1004,7 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
   let dialDrag = null;
   let lastBlip = 0;
   dial.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("button")) return;
     const r = dial.getBoundingClientRect();
     dialDrag = { cx: r.left + r.width / 2, cy: r.top + r.height / 2, acc: HK.state.volume };
     dialDrag.a = angleOf(e, dialDrag);
@@ -757,24 +1033,35 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
     if (v === 0 || v === 100) { retrigger(dial, "bump"); thump(0.5, v === 100 ? 1 : -1); HK.sfx("thunk"); }
   });
 
-  /* ---------- transport ---------- */
+  /* ---------- skip buttons (beside the volume dial) ---------- */
   function spillAt(btn) {
-    const f = btn.closest(".face").getBoundingClientRect();
+    const face = btn.closest(".face");
+    const f = face.getBoundingClientRect();
     const b = btn.getBoundingClientRect();
-    const sp = $("spill");
+    const sp = face.querySelector(".spill");
     sp.style.setProperty("--sx", ((b.left + b.width / 2 - f.left) / f.width * 100) + "%");
     sp.style.setProperty("--sy", ((b.top + b.height / 2 - f.top) / f.height * 100) + "%");
     retrigger(sp, "on");
     retrigger(btn, "hit");
   }
   let quiet = false;
-  $("play").addEventListener("click", (e) => { spillAt(e.currentTarget); HK.toggle(); });
-  $("prev").addEventListener("click", (e) => { spillAt(e.currentTarget); HK.sfx("click"); thump(0.7, -1); HK.prev(); });
-  $("next").addEventListener("click", (e) => { spillAt(e.currentTarget); HK.sfx("click"); thump(0.7, 1); HK.next(); });
+  function skip(dir, btn) {
+    if (btn && btn.closest(".face")) spillAt(btn);
+    else if (btn) retrigger(btn, "hit");
+    HK.sfx("click");
+    thump(0.7, dir);
+    if (dir > 0) HK.next();
+    else HK.prev();
+  }
+  $("prev").addEventListener("click", (e) => skip(-1, e.currentTarget));
+  $("next").addEventListener("click", (e) => skip(1, e.currentTarget));
+  $("bar-prev").addEventListener("click", (e) => skip(-1, e.currentTarget));
+  $("bar-next").addEventListener("click", (e) => skip(1, e.currentTarget));
 
   HK.on("state", (playing) => {
     document.body.classList.toggle("is-playing", playing);
     motor.target = playing ? 1 : 0;
+    startFlood(playing);
     if (!scratch && !quiet) { thump(1, 0); HK.sfx("thunk"); }
   });
 
@@ -803,7 +1090,7 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
   $("reload").addEventListener("click", () => doAct("reload"));
   $("follow").addEventListener("click", () => doAct("follow"));
   $("w-search").addEventListener("click", () => doAct("search"));
-  $("w-settings").addEventListener("click", () => { toast("SETTINGS — DIALOG NOT IN THIS PROTOTYPE"); HK.sfx("pop"); });
+  $("w-settings").addEventListener("click", () => openSettings());
   $("w-refresh").addEventListener("click", (e) => { retrigger(e.currentTarget, "spin"); HK.sfx("click"); toast("PLAYBACK REFRESHED"); });
   $("w-compact").addEventListener("click", () => doAct("compact"));
   $("w-pin").addEventListener("click", () => doAct("pin"));
@@ -839,6 +1126,365 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
     setActive(HK.lineAt(HK.position()), true);
     HK.sfx("drop");
     toast(`LYRICS RELOADED FROM ${HK.state.source.toUpperCase()}`);
+  });
+
+  /* ---------- modals: command palette + settings ---------- */
+  // The real app asks Tauri for this: getVersion() from @tauri-apps/api/app.
+  const APP_VERSION = "1.2.2";
+  function openModal(dlg) {
+    dlg.classList.remove("closing");
+    dlg.showModal();
+    HK.sfx("pop");
+  }
+  function closeModal(dlg, then) {
+    if (!dlg.open || dlg.classList.contains("closing")) return;
+    dlg.classList.add("closing");
+    setTimeout(() => {
+      dlg.classList.remove("closing");
+      dlg.close();
+      if (then) then();
+    }, 170);
+  }
+  document.querySelectorAll("dialog.modal").forEach((dlg) => {
+    const dismiss = () => dlg.dispatchEvent(new Event("dismiss"));
+    let downOnBackdrop = false;
+    dlg.addEventListener("cancel", (e) => { e.preventDefault(); dismiss(); });
+    dlg.addEventListener("pointerdown", (e) => { downOnBackdrop = e.target === dlg; });
+    dlg.addEventListener("click", (e) => { if (downOnBackdrop && e.target === dlg) dismiss(); });
+  });
+
+  /* command palette (Ctrl+K) */
+  const pal = $("palette");
+  const palInput = $("pal-input");
+  const palList = $("pal-list");
+  const palY = new HK.Spring(0, 900, 50);
+  let palItems = [];
+  let palSel = 0;
+  let mutedVol = null;
+  const val = (v) => (typeof v === "function" ? v() : v);
+  const onOff = (v) => ({ text: v ? "ON" : "OFF", on: v });
+
+  function turnTo(offset) {
+    const base = REST_Y + offset;
+    ry.target = base + Math.round((ry.value - base) / 360) * 360;
+    rx.target = REST_X;
+    thump(0.5, 0);
+    HK.sfx("whoosh");
+  }
+  function setSource(src) {
+    const d = HK.SOURCES.indexOf(src) - HK.SOURCES.indexOf(HK.state.source);
+    if (!d) return;
+    HK.cycleSource(d);
+    retrigger($("source"), "flip");
+    HK.sfx("snap");
+  }
+  function toggleMute() {
+    if (mutedVol === null) {
+      mutedVol = HK.state.volume || 50;
+      HK.setVolume(0);
+    } else {
+      HK.setVolume(mutedVol);
+    }
+  }
+  HK.on("volume", (v) => { if (v > 0) mutedVol = null; });
+
+  const COMMANDS = [
+    { group: "PLAYBACK", icon: () => (HK.state.playing ? "❚❚" : "▶"), label: () => (HK.state.playing ? "Pause" : "Play"), zh: () => (HK.state.playing ? "暫停" : "播放"), keys: ["SPACE"], words: "toggle play pause", run: () => HK.toggle() },
+    { group: "PLAYBACK", icon: "»", label: "Next track", zh: "下一首", keys: ["N"], words: "skip", run: () => skip(1) },
+    { group: "PLAYBACK", icon: "«", label: "Previous track", zh: "上一首", keys: ["P"], words: "skip back", run: () => skip(-1) },
+    { group: "PLAYBACK", icon: "→", label: "Forward 5 seconds", zh: "快轉 5 秒", keys: ["→"], words: "seek", run: () => HK.seek(HK.position() + 5000) },
+    { group: "PLAYBACK", icon: "←", label: "Back 5 seconds", zh: "倒轉 5 秒", keys: ["←"], words: "seek rewind", run: () => HK.seek(HK.position() - 5000) },
+    { group: "PLAYBACK", icon: "+", label: "Volume up", zh: "音量 +5", keys: ["↑"], words: "louder", run: () => HK.setVolume(HK.state.volume + 5) },
+    { group: "PLAYBACK", icon: "−", label: "Volume down", zh: "音量 −5", keys: ["↓"], words: "quieter", run: () => HK.setVolume(HK.state.volume - 5) },
+    { group: "PLAYBACK", icon: "×", label: () => (mutedVol === null ? "Mute" : "Unmute"), zh: () => (mutedVol === null ? "靜音" : "取消靜音"), words: "volume silence", run: toggleMute },
+    { group: "LYRICS", icon: "↧", label: "Follow lyrics", zh: "自動跟隨歌詞", state: () => onOff(HK.state.follow), words: "scroll auto", run: () => HK.setFollow(!HK.state.follow) },
+    { group: "LYRICS", icon: "↻", label: "Reload lyrics", zh: "重新載入歌詞", words: "refresh", run: () => HK.refreshLyrics() },
+    { group: "LYRICS", icon: "⌕", label: "Find lyrics…", zh: "搜尋歌詞", words: "search", run: () => doAct("search") },
+    ...HK.SOURCES.map((src) => ({ group: "LYRICS", icon: "⇄", label: `Source: ${src}`, zh: "歌詞來源", state: () => (HK.state.source === src ? { text: "CURRENT", on: true } : null), words: "provider", run: () => setSource(src) })),
+    { group: "WINDOW", icon: "◱", label: "Compact mode", zh: "精簡模式", state: () => onOff(HK.state.compact), keys: ["C"], words: "mini small", run: () => HK.setCompact(!HK.state.compact) },
+    { group: "WINDOW", icon: "▲", label: "Keep on top", zh: "置頂", state: () => onOff(HK.state.pinned), words: "pin always", run: () => HK.setPinned(!HK.state.pinned) },
+    { group: "WINDOW", icon: "≡", label: "Settings…", zh: `設定 · v${APP_VERSION}`, words: "preferences options version 版本", modal: true, run: () => openSettings() },
+    { group: "WINDOW", icon: "↺", label: "Refresh playback", zh: "重新整理播放狀態", words: "sync", run: () => $("w-refresh").click() },
+    { group: "WINDOW", icon: "♪", label: "Sound effects", zh: "音效", state: () => onOff(!HK.state.muted), keys: ["M"], words: "sfx audio", run: () => HK.setMuted(!HK.state.muted) },
+    { group: "CUBE", icon: "■", label: "Turn cube: Cover", zh: "方塊轉到封面", words: "front", run: () => turnTo(0) },
+    { group: "CUBE", icon: "■", label: "Turn cube: Volume", zh: "方塊轉到音量", words: "right dial", run: () => turnTo(-90) },
+    { group: "CUBE", icon: "■", label: "Turn cube: Lyric tools", zh: "方塊轉到歌詞工具", words: "back source", run: () => turnTo(180) },
+    { group: "CUBE", icon: "■", label: "Turn cube: Window tools", zh: "方塊轉到視窗工具", words: "left follow pin", run: () => turnTo(90) },
+  ];
+
+  function matchCmd(c, q) {
+    const label = val(c.label);
+    const low = label.toLowerCase();
+    const at = low.indexOf(q);
+    if (at >= 0) return { score: 300 - at + (at === 0 || low[at - 1] === " " ? 40 : 0), range: [at, at + q.length] };
+    if (`${val(c.zh)} ${c.words || ""}`.toLowerCase().includes(q)) return { score: 150 };
+    const idx = [];
+    for (let k = 0, j = 0; k < low.length && j < q.length; k++) if (low[k] === q[j]) { idx.push(k); j++; }
+    if (idx.length === q.length) return { score: 60 - (idx[idx.length - 1] - idx[0]), idx };
+    return null;
+  }
+  function mark(text, m) {
+    if (m && m.range) {
+      const [a, b] = m.range;
+      return `${esc(text.slice(0, a))}<mark>${esc(text.slice(a, b))}</mark>${esc(text.slice(b))}`;
+    }
+    if (m && m.idx) {
+      const hit = new Set(m.idx);
+      return text.split("").map((ch, k) => (hit.has(k) ? `<mark>${esc(ch)}</mark>` : esc(ch))).join("");
+    }
+    return esc(text);
+  }
+  // Typing also searches the current song's lyrics; picking a line jumps to it.
+  function lyricHits(q) {
+    const hits = [];
+    HK.track().lines.forEach((l, i) => {
+      if (l.instrumental) return;
+      const text = l.words.map((w) => w.text).join("");
+      const at = text.toLowerCase().indexOf(q);
+      if (at < 0 && !(l.tr || "").toLowerCase().includes(q)) return;
+      hits.push({
+        icon: String(i + 1).padStart(2, "0"),
+        html: mark(text, at >= 0 ? { range: [at, at + q.length] } : null),
+        zh: l.tr || "",
+        keys: [HK.fmt(l.t)],
+        run: () => {
+          HK.seek(l.t);
+          if (!HK.state.follow) HK.setFollow(true);
+        },
+      });
+    });
+    return hits.slice(0, 8);
+  }
+  function stateChip(it) {
+    const st = it.state && it.state();
+    return st ? `<span class="state${st.on ? " on" : ""}">${st.text}</span>` : "";
+  }
+  function renderPalette() {
+    const q = palInput.value.trim().toLowerCase();
+    const rows = [];
+    palItems = [];
+    const add = (it) => { rows.push({ ...it, i: palItems.length }); palItems.push(it); };
+    if (!q) {
+      let group = "";
+      for (const c of COMMANDS) {
+        if (c.group !== group) rows.push({ head: (group = c.group) });
+        add({ ...c, html: esc(val(c.label)) });
+      }
+    } else {
+      const hits = COMMANDS.map((c) => ({ c, m: matchCmd(c, q) })).filter((h) => h.m).sort((a, b) => b.m.score - a.m.score);
+      if (hits.length) rows.push({ head: "COMMANDS" });
+      hits.forEach(({ c, m }) => add({ ...c, html: mark(val(c.label), m) }));
+      const lines = lyricHits(q);
+      if (lines.length) rows.push({ head: `JUMP TO LYRIC · ${HK.track().title}` });
+      lines.forEach(add);
+    }
+    const body = rows.map((r) => (r.head
+      ? `<div class="pal__group">${esc(r.head)}</div>`
+      : `<div class="pal__item" data-i="${r.i}" role="option"><i>${esc(val(r.icon))}</i><span class="pal__label">${r.html}${r.zh ? `<small>${esc(val(r.zh))}</small>` : ""}</span><span class="pal__meta">${stateChip(r)}${(r.keys || []).map((k) => `<kbd>${esc(k)}</kbd>`).join("")}</span></div>`)).join("");
+    palList.innerHTML = `<div class="pal__bar" id="pal-bar"></div>${body || '<div class="pal__empty">NO MATCH — TRY “PLAY”, “COMPACT” OR A LYRIC</div>'}`;
+    select(0, true, true);
+  }
+  function select(i, scroll = true, snap = false) {
+    const bar = $("pal-bar");
+    bar.hidden = !palItems.length;
+    if (!palItems.length) return;
+    palSel = (i + palItems.length) % palItems.length;
+    let el = null;
+    palList.querySelectorAll(".pal__item").forEach((it) => {
+      const on = +it.dataset.i === palSel;
+      it.classList.toggle("is-sel", on);
+      it.setAttribute("aria-selected", on);
+      if (on) el = it;
+    });
+    bar.style.height = el.offsetHeight + "px";
+    if (snap) {
+      palY.snap(el.offsetTop);
+      bar.style.setProperty("--y", el.offsetTop + "px");
+    } else {
+      palY.target = el.offsetTop;
+    }
+    if (scroll) el.scrollIntoView({ block: "nearest" });
+  }
+  function runSel() {
+    const it = palItems[palSel];
+    if (!it) return;
+    retrigger($("pal-bar"), "fire");
+    HK.sfx("snap");
+    if (it.modal) {
+      closeModal(pal, it.run);
+    } else {
+      closeModal(pal);
+      it.run();
+    }
+  }
+  function openPalette() {
+    if (pal.open) { closeModal(pal); return; }
+    if (document.querySelector("dialog[open]")) return;
+    palInput.value = "";
+    openModal(pal);
+    renderPalette();
+    palInput.focus();
+  }
+  function palFrame(dt) {
+    if (!pal.open) return;
+    palY.step(dt);
+    const bar = $("pal-bar");
+    if (bar) bar.style.setProperty("--y", palY.value.toFixed(1) + "px");
+  }
+  $("pal-ver").textContent = `HAKURO v${APP_VERSION}`;
+  palInput.addEventListener("input", () => { renderPalette(); HK.sfx("tick"); });
+  palInput.addEventListener("keydown", (e) => {
+    if (e.isComposing) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      select(palSel + (e.key === "ArrowDown" ? 1 : -1));
+      HK.sfx("tick");
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      runSel();
+    }
+  });
+  palList.addEventListener("pointermove", (e) => {
+    const it = e.target.closest(".pal__item");
+    if (it && +it.dataset.i !== palSel) { select(+it.dataset.i, false); HK.sfx("tick"); }
+  });
+  palList.addEventListener("click", (e) => {
+    const it = e.target.closest(".pal__item");
+    if (!it) return;
+    select(+it.dataset.i, false);
+    runSel();
+  });
+  pal.addEventListener("dismiss", () => closeModal(pal));
+  $("cmdk-open").addEventListener("click", openPalette);
+  window.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      openPalette();
+    }
+  });
+
+  /* settings: mirrors the real dialog; colours and lyric size preview live */
+  const setDlg = $("settings");
+  const settings = {
+    player: "spotify",
+    clientId: "",
+    sources: HK.SOURCES.map((id, i) => ({ id, enabled: i < 4 })),
+    theme: { accent: "#e6ff1f", activeLine: "#f1f1ec", pastLine: "#444442" },
+    opacity: 100,
+    compactOpacity: 85,
+    lyricSize: 26,
+    compactLyricSize: 18,
+    clickThrough: "off",
+  };
+  let draft = null;
+  let lastRangeBlip = 0;
+
+  function applyLook(st) {
+    root.style.setProperty("--acid", st.theme.accent);
+    root.style.setProperty("--acid-rgb", HK.hexToRgb(st.theme.accent).join(" "));
+    root.style.setProperty("--active", st.theme.activeLine);
+    root.style.setProperty("--past", st.theme.pastLine);
+    root.style.setProperty("--ls", (st.lyricSize / 26).toFixed(3));
+    root.style.setProperty("--cls", (st.compactLyricSize / 18).toFixed(3));
+    SHARD_COLORS[0] = SHARD_COLORS[1] = st.theme.accent;
+  }
+  function pressSeg(el, v) {
+    el.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.v === v));
+  }
+  function paintRange(r) {
+    r.style.setProperty("--p", ((r.value - r.min) / (r.max - r.min)) * 100 + "%");
+    r.nextElementSibling.textContent = r.value + r.dataset.unit;
+  }
+  function renderSources(bumped = -1) {
+    $("set-sources").innerHTML = draft.sources.map((src, i) =>
+      `<li class="${src.enabled ? "" : "off"}${i === bumped ? " bump" : ""}" data-i="${i}"><span>${esc(src.id)}</span>` +
+      `<button type="button" class="toggle" role="switch" aria-checked="${src.enabled}" aria-label="Search ${esc(src.id)}"></button>` +
+      `<button type="button" class="mv" data-d="-1" aria-label="Move ${esc(src.id)} up">▲</button>` +
+      `<button type="button" class="mv" data-d="1" aria-label="Move ${esc(src.id)} down">▼</button></li>`).join("");
+  }
+  function fillSettings() {
+    pressSeg($("set-player"), draft.player);
+    $("set-client-row").hidden = draft.player !== "spotify";
+    $("set-client").value = draft.clientId;
+    renderSources();
+    $("set-accent").value = draft.theme.accent;
+    $("set-active").value = draft.theme.activeLine;
+    $("set-past").value = draft.theme.pastLine;
+    setDlg.querySelectorAll(".range").forEach((r) => { r.value = draft[r.dataset.key]; paintRange(r); });
+    pressSeg($("set-click"), draft.clickThrough);
+    $("set-follow").setAttribute("aria-checked", draft.follow);
+  }
+  function openSettings() {
+    if (document.querySelector("dialog[open]")) return;
+    draft = { ...structuredClone(settings), follow: HK.state.follow };
+    fillSettings();
+    openModal(setDlg);
+  }
+  function cancelSettings() {
+    applyLook(settings);
+    closeModal(setDlg);
+  }
+  $("app-version").textContent = `v${APP_VERSION}`;
+  $("set-player").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    draft.player = b.dataset.v;
+    pressSeg($("set-player"), draft.player);
+    $("set-client-row").hidden = draft.player !== "spotify";
+    HK.sfx("snap");
+  });
+  $("set-client").addEventListener("input", (e) => { draft.clientId = e.target.value.trim(); });
+  $("set-sources").addEventListener("click", (e) => {
+    const li = e.target.closest("li");
+    const b = e.target.closest("button");
+    if (!li || !b) return;
+    const i = +li.dataset.i;
+    if (b.classList.contains("toggle")) {
+      draft.sources[i].enabled = !draft.sources[i].enabled;
+      renderSources();
+      HK.sfx("snap");
+      return;
+    }
+    const j = i + +b.dataset.d;
+    if (j < 0 || j >= draft.sources.length) { retrigger(li, "bump"); HK.sfx("thunk"); return; }
+    [draft.sources[i], draft.sources[j]] = [draft.sources[j], draft.sources[i]];
+    renderSources(j);
+    HK.sfx("tick");
+  });
+  [["set-accent", "accent"], ["set-active", "activeLine"], ["set-past", "pastLine"]].forEach(([id, key]) => {
+    $(id).addEventListener("input", (e) => { draft.theme[key] = e.target.value; applyLook(draft); });
+  });
+  setDlg.querySelectorAll(".range").forEach((r) => r.addEventListener("input", () => {
+    draft[r.dataset.key] = +r.value;
+    paintRange(r);
+    applyLook(draft);
+    const now = performance.now();
+    if (now - lastRangeBlip > 30) { lastRangeBlip = now; HK.sfx("blip", ((r.value - r.min) / (r.max - r.min)) * 100); }
+  }));
+  $("set-click").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    draft.clickThrough = b.dataset.v;
+    pressSeg($("set-click"), draft.clickThrough);
+    HK.sfx("snap");
+  });
+  $("set-follow").addEventListener("click", (e) => {
+    draft.follow = !draft.follow;
+    e.currentTarget.setAttribute("aria-checked", draft.follow);
+    HK.sfx("snap");
+  });
+  $("set-cancel").addEventListener("click", cancelSettings);
+  setDlg.addEventListener("dismiss", cancelSettings);
+  $("set-save").addEventListener("click", () => {
+    const { follow, ...rest } = draft;
+    Object.assign(settings, structuredClone(rest));
+    applyLook(settings);
+    closeModal(setDlg, () => {
+      if (follow !== HK.state.follow) HK.setFollow(follow);
+      thump(0.6, 0);
+      toast("SETTINGS SAVED");
+    });
+    HK.sfx("thunk");
   });
 
   /* ---------- scrubber ---------- */
@@ -878,7 +1524,11 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
     }, 34);
   }
   function applyTrack(t, animate) {
-    $("art").src = HK.artURL(t);
+    const url = HK.artURL(t);
+    $("art").src = url;
+    // Mid-spin, the new cover goes on once the front has turned away from the viewer.
+    if (animate) pendingCover = { url, t: performance.now() };
+    else setCover(url);
     $("bg-word").textContent = t.title;
     $("t-total").textContent = HK.fmt(t.duration);
     $("eyebrow").textContent = `NOW PLAYING ${String(HK.state.trackIndex + 1).padStart(2, "0")}/${String(HK.tracks.length).padStart(2, "0")}`;
@@ -945,6 +1595,7 @@ body.is-compact .face__label, body.is-compact .tool b { display: none; }
     bw.style.setProperty("--px", par.x.value.toFixed(1) + "px");
     bw.style.setProperty("--py", par.y.value.toFixed(1) + "px");
     drawShards(dt);
+    palFrame(dt);
   });
 
   HK.on("follow", (on) => { if (!on) manualY = listY.value; });
