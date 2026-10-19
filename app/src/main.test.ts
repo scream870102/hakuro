@@ -68,11 +68,13 @@ function playback(trackId = "song-a", generation = 1, progressMs = 0, isPlaying 
     trackId, generation, name: trackId, artists: ["Artist"], album: "Album", albumArt: null,
     durationMs: 100000, progressMs, isPlaying, hasTrack: true,
     canSkipNext: true, canSkipPrevious: true, canSeek: true, deviceName: null, ...volume,
+    // As the backend builds it: source-prefixed, falling back to name and length.
+    trackKey: `spotify:${trackId || `${trackId}|100000`}`,
   } });
 }
 function lyrics(generation: number, text: string, matchedTitle = "") {
   bridge.listeners.get("lyrics")!({ payload: {
-    generation, trackId: generation === 1 ? "song-a" : "song-b", source: "LRCLIB",
+    generation, trackId: generation === 1 ? "spotify:song-a" : "spotify:song-b", source: "LRCLIB",
     synced: false, cues: [], text, matchedTitle, partial: false, requested: "",
   } });
 }
@@ -112,18 +114,18 @@ it("searches enabled providers, safely previews metadata and saves the chosen ma
   submitSearch("  別名  ");
   expect(el("lyrics-search-status").textContent).toBe("Searching…");
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("search_lyrics", { trackId: "song-a", query: "別名", source: "lrclib" });
+  expect(bridge.invoke).toHaveBeenCalledWith("search_lyrics", { trackId: "spotify:song-a", query: "別名", source: "lrclib" });
   expect(el("lyrics-candidates").textContent).toContain("Singer · Record · 02:03 · lrclib");
   expect(el("lyrics-candidates").querySelector("b")).toBeNull();
   bridge.invoke.mockResolvedValueOnce(preview);
   el("lyrics-candidates").querySelector("button")!.click();
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("preview_lyric_candidate", { trackId: "song-a", candidate });
+  expect(bridge.invoke).toHaveBeenCalledWith("preview_lyric_candidate", { trackId: "spotify:song-a", candidate });
   expect(el("lyrics-preview").textContent).toContain("00:01  Original\n    翻譯");
   expect(el<HTMLButtonElement>("lyrics-match-apply").disabled).toBe(false);
   el("lyrics-match-apply").click();
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("apply_lyric_match", { trackId: "song-a", candidate });
+  expect(bridge.invoke).toHaveBeenCalledWith("apply_lyric_match", { trackId: "spotify:song-a", candidate });
   expect(el<HTMLDialogElement>("lyrics-search-dialog").open).toBe(false);
   expect(document.activeElement).toBe(el("lyrics-search-open"));
 });
@@ -165,7 +167,7 @@ it("shows empty/error states, rejects empty previews and restores an existing ma
   await import("./main");
   await flush();
   playback();
-  bridge.listeners.get("lyrics")!({ payload: { generation: 1, trackId: "song-a", source: "LRCLIB", synced: false, cues: [], text: "saved", partial: false, requested: "", manual: true } });
+  bridge.listeners.get("lyrics")!({ payload: { generation: 1, trackId: "spotify:song-a", source: "LRCLIB", synced: false, cues: [], text: "saved", partial: false, requested: "", manual: true } });
   expect(el("source-badge").textContent).toContain("Manual");
   el("lyrics-search-open").click();
   expect(el<HTMLButtonElement>("lyrics-match-clear").disabled).toBe(false);
@@ -187,7 +189,7 @@ it("shows empty/error states, rejects empty previews and restores an existing ma
   expect(el<HTMLButtonElement>("lyrics-match-apply").disabled).toBe(true);
   el("lyrics-match-clear").click();
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("clear_lyric_match", { trackId: "song-a" });
+  expect(bridge.invoke).toHaveBeenCalledWith("clear_lyric_match", { trackId: "spotify:song-a" });
 });
 
 it("dismisses search with Escape and invalidates an in-flight preview", async () => {
@@ -213,7 +215,7 @@ it("highlights words from the playback clock across pause and seeks, displays tr
   await flush();
   playback("song-a", 1, 1500);
   bridge.listeners.get("lyrics")!({ payload: {
-    generation: 1, trackId: "song-a", source: "NetEase", synced: true, text: "", partial: false, requested: "",
+    generation: 1, trackId: "spotify:song-a", source: "NetEase", synced: true, text: "", partial: false, requested: "",
     cues: [
       { time_ms: 1000, text: "Hello world", translation: "你好世界", words: [
         { start_ms: 1000, end_ms: 2000, text: "Hello " }, { start_ms: 2000, end_ms: 3000, text: "world" },
@@ -483,7 +485,7 @@ it("keeps refresh separate from source selection and closes the picker when trac
   el<HTMLSelectElement>("track-source").value = "musixmatch";
   el("source-save").click();
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("set_track_source", { source: "musixmatch", trackId: "song-a" });
+  expect(bridge.invoke).toHaveBeenCalledWith("set_track_source", { source: "musixmatch", trackId: "spotify:song-a" });
   el("reload").click();
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("reload_lyrics", undefined);
@@ -595,7 +597,7 @@ it("uses the durable fallback key for a track without a Spotify ID", async () =>
   expect(el<HTMLDialogElement>("source-dialog").open).toBe(true);
   el("source-save").click();
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("set_track_source", { source: null, trackId: "|100000" });
+  expect(bridge.invoke).toHaveBeenCalledWith("set_track_source", { source: null, trackId: "spotify:|100000" });
 });
 
 it("pins the window on top and stores the choice", async () => {
@@ -790,7 +792,7 @@ it("never lets compact be dragged below three lines of lyrics", async () => {
   expect(lastSize(appWindow.setSize)).toEqual({ width: 460, height: lines + CHROME });
   playback("song-a", 1, 1500);
   bridge.listeners.get("lyrics")!({ payload: {
-    generation: 1, trackId: "song-a", source: "NetEase", synced: true,
+    generation: 1, trackId: "spotify:song-a", source: "NetEase", synced: true,
     text: "Original", partial: false, requested: "",
     cues: [{ time_ms: 1000, text: "Original", translation: "譯文" }],
   } });
@@ -942,7 +944,7 @@ it("jumps to a lyric line found by its words, and refuses commands that cannot r
 
   playback("song-a", 1, 0, true);
   bridge.listeners.get("lyrics")!({ payload: {
-    generation: 1, trackId: "song-a", source: "LRCLIB", synced: true, text: "", partial: false, requested: "",
+    generation: 1, trackId: "spotify:song-a", source: "LRCLIB", synced: true, text: "", partial: false, requested: "",
     matchedTitle: "", cues: [{ time_ms: 1000, text: "Hello <b>world</b>" }, { time_ms: 42000, text: "止まらない鼓動" }],
   } });
   key(window, { key: "k", ctrlKey: true });
@@ -977,4 +979,25 @@ it("shows the app version in settings and the palette", async () => {
   await flush();
   expect(el("app-version").textContent).toBe("v1.3.0");
   expect(el("pal-version").textContent).toBe("HAKURO v1.3.0");
+});
+
+it("matches lyrics and commands to the backend's track key, whatever its source prefix", async () => {
+  await import("./main");
+  await flush();
+  // YouTube Music reports no track id; the backend keys the song by name and length.
+  bridge.listeners.get("playback")!({ payload: {
+    trackId: "", trackKey: "ytm:Video|1105000", generation: 4, name: "Video", artists: ["Channel"], album: "", albumArt: null,
+    durationMs: 1105000, progressMs: 0, isPlaying: true, hasTrack: true,
+    canSkipNext: true, canSkipPrevious: true, canSeek: true, deviceName: null,
+  } });
+  bridge.listeners.get("lyrics")!({ payload: {
+    generation: 4, trackId: "ytm:Video|1105000", source: "LRCLIB", synced: false, cues: [],
+    text: "Sung words", matchedTitle: "", partial: false, requested: "",
+  } });
+  expect(el("lyrics-list").textContent).toBe("Sung words");
+
+  el("source-badge").click();
+  el("source-save").click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("set_track_source", { source: null, trackId: "ytm:Video|1105000" });
 });

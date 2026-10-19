@@ -39,6 +39,8 @@ interface LyricsResult {
 
 interface PlaybackEvent {
   trackId: string;
+  /** The backend's key for this song (source-prefixed); lyric events and commands use it. */
+  trackKey: string;
   name: string;
   artists: string[];
   album: string;
@@ -1093,7 +1095,9 @@ ui.follow.addEventListener("change", () => {
 
 const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
   receiveVolume(payload);
-  const trackId = payload.hasTrack ? payload.trackId || `${payload.name}|${payload.durationMs}` : "";
+  // The backend's own key, verbatim: lyric events carry it and the source and
+  // match commands check it, so a key rebuilt here would never match theirs.
+  const trackId = payload.hasTrack ? payload.trackKey : "";
   if (state.trackId !== trackId) {
     sourceDialog.close();
     if (searchDialog.open) closeSearch();

@@ -76,6 +76,10 @@ struct StatusEvent {
 struct PlaybackEvent {
     #[serde(flatten)]
     playback: Playback,
+    /// This song's `track_key`: the identity lyric events carry and the source
+    /// and match commands check. The interface echoes it back as given, so it
+    /// never has to rebuild the key (and its source prefix) on its own.
+    track_key: String,
     /// Bumped on every track change so late lyric results can be discarded.
     generation: u64,
 }
@@ -560,6 +564,7 @@ async fn apply_playback(app: &AppHandle, playback: Playback) {
         "playback",
         PlaybackEvent {
             playback: playback.clone(),
+            track_key: key.clone(),
             generation,
         },
     );
@@ -1022,6 +1027,7 @@ mod tests {
     fn playback_event_keys_match_what_the_interface_reads() {
         let event = PlaybackEvent {
             playback: playback(),
+            track_key: "spotify:id".into(),
             generation: 7,
         };
         let json = serde_json::to_value(&event).unwrap();
@@ -1029,6 +1035,7 @@ mod tests {
 
         for key in [
             "trackId",
+            "trackKey",
             "name",
             "artists",
             "album",
@@ -1051,6 +1058,7 @@ mod tests {
         // Nothing may reach the interface under its Rust spelling.
         for key in [
             "track_id",
+            "track_key",
             "has_track",
             "duration_ms",
             "is_playing",
