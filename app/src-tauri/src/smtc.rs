@@ -47,7 +47,10 @@ const MAX_ART_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Separators that reliably mean "several artists". An ampersand is deliberately
 /// absent: it appears inside single names often enough to split the wrong ones.
-const ARTIST_SEPARATORS: [char; 3] = [',', '\u{3001}', '\u{ff0c}'];
+/// YouTube Music joins a credit in the reader's language: "、" in Japanese, "和"
+/// in Chinese, "및" in Korean. A name that merely contains "和" gains a stray
+/// part, which is harmless: the whole credit is still offered.
+const ARTIST_SEPARATORS: [char; 5] = [',', '\u{3001}', '\u{ff0c}', '\u{548c}', '\u{bc0f}'];
 
 fn now_ticks() -> i64 {
     let unix = SystemTime::now()
@@ -255,7 +258,9 @@ impl Watch {
             // key falls back to title and length.
             track_id: String::new(),
             name: sample.title,
-            artists: split_artists(&sample.artist),
+            // The credit as the player shows it, for the interface; the lyric
+            // lookup splits it into the names a source can match.
+            artists: split_artists(&sample.artist).into_iter().take(1).collect(),
             album: sample.album,
             album_art: sample.art,
             duration_ms,
@@ -468,6 +473,27 @@ mod tests {
                 "Aimer, Jess Lee".to_string(),
                 "Aimer".to_string(),
                 "Jess Lee".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_credit_joined_in_the_readers_language_is_split() {
+        // What YouTube Music in Chinese and in Korean hands SMTC.
+        assert_eq!(
+            split_artists("The Chainsmokers\u{548c}Coldplay"),
+            vec![
+                "The Chainsmokers\u{548c}Coldplay".to_string(),
+                "The Chainsmokers".to_string(),
+                "Coldplay".to_string()
+            ]
+        );
+        assert_eq!(
+            split_artists("The Chainsmokers \u{bc0f} Coldplay"),
+            vec![
+                "The Chainsmokers \u{bc0f} Coldplay".to_string(),
+                "The Chainsmokers".to_string(),
+                "Coldplay".to_string()
             ]
         );
     }

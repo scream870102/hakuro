@@ -15,6 +15,10 @@ use crate::matching::{matches, normalize};
 const USER_AGENT: &str = "Hakuro/4.0";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_RESPONSE_BYTES: usize = 2_000_000;
+/// An overloaded server is asked again this many times, if the wait it names is
+/// no longer than this. LRCLIB answers 503 with `retry-after: 1` under load.
+const BUSY_RETRIES: usize = 2;
+const MAX_BUSY_WAIT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LyricsResult {
@@ -168,6 +172,9 @@ impl TrackQuery {
 pub enum ProviderError {
     #[error("Http")]
     Http,
+    /// The server said it is overloaded, and still was after the retries.
+    #[error("Busy")]
+    Busy,
     #[error("Timeout")]
     Timeout,
     #[error("TooLarge")]
@@ -211,19 +218,31 @@ async fn request_json(
     referer: Option<&str>,
     post: bool,
 ) -> Result<Value, ProviderError> {
-    let mut builder = if post {
-        client.post(url).form(params)
-    } else {
-        client.get(url).query(params)
-    }
-    .header("Accept", "application/json");
+    let mut retries = 0;
+    let (mut response, status) = loop {
+        let mut builder = if post {
+            client.post(url).form(params)
+        } else {
+            client.get(url).query(params)
+        }
+        .header("Accept", "application/json");
+        if let Some(referer) = referer {
+            builder = builder.header("Referer", referer);
+        }
 
-    if let Some(referer) = referer {
-        builder = builder.header("Referer", referer);
-    }
-
-    let mut response = builder.send().await?;
-    let status = response.status();
+        let response = builder.send().await?;
+        let status = response.status();
+        if !is_busy(status) {
+            break (response, status);
+        }
+        match busy_wait(&response) {
+            Some(wait) if retries < BUSY_RETRIES => {
+                retries += 1;
+                tokio::time::sleep(wait).await;
+            }
+            _ => return Err(ProviderError::Busy),
+        }
+    };
     if response
         .content_length()
         .is_some_and(|size| size > MAX_RESPONSE_BYTES as u64)
@@ -244,6 +263,21 @@ async fn request_json(
     let text = String::from_utf8_lossy(&body);
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     serde_json::from_str(text).map_err(|_| ProviderError::BadJson)
+}
+
+fn is_busy(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+}
+
+/// How long a busy server asks to be left alone: `retry-after` in seconds, a
+/// second when it names none, nothing when it asks for longer than is worth it.
+fn busy_wait(response: &reqwest::Response) -> Option<Duration> {
+    let wait = match response.headers().get(reqwest::header::RETRY_AFTER) {
+        Some(value) => Duration::from_secs(value.to_str().ok()?.trim().parse().ok()?),
+        None => Duration::from_secs(1),
+    };
+    (wait <= MAX_BUSY_WAIT).then_some(wait)
 }
 
 fn str_field(value: &Value, key: &str) -> String {
@@ -1402,6 +1436,127 @@ mod tests {
         assert!(
             !result.cues.is_empty(),
             "prefer the verified song's native time-stamped lyrics over MV plain text"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "public YouTube Music regression for a credit joined in the reader's language"]
+    async fn live_youtube_smtc_localized_joint_credit() {
+        // What SMTC reported for owTWCbq_nSk with YouTube Music in Chinese.
+        let query = TrackQuery {
+            track: "Something Just Like This".into(),
+            artists: crate::smtc::split_artists("The Chainsmokers\u{548c}Coldplay"),
+            album: "Something Just Like This".into(),
+            duration_ms: 247_641,
+            spotify_id: None,
+        };
+        let result = fetch_lyrics(
+            &client().unwrap(),
+            &crate::musixmatch::Session::new(),
+            &query,
+            &crate::settings::Settings::default().lyric_order(crate::player::PlayerKind::Ytmusic),
+        )
+        .await;
+        eprintln!(
+            "artists={:?}, source={}, title={}, lines={}, cues={}, errors={:?}",
+            query.artists,
+            result.source,
+            result.matched_title,
+            result.text.lines().count(),
+            result.cues.len(),
+            result.errors
+        );
+        // YouTube Music answers first, and lists the two artists apart; LRCLIB only
+        // sometimes holds the joined credit, and is busy at times.
+        assert_eq!(result.source, "YouTube Music");
+        assert!(!result.cues.is_empty());
+    }
+
+    /// A local server that answers each request with the next status and
+    /// `retry-after` in line, and counts what it was asked.
+    fn serve(
+        answers: Vec<(u16, Option<&'static str>)>,
+    ) -> (String, std::sync::mpsc::Receiver<usize>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/api/search", listener.local_addr().unwrap());
+        let (done, asked) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut count = 0;
+            for (status, retry_after) in answers {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let mut request = [0u8; 4096];
+                let _ = stream.read(&mut request);
+                count += 1;
+                let header = retry_after
+                    .map(|s| format!("retry-after: {s}\r\n"))
+                    .unwrap_or_default();
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status} X\r\n{header}content-length: 2\r\nconnection: close\r\n\r\n[]"
+                );
+            }
+            let _ = done.send(count);
+        });
+        (url, asked)
+    }
+
+    #[tokio::test]
+    #[ignore = "public LRCLIB; prints how many manual searches got through its overload"]
+    async fn live_lrclib_search_rides_out_overload() {
+        let client = client().unwrap();
+        let mut outcomes = Vec::new();
+        for round in 0..10 {
+            let query = format!("Something Just Like This The Chainsmokers {round}");
+            outcomes.push(match search_candidates(&client, &query, "lrclib").await {
+                Ok(_) => "ok".to_string(),
+                Err(error) => error.to_string(),
+            });
+        }
+        eprintln!("lrclib manual searches: {outcomes:?}");
+    }
+
+    #[tokio::test]
+    async fn an_overloaded_server_is_asked_again_after_the_wait_it_names() {
+        let client = client().unwrap();
+        let (url, asked) = serve(vec![(503, Some("0")), (503, Some("0")), (200, None)]);
+        assert_eq!(
+            request_json(&client, &url, &[], None, false).await.unwrap(),
+            serde_json::json!([])
+        );
+        assert_eq!(asked.recv_timeout(Duration::from_secs(10)).unwrap(), 3);
+
+        let (url, asked) = serve(vec![(503, Some("0")), (429, None), (503, Some("0"))]);
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            request_json(&client, &url, &[], None, false).await,
+            Err(ProviderError::Busy)
+        ));
+        assert_eq!(asked.recv_timeout(Duration::from_secs(10)).unwrap(), 3);
+        // A 429 without `retry-after` waits a second.
+        assert!(started.elapsed() >= Duration::from_secs(1));
+
+        // A wait longer than is worth it is not waited for.
+        let (url, asked) = serve(vec![(503, Some("60"))]);
+        assert!(matches!(
+            request_json(&client, &url, &[], None, false).await,
+            Err(ProviderError::Busy)
+        ));
+        assert_eq!(asked.recv_timeout(Duration::from_secs(10)).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_credit_joined_in_the_readers_language_matches_its_artists_listed_apart() {
+        let mut query = query();
+        query.artists = crate::smtc::split_artists("First\u{548c}Guest");
+        let mut native = candidate("Abc_def-123");
+        native.source = "youtube_music".into();
+        native.artists = vec!["First".into(), "Guest".into()];
+        assert_eq!(
+            automatic_candidates(&query, vec![native.clone()]),
+            vec![native]
         );
     }
 

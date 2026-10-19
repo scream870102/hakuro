@@ -582,6 +582,23 @@ fn track_key(playback: &Playback) -> String {
     }
 }
 
+/// What the lyric sources are asked for. A player may hand over a joint credit
+/// as one name, which a source may list whole or apart, so both are wanted; the
+/// interface keeps showing the credit as the player gave it.
+fn lyric_query(playback: &Playback) -> TrackQuery {
+    TrackQuery {
+        track: playback.name.clone(),
+        artists: playback
+            .artists
+            .iter()
+            .flat_map(|name| smtc::split_artists(name))
+            .collect(),
+        album: playback.album.clone(),
+        duration_ms: playback.duration_ms,
+        spotify_id: (!playback.track_id.is_empty()).then(|| playback.track_id.clone()),
+    }
+}
+
 fn lyric_cache_key(player: PlayerKind, requested: &str, order: &[String]) -> String {
     match (player, requested) {
         // Re-evaluate native Plain answers once under the synced-first policy.
@@ -652,13 +669,7 @@ async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
         return;
     }
 
-    let query = TrackQuery {
-        track: playback.name.clone(),
-        artists: playback.artists.clone(),
-        album: playback.album.clone(),
-        duration_ms: playback.duration_ms,
-        spotify_id: (!playback.track_id.is_empty()).then(|| playback.track_id.clone()),
-    };
+    let query = lyric_query(playback);
     let track_name = playback.name.clone();
     let artist = playback.artists.first().cloned().unwrap_or_default();
 
@@ -1015,6 +1026,34 @@ async fn set_volume(volume_percent: u8, state: State<'_, AppState>) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_lyric_lookup_wants_a_joint_credit_whole_and_apart() {
+        // YouTube Music in Chinese, through SMTC: one credit, shown as it is.
+        let credit = Playback {
+            name: "Title".into(),
+            artists: vec!["The Chainsmokers\u{548c}Coldplay".into()],
+            duration_ms: 247_641,
+            ..Playback::default()
+        };
+        assert_eq!(
+            lyric_query(&credit).artists,
+            [
+                "The Chainsmokers\u{548c}Coldplay",
+                "The Chainsmokers",
+                "Coldplay"
+            ]
+        );
+        // Spotify names each artist already.
+        let listed = Playback {
+            artists: vec!["First".into(), "Second".into()],
+            track_id: "spotify-id".into(),
+            ..credit
+        };
+        let query = lyric_query(&listed);
+        assert_eq!(query.artists, ["First", "Second"]);
+        assert_eq!(query.spotify_id.as_deref(), Some("spotify-id"));
+    }
 
     #[test]
     fn synced_policy_refreshes_only_native_ytm_cache_keys() {
