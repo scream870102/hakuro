@@ -36,9 +36,10 @@ YouTube Music 沒有「目前播放」的 API，所以 Hakuro 讀的是 Windows 
 - **背面與左側是工具面**：SOURCE／FIND／RELOAD 與 FOLLOW／PIN／MINI。FOLLOW 與 RELOAD 只在工具面和指令面板，其餘也是頁首或歌詞區的按鈕。
 - **進度列右端是播放／暫停**：以圖示顯示目前按下去會做的事，始終顯示，不會隨閒置隱藏。
 - **指令面板**：按 `Ctrl+K` 或頁首的 **COMMANDS** 開啟，常用功能都在裡面，中英文都能搜尋；輸入一段歌詞可以直接跳到那一行。面板是獨立視窗，不受主視窗大小限制（精簡模式下也完整顯示）；按 `Esc`、點面板旁邊或切到其他視窗即關閉。
+- **自訂快捷鍵**：在 Settings → Keyboard shortcuts 點選功能旁的按鍵欄，再按組合鍵即可綁定；支援清除及恢復預設。新增綁定預設只在主視窗生效，勾選 Global 才會在其他程式中生效。按 Save settings 後立即套用並保存；重複綁定或全域按鍵遭占用會提示錯誤。原有命令選單 `Ctrl+K` 與滑鼠穿透恢復鍵 `Ctrl+Alt+P` 保留，後者預設為全域。快捷鍵沿用播放器可用的功能，YouTube Music 的 SMTC 音量限制不會因綁定而改變。
 - **設定**、**Find lyrics** 與**歌詞來源**都是獨立視窗，置頂時也會顯示在主視窗上方，按 `Esc` 或右上角 × 關閉。調整背景透明度與歌詞大小時，主視窗會即時預覽；取消或直接關閉設定視窗會還原成已儲存的設定。Find lyrics 與歌詞來源只針對開啟時正在播放的那首歌，換歌時會自動關閉。
 - 頁首左上角是 App 圖示的線稿，顏色跟隨強調色。
-- **精簡模式**：只留方塊、三行歌詞與進度列，進度列右端換成上一首／下一首；播放／暫停點方塊。
+- **精簡模式**：整個視窗只有一顆方塊，沒有背景。正面是封面，點一下切換播放／暫停；頂部是控制鈕（歌詞、置頂、回到完整模式，以及上一首／播放／下一首）；右側書背直書歌名與歌手；左側是音量環；背面是 SOURCE／FIND／RELOAD／SETTINGS。按歌詞鈕方塊會向右拉長，正面在封面旁顯示三行歌詞，頂部在控制鈕右邊顯示歌名、歌手與進度（只顯示，不能拖動跳轉）；開關狀態會記住。置頂時方塊邊緣亮起強調色。視窗大小依 Lyric size (compact) 自動決定，不能手動縮放；拖動方塊旁的空白處可以移動視窗。
 - 背景的三角形碎片會各自緩慢漂移、旋轉；系統開啟「減少動態效果」時保持靜止。
 - 設定視窗右上角顯示目前版本。介面字型（Anton、JetBrains Mono、Noto Sans JP）隨 App 打包，離線也能顯示。
 
@@ -46,10 +47,13 @@ YouTube Music 沒有「目前播放」的 API，所以 Hakuro 讀的是 Windows 
 
 - **音量環**控制 Spotify 目前播放裝置的音量（0–100%），放開、停止捲動或以鍵盤提交時才送出調整，沿用既有授權。裝置不支援時會停用；YouTube Music 的 Windows 媒體介面沒有提供音量控制，請在播放器內調整。Spotify 音量 API 的帳戶要求依 [官方文件](https://developer.spotify.com/documentation/web-api/reference/set-volume-for-users-playback) 為準。
 - 點目前顯示的**歌詞來源按鈕**，可選擇這首歌偏好的來源，或回到自動搜尋。每首歌的選擇會保存在 SQLite。
-- **Find lyrics** 可在已啟用的 LRCLIB、NetEase 或 QQ Music 搜尋其他曲名／歌手，查看候選與歌詞預覽，再以 **Use these lyrics** 綁定目前這首歌。手動匹配會跨重啟保存；**Restore automatic** 可取消綁定，恢復自動搜尋。切換這首歌的來源也會取代手動匹配。
+- **Find lyrics** 可在已啟用的 LRCLIB、NetEase、QQ Music 搜尋其他曲名／歌手；Settings 的 **Player** 選擇 **YouTube Music** 時，會另外提供原生 YouTube Music 搜尋，不需額外啟用來源。查看候選與歌詞預覽後，以 **Use these lyrics** 綁定目前這首歌。手動匹配會跨重啟保存；**Restore automatic** 可取消綁定，恢復自動搜尋。切換這首歌的來源也會取代手動匹配。
 - **RELOAD** 會略過快取、重新向來源取得目前歌曲的歌詞；來源選擇控制搜尋對象，兩者可同時使用。
 - 有手動匹配時，重新整理會取得所選候選的歌詞；清除下載快取仍會保留手動匹配。
-- **Settings** 可調整全域歌詞來源順序與啟用狀態。支援 LRCLIB、PetitLyrics、Musixmatch、NetEase、QQ Music。
+- **Settings** 可調整 LRCLIB、PetitLyrics、Musixmatch、NetEase、QQ Music 的全域歌詞來源順序與啟用狀態。
+- Settings 的 **Player** 選擇 **YouTube Music** 時，自動搜尋會先嘗試 YouTube Music 原生同步歌詞；只有純文字、取不到或請求失敗時，會依設定順序繼續尋找其他來源的同步歌詞，仍找不到才保留純文字。原生歌詞不占用全域來源列表，也不需另外勾選。此時單曲來源選擇與 **Find lyrics** 也會提供 YouTube Music；選擇 Spotify 播放器時不提供此來源。單曲指定來源或手動匹配仍依使用者選擇。
+- YouTube Music 原生歌詞以歌名、歌手與時長尋找對應歌曲；歌曲搜尋沒有可用結果時，會再搜尋 MV，處理 Windows 提供英文曲名、YouTube 顯示雙語標題的情況，仍要求歌手與時長符合。取得對應歌曲後讀取逐行或純文字歌詞；不需登入 Google，播放控制仍走 SMTC。其內部介面可能變動，逐字與雙語資料不保證提供。
+- MV 只有純文字時，可透過原生藝人 ID、雙語標題的原文與已知時長，確認歌曲目錄中的對應版本並讀取其同步歌詞。不會憑文字順序猜時間，也不會只因歌名相似就套用其他版本；無法確認時保留純文字或繼續查其他來源。
 - 歌詞快取依播放來源分開存放，Spotify 與 YouTube Music 不會互相讀到對方的結果。
 - **Settings** 可設定強調色（方塊光暈、進度列、背景色帶，預設螢光黃 `#e6ff1f`）、目前歌詞的高亮色、已唱過歌詞的顏色。
 - **Follow lyrics** 控制是否自動捲動至目前歌詞；有時間軸時會隨播放位置高亮，純文字歌詞不會猜測時間。
@@ -64,7 +68,7 @@ SQLite 保留成功下載的歌詞，重新開啟 App 仍可使用。來源可�
 
 | 檔案 | 內容 |
 | --- | --- |
-| `settings.json` | 播放器選擇、Client ID、全域來源偏好、配色與跟隨歌詞設定 |
+| `settings.json` | 播放器選擇、Client ID、全域來源偏好、配色、跟隨歌詞與快捷鍵設定 |
 | `lyrics.db` | 已下載歌詞、逐字時間與翻譯，以及每首歌的來源偏好和手動匹配 |
 | `lyrics.db-wal`、`lyrics.db-shm` | SQLite 執行期間可能產生的輔助檔 |
 | `session.bin` | 經 Windows DPAPI 加密的 Spotify refresh token；只跟隨 YouTube Music 時不會產生 |

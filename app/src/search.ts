@@ -1,5 +1,5 @@
 /**
- * The Find lyrics window: search the enabled sources for another title or
+ * The Find lyrics window: search the player's native and enabled sources for another title or
  * artist, preview a candidate, and bind it to the song that was playing when
  * the window opened (or restore automatic search). The main window passes that
  * song in the URL; the window closes itself if the song changes.
@@ -156,6 +156,10 @@ async function start() {
   try {
     const config = await invoke<Config>("get_config");
     applyTheme(config.settings.theme);
+    // The backend exposes native lyrics only for the active YouTube Music
+    // player. It is not a toggle in the global fallback-source preferences.
+    const native = config.providers.find((provider) => provider.id === "youtube_music");
+    if (native) source.add(new Option(native.label, native.id));
     for (const entry of config.settings.sources) {
       if (!entry.enabled || !SEARCHABLE.includes(entry.id)) continue;
       const label = config.providers.find((provider) => provider.id === entry.id)?.label ?? entry.id;

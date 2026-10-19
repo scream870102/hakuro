@@ -25,10 +25,18 @@ body {
 }
 .panel__foot { padding: 10px 22px 12px; border-top: 1px solid var(--line); background: #0a0a0a; }
 .panel__foot .dialog-actions { margin-top: 0; }
-#settings-error, #source-error { margin: 0 0 8px; color: var(--accent); }
-#settings-error:empty, #source-error:empty { display: none; }
+#settings-error, #source-error, #shortcut-status { margin: 0 0 8px; color: var(--accent); overflow-wrap: anywhere; }
+#settings-error:empty, #source-error:empty, #shortcut-status:empty { display: none; }
 
 /* Find lyrics */
+.shortcut-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 150px) auto auto; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.shortcut-row small { display: block; color: var(--ink-3); }
+.shortcut-row button { padding: 7px; overflow-wrap: anywhere; }
+.shortcut-row label { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+.shortcut-row button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+#shortcuts-reset { margin-top: 12px; }
+@media (max-width: 520px) { .shortcut-row { grid-template-columns: minmax(0, 1fr) auto auto; } .shortcut-row > span { grid-column: 1 / -1; } }
+
 .lyrics-match-actions { flex-wrap: wrap; }
 .lyrics-candidates { max-height: 220px; margin: 10px 0; padding: 0; overflow-y: auto; list-style: none; }
 .lyric-candidate {

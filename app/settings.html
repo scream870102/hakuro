@@ -50,12 +50,13 @@
           <input id="settings-opacity" type="range" min="30" max="100" step="5" />
           <output id="opacity-value" for="settings-opacity">100%</output>
         </label>
-        <label class="range-setting">
+        <!-- Kept so the stored value round-trips; compact has no background to thin. -->
+        <label class="range-setting" hidden>
           <span>Background opacity (compact)</span>
           <input id="settings-compact-opacity" type="range" min="30" max="100" step="5" />
           <output id="compact-opacity-value" for="settings-compact-opacity">85%</output>
         </label>
-        <p>Thins the background so the desktop shows through. The lyrics stay fully opaque. Compact mode keeps its own value, because it is the one meant to sit over other work.</p>
+        <p>Thins the background so the desktop shows through. The lyrics stay fully opaque. Compact mode has no background at all: its window is the cube and nothing else.</p>
         <label class="range-setting">
           <span>Lyric size</span>
           <input id="settings-lyric-size" type="range" min="12" max="44" step="1" />
@@ -66,19 +67,25 @@
           <input id="settings-compact-lyric-size" type="range" min="12" max="44" step="1" />
           <output id="compact-lyric-size-value" for="settings-compact-lyric-size">18px</output>
         </label>
-        <p>Compact mode always keeps room for three lines: the line being sung, and the one on either side.</p>
+        <p>In compact mode this also sizes the cube, so its face always has room for three lines: the line being sung, and the one on either side.</p>
         <label for="settings-click-through">Click-through</label>
         <select id="settings-click-through">
           <option value="off">Off — the window always answers the mouse</option>
           <option value="auto">Auto — pass clicks through while another window has focus</option>
           <option value="always">Always pass clicks through</option>
         </select>
-        <p>Only acts while the window is pinned on top. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> switches between off and always from any application, which is the way back once clicks pass through.</p>
+        <p>Only acts while the window is pinned on top. The Click-through shortcut below switches between off and always. Keep a global binding to regain mouse control.</p>
+
+        <h3>Keyboard shortcuts / 快捷鍵</h3>
+        <p>Click a binding, then press your shortcut. Use Ctrl, Alt or Win with a key, or F1–F24. Esc cancels recording. Global works from other apps; otherwise the shortcut works in Hakuro's main window. Changes apply when saved.</p>
+        <div id="shortcut-list" class="shortcut-list"></div>
+        <button id="shortcuts-reset" class="ghost-button" type="button">Restore default shortcuts</button>
 
         <label class="follow-setting"><input id="settings-follow" type="checkbox" /> Follow lyrics automatically</label>
         <p id="storage-info"></p>
       </div>
       <div class="panel__foot">
+        <p id="shortcut-status" role="status" aria-live="polite"></p>
         <p id="settings-error" role="alert"></p>
         <div class="dialog-actions">
           <button class="ghost-button" id="settings-cancel" type="button">Cancel</button>

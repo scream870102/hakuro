@@ -18,9 +18,11 @@ mod petitlyrics;
 mod player;
 mod providers;
 mod settings;
+mod shortcuts;
 mod smtc;
 mod spotify;
 mod token_store;
+mod youtube_music;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -28,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::RwLock;
 
@@ -57,10 +59,6 @@ const SPOTIFY_DORMANT_AFTER: Duration = Duration::from_secs(60 * 60);
 const TRACK_END_SLACK: Duration = Duration::from_millis(500);
 /// Spotify reports a transport command's effect a moment after accepting it.
 const AFTER_COMMAND_DELAY: Duration = Duration::from_millis(400);
-
-/// The way back from a click-through window, which by definition cannot be
-/// clicked. The interface listens for this and flips the stored mode.
-const TOGGLE_CLICK_THROUGH: &str = "toggle-click-through";
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -160,6 +158,9 @@ struct AppState {
     musixmatch: musixmatch::Session,
     session: Session,
     settings: RwLock<Settings>,
+    settings_update: tokio::sync::Mutex<()>,
+    shortcuts: std::sync::RwLock<shortcuts::Active>,
+    shortcut_warning: std::sync::RwLock<String>,
     db: Db,
 }
 
@@ -170,6 +171,9 @@ impl AppState {
             musixmatch: musixmatch::Session::new(),
             session: Session::default(),
             settings: RwLock::new(settings::load()),
+            settings_update: tokio::sync::Mutex::new(()),
+            shortcuts: std::sync::RwLock::new(shortcuts::Active::new()),
+            shortcut_warning: std::sync::RwLock::new(String::new()),
             db: Db::open(),
         }
     }
@@ -177,7 +181,7 @@ impl AppState {
     fn config(&self, settings: &Settings) -> ConfigPayload {
         ConfigPayload {
             settings: settings.clone(),
-            providers: settings::PROVIDERS
+            providers: settings::available_providers(settings.player)
                 .iter()
                 .map(|(id, label)| ProviderInfo {
                     id: (*id).to_string(),
@@ -188,7 +192,14 @@ impl AppState {
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|error| error),
             stored_tracks: self.db.stored_track_count(),
-            storage_warning: self.db.warning().unwrap_or_default().to_string(),
+            storage_warning: [
+                self.db.warning().unwrap_or_default().to_string(),
+                self.shortcut_warning.read().unwrap().clone(),
+            ]
+            .into_iter()
+            .filter(|warning| !warning.is_empty())
+            .collect::<Vec<_>>()
+            .join("; "),
         }
     }
 }
@@ -226,8 +237,10 @@ async fn save_settings(
     incoming: Settings,
     state: State<'_, AppState>,
 ) -> Result<ConfigPayload, String> {
+    let update = state.settings_update.lock().await;
     let mut incoming = incoming;
     incoming.normalize();
+    let desired_shortcuts = shortcuts::validate(&mut incoming.shortcuts)?;
     // An empty Client ID is allowed — it is the first-run state, and refusing
     // to save would also throw away the colours typed in the same panel.
     if !incoming.client_id.is_empty() {
@@ -242,8 +255,30 @@ async fn save_settings(
     // changes nothing that is running, so it does not reconnect.
     let identity_changed = incoming.player != previous.player
         || (incoming.player.needs_client_id() && incoming.client_id != previous.client_id);
-    settings::save(&incoming)?;
+    let mut active = state.shortcuts.read().unwrap().clone();
+    let outcome = shortcuts::replace(
+        &mut active,
+        desired_shortcuts,
+        |key| {
+            app.global_shortcut()
+                .register(key)
+                .map_err(|error| format!("Cannot register {key}: {error}"))
+        },
+        |key| {
+            app.global_shortcut()
+                .unregister(key)
+                .map_err(|error| format!("Cannot release {key}: {error}"))
+        },
+        || settings::save(&incoming),
+    );
+    *state.shortcuts.write().unwrap() = active;
+    if let Err(error) = outcome {
+        *state.shortcut_warning.write().unwrap() = error.clone();
+        return Err(error);
+    }
+    state.shortcut_warning.write().unwrap().clear();
     *state.settings.write().await = incoming.clone();
+    drop(update);
 
     if identity_changed {
         // Dropping the client makes the next connect start clean, and ends the
@@ -547,6 +582,16 @@ fn track_key(playback: &Playback) -> String {
     }
 }
 
+fn lyric_cache_key(player: PlayerKind, requested: &str, order: &[String]) -> String {
+    match (player, requested) {
+        // Re-evaluate native Plain answers once under the synced-first policy.
+        (PlayerKind::Ytmusic, "") => format!("auto:ytm-sync-v2:{}", order.join(",")),
+        (PlayerKind::Ytmusic, "youtube_music") => "youtube_music:sync-v2".into(),
+        (_, "") => format!("auto:{}", order.join(",")),
+        _ => requested.to_string(),
+    }
+}
+
 /// Publish the sample, and start a lyric lookup when the song changed.
 async fn apply_playback(app: &AppHandle, playback: Playback) {
     let state = app.state::<AppState>();
@@ -587,22 +632,21 @@ async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
         return;
     }
     let request = state.session.lookup_request.fetch_add(1, Ordering::SeqCst) + 1;
-    if let Some(selection) = state.db.manual_match(&key) {
+    if let Some(selection) = state.db.manual_match(&key).filter(|selection| {
+        selection.candidate.source != "youtube_music" || playback.source == PlayerKind::Ytmusic
+    }) {
         emit_lyrics(app, generation, &key, "", selection.lyrics, true);
         return;
     }
     let requested = state
         .db
         .preferred_source(&key)
+        .filter(|id| id != "youtube_music" || playback.source == PlayerKind::Ytmusic)
         .unwrap_or_else(|| db::AUTO.to_string());
 
-    let order = state.settings.read().await.lookup_order();
+    let order = state.settings.read().await.lyric_order(playback.source);
     // An automatic answer is only valid for the order that produced it.
-    let cache_key = if requested.is_empty() {
-        format!("auto:{}", order.join(","))
-    } else {
-        requested.clone()
-    };
+    let cache_key = lyric_cache_key(playback.source, &requested, &order);
     if let Some(cached) = state.db.lyrics(&key, &cache_key) {
         emit_lyrics(app, generation, &key, &requested, cached, false);
         return;
@@ -703,7 +747,10 @@ async fn reload_lyrics(app: AppHandle, state: State<'_, AppState>) -> Result<(),
         let key = state.session.current_track.read().await.clone();
         let generation = state.session.generation.load(Ordering::SeqCst);
         let request = state.session.lookup_request.fetch_add(1, Ordering::SeqCst) + 1;
-        let selection = state.db.manual_match(&key);
+        let player = state.settings.read().await.player;
+        let selection = state.db.manual_match(&key).filter(|selection| {
+            selection.candidate.source != "youtube_music" || player == PlayerKind::Ytmusic
+        });
         if selection.is_none() {
             state.db.forget(&key);
         }
@@ -749,7 +796,10 @@ async fn set_track_source(
     validate_source_track(&key, &track_id)?;
     let source = source.filter(|id| !id.is_empty());
     if let Some(id) = &source {
-        if settings::provider_label(id).is_none() {
+        if !settings::available_providers(state.settings.read().await.player)
+            .iter()
+            .any(|(known, _)| known == id)
+        {
             return Err(format!("Unknown lyrics source: {id}"));
         }
     }
@@ -763,14 +813,12 @@ async fn set_track_source(
 }
 
 async fn validate_search_source(state: &AppState, source: &str) -> Result<(), String> {
-    if !["lrclib", "netease", "qqmusic"].contains(&source) {
+    if !["lrclib", "netease", "qqmusic", "youtube_music"].contains(&source) {
         return Err("This source does not support manual lyric search.".into());
     }
-    if !state
-        .settings
-        .read()
-        .await
-        .lookup_order()
+    let settings = state.settings.read().await;
+    if !settings
+        .lyric_order(settings.player)
         .iter()
         .any(|id| id == source)
     {
@@ -967,6 +1015,31 @@ async fn set_volume(volume_percent: u8, state: State<'_, AppState>) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn synced_policy_refreshes_only_native_ytm_cache_keys() {
+        let order = vec!["youtube_music".into(), "lrclib".into()];
+        assert_eq!(
+            lyric_cache_key(PlayerKind::Spotify, "", &["lrclib".into()]),
+            "auto:lrclib"
+        );
+        assert_eq!(
+            lyric_cache_key(PlayerKind::Ytmusic, "", &order),
+            "auto:ytm-sync-v2:youtube_music,lrclib"
+        );
+        assert_eq!(
+            lyric_cache_key(PlayerKind::Ytmusic, "youtube_music", &order),
+            "youtube_music:sync-v2"
+        );
+        assert_eq!(
+            lyric_cache_key(PlayerKind::Ytmusic, "lrclib", &order),
+            "lrclib"
+        );
+        assert_ne!(
+            lyric_cache_key(PlayerKind::Ytmusic, "", &order),
+            lyric_cache_key(PlayerKind::Ytmusic, "", &["youtube_music".into()])
+        );
+    }
 
     #[test]
     fn source_selection_rejects_a_song_changed_since_the_menu_opened() {
@@ -1211,23 +1284,59 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
-                    // Key-up would fire the toggle a second time and undo it.
-                    if event.state == ShortcutState::Pressed {
-                        let _ = app.emit(TOGGLE_CLICK_THROUGH, ());
+                .with_handler(|app, shortcut, event| {
+                    if event.state != ShortcutState::Pressed {
+                        return;
+                    }
+                    if let Some(settings) = app.get_webview_window("settings") {
+                        if settings.is_focused().unwrap_or(false) {
+                            let _ = settings.emit("shortcut:capture", shortcuts::canonical(*shortcut));
+                            return;
+                        }
+                    }
+                    let state = app.state::<AppState>();
+                    let action = state
+                        .shortcuts
+                        .read()
+                        .unwrap()
+                        .get(&shortcut.id())
+                        .map(|(_, action)| action.clone());
+                    if let (Some(action), Some(main)) = (action, app.get_webview_window("main")) {
+                        let _ = main.emit("shortcut", action);
                     }
                 })
                 .build(),
         )
         .setup(|app| {
-            // Registered here rather than on the plugin builder so that losing
-            // the chord to another program costs the shortcut, not the launch.
-            // The same toggle still lives in the settings panel.
-            let chord = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyP);
-            if let Err(error) = app.global_shortcut().register(chord) {
-                eprintln!(
-                    "Ctrl+Alt+P is unavailable, click-through keeps its panel toggle: {error}"
-                );
+            // Conflicts are recoverable in Settings and never prevent startup.
+            let state = app.state::<AppState>();
+            let mut bindings = state
+                .settings
+                .try_read()
+                .expect("settings are uncontended at startup")
+                .shortcuts
+                .clone();
+            match shortcuts::validate(&mut bindings) {
+                Ok(desired) => {
+                    state
+                        .settings
+                        .try_write()
+                        .expect("settings are uncontended at startup")
+                        .shortcuts = bindings;
+                    let mut active = shortcuts::Active::new();
+                    let mut warnings = Vec::new();
+                    for (id, (key, action)) in desired {
+                        match app.global_shortcut().register(key) {
+                            Ok(()) => {
+                                active.insert(id, (key, action));
+                            }
+                            Err(error) => warnings.push(format!("Cannot register {key}: {error}")),
+                        }
+                    }
+                    *state.shortcuts.write().unwrap() = active;
+                    *state.shortcut_warning.write().unwrap() = warnings.join("; ");
+                }
+                Err(error) => *state.shortcut_warning.write().unwrap() = error,
             }
             Ok(())
         })

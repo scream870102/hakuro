@@ -3,12 +3,13 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import html from "../settings.html?raw";
 import { isolateListeners } from "./test-listeners";
+import { SHORTCUT_ACTIONS, DEFAULT_SHORTCUTS } from "./shortcuts";
 
 isolateListeners(window, document);
 
-const bridge = vi.hoisted(() => ({ invoke: vi.fn(), emitTo: vi.fn() }));
+const bridge = vi.hoisted(() => ({ invoke: vi.fn(), emitTo: vi.fn(), capture: undefined as undefined | ((event: { payload: string }) => void) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: bridge.invoke }));
-vi.mock("@tauri-apps/api/event", () => ({ emitTo: bridge.emitTo }));
+vi.mock("@tauri-apps/api/event", () => ({ emitTo: bridge.emitTo, listen: vi.fn(async (_event, callback) => { bridge.capture = callback; }) }));
 const win = vi.hoisted(() => ({ show: vi.fn(), setFocus: vi.fn(), close: vi.fn() }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => win }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(async () => "1.3.0") }));
@@ -24,9 +25,11 @@ const initial = () => ({
     opacity: 100,
     clickThrough: "off",
     compact: false,
+    compactLyrics: false,
     compactOpacity: 85,
     lyricSize: 26,
     compactLyricSize: 18,
+    shortcuts: SHORTCUT_ACTIONS.map(([action]) => ({ action, accelerator: "", global: false, ...DEFAULT_SHORTCUTS.find((item) => item.action === action) })),
   },
   providers: [{ id: "lrclib", label: "LRCLIB" }, { id: "musixmatch", label: "Musixmatch" }],
   dataDir: "C:/Hakuro", storedTracks: 2, storageWarning: "",
@@ -83,9 +86,11 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
     opacity: 100,
     clickThrough: "off",
     compact: false,
+    compactLyrics: false,
     compactOpacity: 85,
     lyricSize: 26,
     compactLyricSize: 18,
+    shortcuts: initial().settings.shortcuts,
   } });
   expect(win.close).toHaveBeenCalled();
 });
@@ -132,4 +137,43 @@ it("stays open with the entered values when saving fails", async () => {
   expect(el<HTMLInputElement>("client-id").value).toBe("invalid");
   expect(el("settings-error").textContent).toContain("read-only");
   expect(el<HTMLButtonElement>("settings-save").disabled).toBe(false);
+});
+
+const press = (init: KeyboardEventInit) => window.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+
+it("records shortcuts, rejects duplicates and lets Escape cancel without closing settings", async () => {
+  el("shortcut-playPause").click();
+  press({ key: "k", code: "KeyK", ctrlKey: true });
+  expect(el("shortcut-status").textContent).toContain("already bound");
+  expect(el("shortcut-playPause").textContent).toBe("Press keys…");
+  press({ key: "Escape" });
+  expect(win.close).not.toHaveBeenCalled();
+  expect(el("shortcut-playPause").textContent).toBe("Not bound");
+  el("shortcut-playPause").click();
+  press({ key: "F8", code: "F8" });
+  submit();
+  await flush();
+  const saved = bridge.invoke.mock.calls.find(([command]) => command === "save_settings")!;
+  expect(saved[1].incoming.shortcuts).toContainEqual({ action: "playPause", accelerator: "F8", global: false });
+});
+
+it("clears and resets draft bindings without saving until requested", async () => {
+  document.querySelector<HTMLButtonElement>('[aria-label="Clear Commands"]')!.click();
+  expect(el("shortcut-commands").textContent).toBe("Not bound");
+  el("shortcuts-reset").click();
+  expect(el("shortcut-commands").textContent).toBe("Ctrl+K");
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "save_settings")).toBe(false);
+});
+
+it("records an OS-delivered existing global chord only while recording and still checks conflicts", () => {
+  bridge.capture!({ payload: "Ctrl+Alt+KeyP" });
+  expect(el("shortcut-playPause").textContent).toBe("Not bound");
+  el("shortcut-playPause").click();
+  bridge.capture!({ payload: "Ctrl+Alt+KeyP" });
+  expect(el("shortcut-status").textContent).toContain("already bound");
+  press({ key: "Escape" });
+  el("shortcut-clickThrough").click();
+  bridge.capture!({ payload: "Ctrl+Alt+KeyP" });
+  expect(el("shortcut-clickThrough").textContent).toBe("Ctrl+Alt+P");
+  expect(el("shortcut-clickThrough").getAttribute("aria-pressed")).toBe("false");
 });

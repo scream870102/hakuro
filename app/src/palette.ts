@@ -10,10 +10,13 @@
  * never as HTML strings.
  */
 
+import { shortcutFromEvent, shortcutLabel, type ShortcutBinding } from "./shortcuts";
+
 type Value = string | (() => string);
 
 /** A command as main.ts defines it, live against its own state. */
 export interface Command {
+  id?: string;
   group: string;
   icon: Value;
   label: Value;
@@ -40,6 +43,7 @@ export interface PaletteCommand {
   words: string;
   state: { text: string; on: boolean } | null;
   enabled: boolean;
+  shortcut?: ShortcutBinding;
 }
 
 export interface PaletteLine {
@@ -58,6 +62,8 @@ export interface PaletteSnapshot {
   /** The song the lines belong to, so a jump can never land in the next one. */
   trackKey: string;
   accent?: string;
+  shortcut?: string;
+  shortcutGlobal?: boolean;
 }
 
 export type PaletteAction = { command: number } | { line: number; trackKey: string };
@@ -73,7 +79,7 @@ export const PALETTE_READY = "palette:ready";
 
 const read = (value: Value | undefined) => (typeof value === "function" ? value() : value ?? "");
 
-export function describeCommands(commands: Command[]): PaletteCommand[] {
+export function describeCommands(commands: Command[], bindings: ShortcutBinding[] = []): PaletteCommand[] {
   return commands.flatMap((command, id) => (command.visible?.() ?? true) ? [{
     id,
     group: command.group,
@@ -83,6 +89,7 @@ export function describeCommands(commands: Command[]): PaletteCommand[] {
     words: command.words ?? "",
     state: command.state?.() ?? null,
     enabled: command.enabled?.() ?? true,
+    shortcut: bindings.find((binding) => binding.action === command.id && binding.accelerator),
   }] : []);
 }
 
@@ -100,6 +107,7 @@ interface Item {
   hint: string;
   state: { text: string; on: boolean } | null;
   keys: string[];
+  global?: boolean;
   enabled: boolean;
   action: PaletteAction;
 }
@@ -181,7 +189,8 @@ export function createPalette(options: {
       match,
       hint: command.hint,
       state: command.state,
-      keys: [],
+      keys: command.shortcut ? shortcutLabel(command.shortcut.accelerator).split("+") : [],
+      global: command.shortcut?.global,
       enabled: command.enabled,
       action: { command: command.id },
     });
@@ -250,6 +259,12 @@ export function createPalette(options: {
         state.className = row.state.on ? "pal__state on" : "pal__state";
         state.textContent = row.state.text;
         meta.append(state);
+      }
+      if (row.global) {
+        const scope = document.createElement("span");
+        scope.className = "pal__state";
+        scope.textContent = "GLOBAL";
+        meta.append(scope);
       }
       for (const key of row.keys) {
         const kbd = document.createElement("kbd");
@@ -324,7 +339,7 @@ export function createPalette(options: {
   });
   window.addEventListener("keydown", (event) => {
     if (event.isComposing) return;
-    const chord = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k";
+    const chord = !snapshot.shortcutGlobal && shortcutFromEvent(event) === (snapshot.shortcut ?? "Ctrl+KeyK");
     if (event.key === "Escape" || chord) {
       event.preventDefault();
       options.dismiss();
@@ -344,6 +359,15 @@ export function createPalette(options: {
   return {
     show(next) {
       snapshot = next;
+      const bindingHint = document.getElementById("pal-binding");
+      if (bindingHint) {
+        bindingHint.replaceChildren();
+        if (next.shortcut) {
+          const key = document.createElement("kbd");
+          key.textContent = shortcutLabel(next.shortcut);
+          bindingHint.append(key, next.shortcutGlobal ? " GLOBAL OPEN" : " OPEN / CLOSE");
+        }
+      }
       input.value = "";
       render();
       retrigger(box, "is-in");

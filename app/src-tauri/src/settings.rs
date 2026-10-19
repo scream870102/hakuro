@@ -28,7 +28,8 @@ pub const SETTINGS_FILE: &str = "settings.json";
 /// this player is used on a Japan-region account, PetitLyrics ahead of
 /// Musixmatch because live probing on 2026-09-21 showed PetitLyrics answering
 /// reliably while Musixmatch was rate-limited. The Chinese sources stay last as
-/// the original backstop.
+/// the original backstop. Native YouTube Music lyrics are selected by the player,
+/// not by this global fallback preference list.
 pub const PROVIDERS: [(&str, &str); 5] = [
     ("lrclib", "LRCLIB"),
     ("petitlyrics", "PetitLyrics"),
@@ -38,10 +39,21 @@ pub const PROVIDERS: [(&str, &str); 5] = [
 ];
 
 pub fn provider_label(id: &str) -> Option<&'static str> {
+    if id == "youtube_music" {
+        return Some("YouTube Music");
+    }
     PROVIDERS
         .iter()
         .find(|(known, _)| *known == id)
         .map(|(_, label)| *label)
+}
+
+pub fn available_providers(player: PlayerKind) -> Vec<(&'static str, &'static str)> {
+    let mut providers = PROVIDERS.to_vec();
+    if player == PlayerKind::Ytmusic {
+        providers.insert(0, ("youtube_music", "YouTube Music"));
+    }
+    providers
 }
 
 /// The folder holding every file this app writes.
@@ -113,6 +125,7 @@ impl Default for Theme {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    pub shortcuts: Vec<crate::shortcuts::Binding>,
     /// Which player to follow. A reader uses one or the other, never both, so
     /// this is a switch rather than a priority list.
     pub player: PlayerKind,
@@ -133,11 +146,14 @@ pub struct Settings {
     /// without hiding it.
     pub opacity: u8,
     pub click_through: ClickThrough,
-    /// Compact mode strips the window down to art, title and a few lines of
-    /// lyrics. Stored so the window comes back the way it was left.
+    /// Compact mode strips the window down to the cube alone. Stored so the
+    /// window comes back the way it was left.
     pub compact: bool,
-    /// Compact mode gets its own opacity: it exists to sit over other work,
-    /// which usually wants thinner glass than the full window.
+    /// Whether compact's cube stretches sideways to show the lyrics. Stored
+    /// for the same reason: a reader who hid them wants them hidden next time.
+    pub compact_lyrics: bool,
+    /// Kept so older and newer settings files round-trip, but compact no longer
+    /// has a background to thin: its window is the cube and nothing else.
     pub compact_opacity: u8,
     /// Lyric type size in pixels, per mode.
     pub lyric_size: u8,
@@ -155,6 +171,7 @@ pub const MIN_OPACITY: u8 = 30;
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            shortcuts: crate::shortcuts::defaults(),
             player: PlayerKind::default(),
             client_id: String::new(),
             sources: PROVIDERS
@@ -170,6 +187,7 @@ impl Default for Settings {
             opacity: 100,
             click_through: ClickThrough::Off,
             compact: false,
+            compact_lyrics: false,
             compact_opacity: 85,
             lyric_size: 26,
             compact_lyric_size: 18,
@@ -184,7 +202,7 @@ impl Settings {
     pub fn normalize(&mut self) {
         let mut seen: Vec<String> = Vec::new();
         self.sources.retain(|source| {
-            let known = provider_label(&source.id).is_some();
+            let known = PROVIDERS.iter().any(|(id, _)| *id == source.id);
             let fresh = !seen.contains(&source.id);
             if known && fresh {
                 seen.push(source.id.clone());
@@ -229,6 +247,17 @@ impl Settings {
         }
         enabled
     }
+
+    /// Native lyrics belong to the selected playback terminal. Use the sample's
+    /// player so an in-flight lookup cannot follow a newly switched setting.
+    pub fn lyric_order(&self, player: PlayerKind) -> Vec<String> {
+        let mut order = self.lookup_order();
+        order.retain(|id| id != "youtube_music");
+        if player == PlayerKind::Ytmusic {
+            order.insert(0, "youtube_music".into());
+        }
+        order
+    }
 }
 
 /// Read `settings.json`, falling back to defaults.
@@ -249,7 +278,10 @@ pub fn load() -> Settings {
 pub fn save(settings: &Settings) -> Result<(), String> {
     let path = data_path(SETTINGS_FILE)?;
     let text = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
-    std::fs::write(&path, text).map_err(|error| format!("Cannot write {}: {error}", path.display()))
+    let pending = path.with_extension("json.tmp");
+    std::fs::write(&pending, text)
+        .and_then(|()| std::fs::rename(&pending, &path))
+        .map_err(|error| format!("Cannot write {}: {error}", path.display()))
 }
 
 /// A Client ID is 32 lowercase hex characters today, but Spotify documents no
@@ -314,6 +346,44 @@ pub(crate) mod tests {
         });
     }
 
+    /// Files written before compact could hide its lyrics open with them hidden,
+    /// and the reader's choice survives a save and reload.
+    #[test]
+    fn compact_lyrics_defaults_off_and_persists() {
+        let old: Settings = serde_json::from_str(r#"{"compact":true}"#).unwrap();
+        assert!(!old.compact_lyrics);
+        assert!(serde_json::to_string(&Settings::default())
+            .unwrap()
+            .contains("\"compactLyrics\":false"));
+        with_temp_data_dir(|_| {
+            let settings = Settings {
+                compact_lyrics: true,
+                ..Settings::default()
+            };
+            save(&settings).unwrap();
+            assert!(load().compact_lyrics);
+        });
+    }
+
+    #[test]
+    fn shortcuts_default_for_old_files_and_persist_changes_without_partial_writes() {
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.shortcuts, crate::shortcuts::defaults());
+        with_temp_data_dir(|folder| {
+            let mut settings = Settings::default();
+            save(&settings).unwrap();
+            settings.shortcuts[0].accelerator = "Ctrl+KeyJ".into();
+            settings.shortcuts[0].global = true;
+            save(&settings).unwrap();
+            assert_eq!(load().shortcuts, settings.shortcuts);
+            std::fs::create_dir(folder.join("settings.json.tmp")).unwrap();
+            let saved = settings.clone();
+            settings.shortcuts.clear();
+            assert!(save(&settings).is_err());
+            assert_eq!(load(), saved);
+        });
+    }
+
     #[test]
     fn a_corrupt_file_falls_back_to_defaults_instead_of_locking_the_app_out() {
         with_temp_data_dir(|folder| {
@@ -365,7 +435,10 @@ pub(crate) mod tests {
             };
             settings.normalize();
             assert_eq!(settings.opacity, expected, "opacity {stored}");
-            assert_eq!(settings.compact_opacity, expected, "compact opacity {stored}");
+            assert_eq!(
+                settings.compact_opacity, expected,
+                "compact opacity {stored}"
+            );
         }
     }
 
@@ -408,6 +481,48 @@ pub(crate) mod tests {
         assert_eq!(
             settings.lookup_order(),
             vec!["petitlyrics", "netease", "qqmusic"]
+        );
+    }
+
+    #[test]
+    fn native_lyrics_follow_the_player_not_global_source_preferences() {
+        let mut settings = Settings {
+            sources: vec![
+                SourcePreference {
+                    id: "netease".into(),
+                    enabled: true,
+                },
+                SourcePreference {
+                    id: "youtube_music".into(),
+                    enabled: false,
+                },
+                SourcePreference {
+                    id: "lrclib".into(),
+                    enabled: false,
+                },
+            ],
+            ..Settings::default()
+        };
+        settings.normalize();
+        assert!(!settings
+            .sources
+            .iter()
+            .any(|source| source.id == "youtube_music"));
+        let spotify = settings.lyric_order(PlayerKind::Spotify);
+        assert_eq!(spotify, ["netease", "petitlyrics", "musixmatch", "qqmusic"]);
+        let youtube = settings.lyric_order(PlayerKind::Ytmusic);
+        assert_eq!(youtube[0], "youtube_music");
+        assert_eq!(&youtube[1..], spotify);
+        assert_ne!(
+            format!("auto:{}", youtube.join(",")),
+            format!("auto:{}", spotify.join(","))
+        );
+        assert!(!available_providers(PlayerKind::Spotify)
+            .iter()
+            .any(|(id, _)| *id == "youtube_music"));
+        assert_eq!(
+            available_providers(PlayerKind::Ytmusic)[0].0,
+            "youtube_music"
         );
     }
 

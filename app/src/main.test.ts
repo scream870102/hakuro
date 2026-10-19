@@ -2,6 +2,7 @@
 /// <reference types="vite/client" />
 import { beforeEach, expect, it, vi } from "vitest";
 import html from "../index.html?raw";
+import { stretchedHeight } from "./deck";
 import { isolateListeners } from "./test-listeners";
 
 isolateListeners(window, document);
@@ -18,6 +19,8 @@ const appWindow = vi.hoisted(() => ({
   setIgnoreCursorEvents: vi.fn(),
   minimize: vi.fn(),
   toggleMaximize: vi.fn(),
+  maximize: vi.fn(),
+  unmaximize: vi.fn(),
   close: vi.fn(),
   isMaximized: vi.fn(),
   onFocusChanged: vi.fn(),
@@ -28,6 +31,9 @@ const appWindow = vi.hoisted(() => ({
   outerPosition: vi.fn(),
   outerSize: vi.fn(),
   setFocus: vi.fn(),
+  setResizable: vi.fn(),
+  setShadow: vi.fn(),
+  startDragging: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => appWindow, currentMonitor: async () => null }));
 /** Every child window main.ts opens, by label, with the options it was given. */
@@ -77,6 +83,7 @@ const initial = () => ({
     opacity: 100,
     clickThrough: "off",
     compact: false,
+    compactLyrics: false,
     compactOpacity: 85,
     lyricSize: 26,
     compactLyricSize: 18,
@@ -294,7 +301,7 @@ it("registers all event listeners before connecting an existing identity", async
     if (command === "get_config") return initial();
     if (command === "connect") expect([...bridge.listeners.keys()].sort()).toEqual([
       "lyrics", "palette:closed", "palette:run", "playback", "search:translations", "settings:preview", "status",
-      "toggle-click-through",
+      "shortcut",
     ]);
   });
   await import("./main");
@@ -479,6 +486,36 @@ it("keeps the window pinned as it was when the save fails", async () => {
   expect(el("notice").textContent).toContain("read-only");
 });
 
+it("centres the sung line again once compact's cube has settled at its new size", async () => {
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, compact: true } };
+  });
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 1500);
+  bridge.listeners.get("lyrics")!({ payload: {
+    generation: 1, trackId: "spotify:song-a", source: "LRCLIB", synced: true,
+    text: "", partial: false, requested: "",
+    cues: [{ time_ms: 1000, text: "One" }, { time_ms: 5000, text: "Two" }],
+  } });
+  await flush();
+  runFrame();
+  const scrollTo = vi.mocked(HTMLElement.prototype.scrollTo);
+  const settle = (target: HTMLElement, propertyName: string) => {
+    const event = new Event("transitionend", { bubbles: true });
+    Object.defineProperty(event, "propertyName", { value: propertyName });
+    target.dispatchEvent(event);
+  };
+
+  // A button's own transition ending is not the cube settling.
+  scrollTo.mockClear();
+  settle(el("pin"), "--s");
+  settle(document.body, "opacity");
+  expect(scrollTo.mock.contexts).not.toContain(el("lyrics"));
+  settle(document.body, "--s");
+  expect(scrollTo.mock.contexts).toContain(el("lyrics"));
+});
+
 it("drives the window buttons and tracks the maximized glyph", async () => {
   await import("./main");
   await flush();
@@ -539,13 +576,13 @@ it("flips between off and always when the global chord fires", async () => {
   await import("./main");
   await flush();
 
-  bridge.listeners.get("toggle-click-through")!({ payload: null });
+  bridge.listeners.get("shortcut")!({ payload: "clickThrough" });
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("save_settings", {
     incoming: { ...initial().settings, clickThrough: "always" },
   });
 
-  bridge.listeners.get("toggle-click-through")!({ payload: null });
+  bridge.listeners.get("shortcut")!({ payload: "clickThrough" });
   await flush();
   expect(bridge.invoke).toHaveBeenLastCalledWith("save_settings", {
     incoming: { ...initial().settings, clickThrough: "off" },
@@ -581,8 +618,10 @@ it("keeps play and pause in the bar, named for what a press does", async () => {
   expect(bridge.invoke).toHaveBeenCalledWith("pause", undefined);
 });
 
-/** Compact's chrome and bar rows with their hairlines; mirrors COMPACT_CHROME. */
-const CHROME = 72;
+/** Compact's cube edge for a lyric size: three lines plus slack, never under 150px. */
+const edgeFor = (line: number) => Math.max(150, Math.ceil(3 * line + 16));
+/** As tall as the cube stretched for the lyrics stands end-on, plus the pin's glow. */
+const heightFor = (edge: number) => Math.ceil(stretchedHeight(edge, edge + Math.round(edge * 1.9))) + 24;
 
 const lastSize = (fn: { mock: { calls: unknown[][] } }) => {
   const calls = fn.mock.calls;
@@ -631,7 +670,7 @@ it("switches to compact mode with its own opacity and type size", async () => {
   expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("18px");
 });
 
-it("never lets compact be dragged below three lines of lyrics", async () => {
+it("sizes compact's window around a cube whose face fits three lines of lyrics", async () => {
   bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
     if (command === "get_config") {
       return { ...initial(), settings: { ...initial().settings, compact: true, compactLyricSize: 30 } };
@@ -641,13 +680,17 @@ it("never lets compact be dragged below three lines of lyrics", async () => {
   await import("./main");
   await flush();
 
-  // Three lines of (30px * 1.32 line-height + 18px padding), plus the chrome
-  // and bar rows.
-  const lines = Math.ceil(3 * (30 * 1.32 + 18));
-  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: lines + CHROME });
+  // Three lines of (30px * 1.32 line-height + 18px padding) set the edge; the
+  // window is twice that wide, and tall enough for the stretched cube end-on.
+  const edge = edgeFor(30 * 1.32 + 18);
+  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 2 * edge, height: heightFor(edge) });
   // Nothing remembers the window size between launches, so a stored compact
-  // mode has to shrink the window itself or it reopens at full size.
-  expect(lastSize(appWindow.setSize)).toEqual({ width: 460, height: lines + CHROME });
+  // mode has to size the window itself, and it stays the size the cube sets.
+  expect(lastSize(appWindow.setSize)).toEqual({ width: 2 * edge, height: heightFor(edge) });
+  expect(appWindow.setResizable).toHaveBeenLastCalledWith(false);
+  expect(document.documentElement.style.getPropertyValue("--compact-s")).toBe(`${edge}px`);
+  expect(document.documentElement.style.getPropertyValue("--lw")).toBe(`${Math.round(edge * 1.9)}px`);
+
   playback("song-a", 1, 1500);
   bridge.listeners.get("lyrics")!({ payload: {
     generation: 1, trackId: "spotify:song-a", source: "NetEase", synced: true,
@@ -656,10 +699,124 @@ it("never lets compact be dragged below three lines of lyrics", async () => {
   } });
   await flush();
   // Reserve the translated line-height AND its 4px top margin for each row.
-  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: Math.ceil(3 * (30 * (1.32 + 0.65 * 1.4) + 18 + 4)) + CHROME });
+  const translated = edgeFor(30 * (1.32 + 0.65 * 1.4) + 18 + 4);
+  expect(lastSize(appWindow.setSize)).toEqual({ width: 2 * translated, height: heightFor(translated) });
   bridge.listeners.get("search:translations")!({ payload: false });
   await flush();
-  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: lines + CHROME });
+  expect(lastSize(appWindow.setSize)).toEqual({ width: 2 * edge, height: heightFor(edge) });
+});
+
+it("leaves the stretched cube room to stand end-on, where its near end looms", () => {
+  // Computed apart from the app: rotateX(-24deg) rotateY(-14deg + quarter turns
+  // +/- 1.6deg sway), a 1500px or 7-edge perspective, and 5px of bob each way.
+  expect(stretchedHeight(150, 435)).toBeCloseTo(377.82, 1);
+  expect(stretchedHeight(300, 870)).toBeCloseTo(791.08, 1);
+  // The old window, twice the edge, was too short for it.
+  expect(stretchedHeight(150, 435)).toBeGreaterThan(2 * 150);
+});
+
+it("stretches the compact cube for the lyrics, remembers it, and moves the lyrics onto its face", async () => {
+  bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, compact: true } };
+    if (command === "save_settings") return { ...initial(), settings: args!.incoming };
+  });
+  await import("./main");
+  await flush();
+  const edge = edgeFor(18 * 1.32 + 18);
+  expect(document.body.classList.contains("is-stretched")).toBe(false);
+  expect(el("lyrics").parentElement).toBe(el("cube-lyrics"));
+  // The dial follows the cube's faces round: the spine has the right one.
+  expect(el("volume-control").closest(".face--left")).not.toBeNull();
+
+  document.querySelector<HTMLButtonElement>('.lid .tool[data-proxy="compact-lyrics"]')!.click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("save_settings", {
+    incoming: { ...initial().settings, compact: true, compactLyrics: true },
+  });
+  expect(document.body.classList.contains("is-stretched")).toBe(true);
+  // The lyrics only widen the window; it was already tall enough for them.
+  expect(lastSize(appWindow.setSize)).toEqual({ width: 2 * edge + Math.round(edge * 1.9), height: heightFor(edge) });
+  runFrame();
+  expect(document.querySelector('.lid .tool[data-proxy="compact-lyrics"]')!.getAttribute("aria-pressed")).toBe("true");
+  // Compact's own switch is pressed, but the way back to full mode is not a state.
+  expect(el("mode-toggle").getAttribute("aria-pressed")).toBe("true");
+  expect(document.querySelector(".lid .tool--full")!.hasAttribute("aria-pressed")).toBe(false);
+
+  // Back to the full window: the lyrics and the dial go home, the window can be resized again.
+  el("mode-toggle").click();
+  await flush();
+  expect(document.body.classList.contains("is-stretched")).toBe(false);
+  expect(el("lyrics").parentElement).toBe(document.querySelector(".lyrics-zone"));
+  expect(el("lyrics").nextElementSibling).toBe(el("shards"));
+  expect(el("volume-control").closest(".face--right")).not.toBeNull();
+  expect(appWindow.setResizable).toHaveBeenLastCalledWith(true);
+});
+
+it("lets go of a maximized window before shrinking it to the cube, and fills the screen again after", async () => {
+  await import("./main");
+  await flush();
+  appWindow.isMaximized.mockResolvedValue(true);
+  el("mode-toggle").click();
+  await flush();
+  expect(appWindow.unmaximize).toHaveBeenCalledTimes(1);
+  const sized = appWindow.setSize.mock.invocationCallOrder;
+  expect(appWindow.unmaximize.mock.invocationCallOrder[0]).toBeLessThan(sized[sized.length - 1]);
+  expect(appWindow.maximize).not.toHaveBeenCalled();
+
+  appWindow.isMaximized.mockResolvedValue(false);
+  el("mode-toggle").click();
+  await flush();
+  expect(appWindow.maximize).toHaveBeenCalledTimes(1);
+});
+
+it("drags the window from compact's empty glass, but turns the cube everywhere else", async () => {
+  await import("./main");
+  await flush();
+  const scene = el("scene");
+  scene.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+  expect(appWindow.startDragging).not.toHaveBeenCalled();
+  scene.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0 }));
+
+  el("mode-toggle").click();
+  await flush();
+  scene.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+  expect(appWindow.startDragging).toHaveBeenCalledTimes(1);
+  // On the cube itself a press still turns it rather than moving the window.
+  document.querySelector(".cover-shade")!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+  expect(appWindow.startDragging).toHaveBeenCalledTimes(1);
+});
+
+it("keeps compact metadata current across track changes and clears it when playback stops", async () => {
+  await import("./main");
+  await flush();
+  el("mode-toggle").click();
+  await flush();
+  playback("A very long song name with 日本語 and 中文", 1);
+  expect(el("track-name").textContent).toBe("A very long song name with 日本語 and 中文");
+  expect(el("track-artist").textContent).toBe("Artist");
+  // The cube carries the same name down its spine and on its lid.
+  for (const id of ["spine-title", "lid-title"]) expect(el(id).textContent).toBe("A very long song name with 日本語 and 中文");
+  for (const id of ["spine-artist", "lid-artist"]) expect(el(id).textContent).toBe("Artist");
+  bridge.listeners.get("playback")!({ payload: {
+    trackId: "next", trackKey: "spotify:next", generation: 2, name: "New song", artists: ["New artist", "Guest"], album: "", albumArt: null,
+    durationMs: 100000, progressMs: 0, isPlaying: true, hasTrack: true,
+    canSkipNext: true, canSkipPrevious: true, canSeek: true, deviceName: null,
+  } });
+  expect(el("track-name").textContent).toBe("New song");
+  expect(el("track-artist").textContent).toBe("New artist, Guest");
+  bridge.listeners.get("playback")!({ payload: {
+    trackId: "", trackKey: "", generation: 3, name: "", artists: [], album: "", albumArt: null,
+    durationMs: 0, progressMs: 0, isPlaying: false, hasTrack: false,
+    canSkipNext: false, canSkipPrevious: false, canSeek: false, deviceName: null,
+  } });
+  expect(el("track-name").textContent).toBe("No track playing");
+  expect(el("track-artist").textContent).toBe("");
+  expect(el("spine-artist").textContent).toBe("");
+  el("mode-toggle").click();
+  await flush();
+  playback("Full song", 4);
+  expect(el("track-name").textContent).toBe("Full song");
+  expect(el("track-artist").textContent).toBe("Artist");
 });
 
 it("gives the roomy size back when compact is switched off", async () => {
@@ -674,10 +831,13 @@ it("gives the roomy size back when compact is switched off", async () => {
   await flush();
   const shrunk = lastSize(appWindow.setSize);
   expect(shrunk.height).toBeLessThan(760);
+  // No shadow on clear glass: its border would frame an empty window.
+  expect(appWindow.setShadow).toHaveBeenLastCalledWith(false);
 
   el("mode-toggle").click();
   await flush();
   expect(lastSize(appWindow.setSize)).toEqual({ width: 940, height: 760 });
+  expect(appWindow.setShadow).toHaveBeenLastCalledWith(true);
 });
 
 // ---------------------------------------------------------------- cube deck
@@ -734,17 +894,29 @@ it("turns the volume dial into input and one change, like dragging the slider", 
   expect(bridge.invoke).toHaveBeenCalledWith("set_volume", { volumePercent: 73 });
 });
 
-it("mirrors the skip buttons into the bar for compact mode", async () => {
+it("puts the transport on compact's lid, with how far through the song is beside it", async () => {
   await import("./main");
   await flush();
-  expect(el<HTMLButtonElement>("bar-next").disabled).toBe(true);
-  playback("song-a", 1, 0, true);
-  expect(el<HTMLButtonElement>("bar-next").disabled).toBe(false);
-  el("bar-next").click();
-  el("bar-prev").click();
+  const lid = (proxy: string) => document.querySelector<HTMLButtonElement>(`.lid .tool[data-proxy="${proxy}"]`)!;
+  runFrame();
+  expect(lid("next").disabled).toBe(true);
+  playback("song-a", 1, 50000, false);
+  runFrame();
+  expect(lid("next").disabled).toBe(false);
+  expect(el("lid-fill").style.width).toBe("50%");
+  expect(el("lid-time").textContent).toBe("00:50");
+  expect(el("lid-total").textContent).toBe("01:40");
+  lid("next").click();
+  lid("previous").click();
+  lid("play-pause").click();
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("next_track", undefined);
   expect(bridge.invoke).toHaveBeenCalledWith("previous_track", undefined);
+  expect(bridge.invoke).toHaveBeenCalledWith("play", undefined);
+
+  lid("pin").click();
+  await flush();
+  expect(document.body.classList.contains("is-pinned")).toBe(true);
 });
 
 it("lets the tool faces stand in for the controls they name", async () => {
@@ -772,9 +944,39 @@ async function openPalette() {
   await flush();
   await flush();
   const call = [...bridge.emitTo.mock.calls].reverse().find(([, event]) => event === "palette:show");
-  return call?.[2] as { commands: { id: number; label: string; enabled: boolean; state: unknown }[]; lines: unknown[]; trackKey: string; accent: string };
+  return call?.[2] as { commands: { id: number; label: string; enabled: boolean; state: unknown; shortcut?: { action: string; accelerator: string; global: boolean } }[]; lines: unknown[]; trackKey: string; accent: string };
 }
 const runInPalette = (payload: unknown) => bridge.listeners.get("palette:run")!({ payload });
+
+it("dispatches custom local and global bindings once with availability and typing guards", async () => {
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, shortcuts: [
+      { action: "next", accelerator: "Ctrl+KeyN", global: false },
+      { action: "previous", accelerator: "Ctrl+KeyB", global: true },
+    ] } };
+  });
+  await import("./main");
+  await flush();
+  key(window, { key: "n", code: "KeyN", ctrlKey: true });
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "next_track")).toBe(false);
+  playback();
+  bridge.invoke.mockClear();
+  key(window, { key: "n", code: "KeyN", ctrlKey: true });
+  key(window, { key: "n", code: "KeyN", ctrlKey: true, repeat: true });
+  key(window, { key: "n", code: "KeyN", ctrlKey: true, isComposing: true });
+  const input = document.createElement("input");
+  document.body.append(input);
+  key(input, { key: "n", code: "KeyN", ctrlKey: true });
+  key(window, { key: "b", code: "KeyB", ctrlKey: true });
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "next_track")).toHaveLength(1);
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "previous_track")).toBe(false);
+  bridge.listeners.get("shortcut")!({ payload: "previous" });
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "previous_track")).toHaveLength(1);
+  key(window, { key: "k", ctrlKey: true });
+  await flush();
+  expect(children.has("palette")).toBe(false);
+  expect(el("cmdk-open").querySelector("kbd")?.hidden).toBe(true);
+});
 
 it("opens the palette as a window of its own with Ctrl+K and sends it what the window looks like now", async () => {
   await import("./main");
@@ -786,6 +988,7 @@ it("opens the palette as a window of its own with Ctrl+K and sends it what the w
   // No track yet: listed, but not runnable.
   expect(snapshot.commands.find((command) => command.label === "Next track")?.enabled).toBe(false);
   expect(snapshot.commands.find((command) => command.label === "Compact mode")?.state).toEqual({ text: "OFF", on: false });
+  expect(snapshot.commands.find((command) => command.label === "Click-through")?.shortcut).toEqual({ action: "clickThrough", accelerator: "Ctrl+Alt+KeyP", global: true });
   // Retry only appears when the connection needs it.
   expect(snapshot.commands.some((command) => command.label === "Retry connection")).toBe(false);
 
@@ -794,6 +997,28 @@ it("opens the palette as a window of its own with Ctrl+K and sends it what the w
   el("cmdk-open").click();
   await flush();
   expect(bridge.emitTo.mock.calls.filter(([, event]) => event === "palette:show")).toHaveLength(3);
+});
+
+it("refreshes palette binding hints from the saved settings after editing and clearing", async () => {
+  let accelerator = "Ctrl+KeyN";
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, shortcuts: [
+      { action: "commands", accelerator: "Ctrl+KeyK", global: false },
+      { action: "next", accelerator, global: false },
+    ] } };
+  });
+  await import("./main");
+  await flush();
+  const next = async () => (await openPalette()).commands.find((command) => command.label === "Next track")!;
+  expect((await next()).shortcut?.accelerator).toBe("Ctrl+KeyN");
+  for (const key of ["F8", ""]) {
+    el("settings-open").click();
+    await flush();
+    accelerator = key;
+    children.get("settings")!.events.get("tauri://destroyed")!({ payload: null });
+    await flush();
+    expect((await next()).shortcut?.accelerator ?? "").toBe(key);
+  }
 });
 
 it("runs what the palette picked, checking again that it still can", async () => {

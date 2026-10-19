@@ -9,16 +9,114 @@
 
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import { emitTo } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import {
   applyTheme, SETTINGS_PREVIEW,
   type ClickThrough, type Config, type PlayerKind, type Settings, type WindowStylePreview,
 } from "./config";
 import { closePanel, element, reveal, wireClosing } from "./panel";
+import { DEFAULT_SHORTCUTS, SHORTCUT_ACTIONS, shortcutConflict, shortcutFromEvent, shortcutLabel, type ShortcutAction } from "./shortcuts";
 
 const settingsError = element("settings-error");
 let config: Config | undefined;
 let draft: Settings | undefined;
+let recording: ShortcutAction | undefined;
+
+function renderShortcuts() {
+  if (!draft) return;
+  const list = element("shortcut-list");
+  list.replaceChildren();
+  for (const [action, name, hint] of SHORTCUT_ACTIONS) {
+    const binding = draft.shortcuts.find((item) => item.action === action)!;
+    const row = document.createElement("div");
+    row.className = "shortcut-row";
+    const label = document.createElement("span");
+    label.textContent = name;
+    const detail = document.createElement("small");
+    detail.textContent = hint;
+    label.append(detail);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost-button";
+    button.id = `shortcut-${action}`;
+    button.textContent = recording === action ? "Press keys…" : shortcutLabel(binding.accelerator) || "Not bound";
+    button.setAttribute("aria-label", `Bind ${name}: ${button.textContent}`);
+    button.setAttribute("aria-pressed", String(recording === action));
+    button.addEventListener("click", () => {
+      recording = recording === action ? undefined : action;
+      element("shortcut-status").textContent = recording ? `Recording ${name}. Press Esc to cancel.` : "";
+      renderShortcuts();
+      element(button.id).focus();
+    });
+    const scope = document.createElement("label");
+    const global = document.createElement("input");
+    global.type = "checkbox";
+    global.checked = binding.global;
+    global.setAttribute("aria-label", `Global ${name}`);
+    global.addEventListener("change", () => { binding.global = global.checked; });
+    scope.append(global, "Global");
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "ghost-button";
+    clear.textContent = "Clear";
+    clear.setAttribute("aria-label", `Clear ${name}`);
+    clear.addEventListener("click", () => {
+      binding.accelerator = "";
+      recording = undefined;
+      renderShortcuts();
+      element(button.id).focus();
+      element("shortcut-status").textContent = `${name} cleared. Save to apply.`;
+    });
+    row.append(label, button, scope, clear);
+    list.append(row);
+  }
+}
+
+function recordShortcut(accelerator: string) {
+  if (!recording || !draft) return;
+  const action = recording;
+  const conflict = shortcutConflict(draft.shortcuts.map((item) => item.action === action ? { ...item, accelerator } : item));
+  if (conflict) { element("shortcut-status").textContent = conflict; return; }
+  draft.shortcuts.find((item) => item.action === action)!.accelerator = accelerator;
+  recording = undefined;
+  element("shortcut-status").textContent = `${shortcutLabel(accelerator)} recorded. Save to apply.`;
+  renderShortcuts();
+  element(`shortcut-${action}`).focus();
+}
+
+// Windows may deliver an already-registered chord to the native handler only.
+const captureReady = listen<string>("shortcut:capture", ({ payload }) => recordShortcut(payload));
+
+// Capture before the panel's Escape handler so cancelling a recording stays here.
+window.addEventListener("keydown", (event) => {
+  if (!recording || !draft) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (event.isComposing) return;
+  const action = recording;
+  if (event.key === "Escape") {
+    recording = undefined;
+    element("shortcut-status").textContent = "Recording cancelled.";
+  } else {
+    const accelerator = shortcutFromEvent(event);
+    if (!accelerator) {
+      element("shortcut-status").textContent = "Use Ctrl, Alt or Win with a key, or F1–F24. Esc cancels.";
+      return;
+    }
+    recordShortcut(accelerator);
+    return;
+  }
+  renderShortcuts();
+  element(`shortcut-${action}`).focus();
+}, true);
+
+element("shortcuts-reset").addEventListener("click", () => {
+  if (!draft) return;
+  draft.shortcuts = SHORTCUT_ACTIONS.map(([action]) => ({ action, accelerator: "", global: false, ...DEFAULT_SHORTCUTS.find((item) => item.action === action) }));
+  recording = undefined;
+  renderShortcuts();
+  element("shortcut-status").textContent = "Defaults restored. Save to apply.";
+});
 
 /** The four per-mode dials, each with its own readout. */
 const DIALS = [
@@ -103,6 +201,8 @@ element<HTMLSelectElement>("settings-player").addEventListener("change", (event)
 function fill(value: Config) {
   config = value;
   draft = structuredClone(value.settings);
+  draft.shortcuts = SHORTCUT_ACTIONS.map(([action]) => ({ action, accelerator: "", global: false, ...(value.settings.shortcuts ?? DEFAULT_SHORTCUTS).find((item) => item.action === action) }));
+  renderShortcuts();
   applyTheme(draft.theme);
   element<HTMLSelectElement>("settings-player").value = draft.player;
   showPlayerSettings(draft.player);
@@ -130,6 +230,9 @@ element("settings-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!draft) return;
   const button = element<HTMLButtonElement>("settings-save");
+  if (recording) { settingsError.textContent = "Finish or cancel shortcut recording before saving."; return; }
+  const conflict = shortcutConflict(draft.shortcuts);
+  if (conflict) { settingsError.textContent = conflict; return; }
   button.disabled = true;
   settingsError.textContent = "";
   draft.player = element<HTMLSelectElement>("settings-player").value as PlayerKind;
@@ -151,6 +254,7 @@ element("settings-form").addEventListener("submit", async (event) => {
 
 async function start() {
   try {
+    await captureReady;
     fill(await invoke<Config>("get_config"));
   } catch (error) { settingsError.textContent = String(error); }
   getVersion().then(

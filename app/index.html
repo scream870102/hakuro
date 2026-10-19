@@ -28,7 +28,7 @@
       <span class="status" id="status-text">Connecting…</span>
       <button class="cmdk" id="cmdk-open" type="button" title="Command palette (Ctrl+K)"
               aria-label="Command palette" aria-haspopup="dialog">
-        <b>›_</b><span>COMMANDS</span><kbd>CTRL</kbd><kbd>K</kbd>
+        <b>›_</b><span>COMMANDS</span><kbd>Ctrl+K</kbd>
       </button>
       <div class="chrome__spacer"></div>
       <div class="window-controls">
@@ -91,17 +91,66 @@
                 <div class="disc" id="disc"><div class="disc__label"><img id="disc-art" alt="" draggable="false" /></div></div>
                 <div class="vinyl__sheen"></div><div class="vinyl__pin"></div>
               </div>
+              <!-- Compact only: the lid takes the record's place. The transport and
+                   the window's switches sit over the cover; once the cube stretches,
+                   the song and how far through it is sit beside them. -->
+              <div class="lid">
+                <div class="lid__row">
+                  <button class="tool tool--icon" type="button" data-proxy="compact-lyrics"
+                          title="Show lyrics" aria-label="Show lyrics" aria-pressed="false">
+                    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 3h9M1.5 6h6M1.5 9h7.5"/></svg>
+                  </button>
+                  <button class="tool tool--icon" type="button" data-proxy="pin"
+                          title="Keep on top" aria-label="Keep window on top" aria-pressed="false">
+                    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.6 1.4h4.8M5 1.4v2.8L3.4 6h5.2L7 4.2V1.4M6 6v3.2"/></svg>
+                  </button>
+                  <button class="tool tool--icon tool--full" type="button" data-proxy="mode-toggle" data-plain
+                          title="Full mode" aria-label="Full mode">
+                    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1.5h3.5V5M5 10.5H1.5V7M10.5 1.5 7 5M1.5 10.5 5 7"/></svg>
+                  </button>
+                </div>
+                <div class="lid__row">
+                  <button class="tool tool--icon tool--glow" type="button" data-proxy="previous"
+                          title="Previous track" aria-label="Previous track">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg>
+                  </button>
+                  <button class="tool tool--icon tool--glow tool--play" type="button" data-proxy="play-pause"
+                          title="Play or pause" aria-label="Play or pause">
+                    <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.8v14.4a.8.8 0 0 0 1.22.68l11.3-7.2a.8.8 0 0 0 0-1.36L8.22 4.12A.8.8 0 0 0 7 4.8Z"/></svg>
+                    <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5h4v15H6zM14 4.5h4v15h-4z"/></svg>
+                  </button>
+                  <button class="tool tool--icon tool--glow" type="button" data-proxy="next"
+                          title="Next track" aria-label="Next track">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="lid__meta">
+                <b class="lid__title" id="lid-title"></b>
+                <span class="lid__artist" id="lid-artist"></span>
+                <div class="lid__progress">
+                  <span id="lid-time">00:00</span>
+                  <i class="lid__track"><i class="lid__fill" id="lid-fill"></i></i>
+                  <span id="lid-total">00:00</span>
+                </div>
+              </div>
+              <!-- The tool is drawn; this checkbox is the real control, for main.ts. -->
+              <input id="compact-lyrics" type="checkbox" hidden aria-label="Show lyrics in compact mode" />
             </div>
             <div class="face face--front" data-face="front" id="cover-face">
-              <img class="cover cover--base" id="album-art" alt="" draggable="false" />
-              <img class="cover cover--peek" id="cover-peek" alt="" draggable="false" />
-              <div class="cover-empty"><span>H</span><small>NO COVER</small></div>
-              <div class="cover-shade"></div>
-              <i class="lens"></i>
-              <!-- The face takes the pointer (a tap toggles, a drag turns the cube);
-                   this button is the same control for the keyboard. -->
-              <button class="cover-hit" id="play-pause" type="button" disabled
-                      title="Play or pause" aria-label="Play or pause"></button>
+              <div class="cover-box" id="cover-box">
+                <img class="cover cover--base" id="album-art" alt="" draggable="false" />
+                <img class="cover cover--peek" id="cover-peek" alt="" draggable="false" />
+                <div class="cover-empty"><span>H</span><small>NO COVER</small></div>
+                <div class="cover-shade"></div>
+                <i class="lens"></i>
+                <!-- The cover takes the pointer (a tap toggles, a drag turns the cube);
+                     this button is the same control for the keyboard. -->
+                <button class="cover-hit" id="play-pause" type="button" disabled
+                        title="Play or pause" aria-label="Play or pause"></button>
+              </div>
+              <!-- Compact only: the cube stretches sideways and the lyrics move in here. -->
+              <div class="face__lyrics" id="cube-lyrics"></div>
             </div>
             <div class="face face--right" data-face="right">
               <span class="face__label">02 VOLUME</span>
@@ -123,6 +172,12 @@
                 <input class="dial__input" id="volume" type="range" min="0" max="100" step="1" value="0" disabled
                        aria-label="Volume" aria-describedby="volume-value" />
               </div>
+              <!-- Compact only: the song set down the side like a case's spine. The
+                   dial moves round to the left face there. -->
+              <div class="spine">
+                <b class="spine__title" id="spine-title"></b>
+                <span class="spine__artist" id="spine-artist"></span>
+              </div>
             </div>
             <div class="face face--back" data-face="back">
               <span class="face__label">03 LYRICS</span>
@@ -130,6 +185,8 @@
                 <button class="tool" type="button" data-proxy="source-badge">SOURCE <b>▾</b></button>
                 <button class="tool" type="button" data-proxy="lyrics-search-open">FIND <b>⌕</b></button>
                 <button class="tool" type="button" data-proxy="reload">RELOAD <b>↻</b></button>
+                <!-- Compact has no header, so its settings button lives here. -->
+                <button class="tool tool--compact" type="button" data-proxy="settings-open">SETTINGS <b>›</b></button>
               </div>
               <!-- The tool is drawn; this button is the real control, for main.ts. -->
               <button id="reload" type="button" disabled hidden>Reload lyrics</button>
@@ -177,13 +234,6 @@
         <div class="scrubber__knob" id="scrubber-knob"></div>
       </div>
       <span class="time" id="time-total">00:00</span>
-      <!-- Compact only: the cube is too small there to hit the skip buttons on its side. -->
-      <button class="bar__skip" id="bar-prev" type="button" disabled title="Previous track" aria-label="Previous track">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg>
-      </button>
-      <button class="bar__skip" id="bar-next" type="button" disabled title="Next track" aria-label="Next track">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg>
-      </button>
       <button class="bar__play" id="bar-play" type="button" disabled title="Play" aria-label="Play">
         <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.8v14.4a.8.8 0 0 0 1.22.68l11.3-7.2a.8.8 0 0 0 0-1.36L8.22 4.12A.8.8 0 0 0 7 4.8Z"/></svg>
         <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5h4v15H6zM14 4.5h4v15h-4z"/></svg>

@@ -104,6 +104,7 @@ pub fn validate_candidate(candidate: &LyricCandidate) -> Result<(), ProviderErro
         && match candidate.source.as_str() {
             "lrclib" | "netease" => candidate.id.bytes().all(|c| c.is_ascii_digit()),
             "qqmusic" => candidate.id.bytes().all(|c| c.is_ascii_alphanumeric()),
+            "youtube_music" => crate::youtube_music::valid_video_id(&candidate.id),
             _ => false,
         };
     if !valid_id
@@ -314,6 +315,7 @@ pub async fn search_candidates(
         return Err(ProviderError::BadPayload);
     }
     let data = match source {
+        "youtube_music" => return crate::youtube_music::search(client, query).await,
         "lrclib" => {
             request_json(
                 client,
@@ -511,6 +513,7 @@ pub async fn fetch_candidate(
 ) -> ProviderResult {
     validate_candidate(candidate)?;
     let result = match candidate.source.as_str() {
+        "youtube_music" => crate::youtube_music::lyrics(client, candidate).await?,
         "lrclib" => {
             let data = request_json(
                 client,
@@ -600,6 +603,9 @@ fn automatic_candidates(
     mut candidates: Vec<LyricCandidate>,
 ) -> Vec<LyricCandidate> {
     candidates.retain(|candidate| {
+        if candidate.source == "youtube_music" {
+            return crate::youtube_music::matches_track(query, candidate);
+        }
         matches(
             &query.track,
             &query.artists,
@@ -665,13 +671,66 @@ async fn automatic_search(
         search_candidates(client, &query.search_phrase(), source),
     )
     .await
-    .map_err(|_| ProviderError::Timeout)??;
-    fetch_first_available(
-        automatic_candidates(query, candidates),
+    .map_err(|_| ProviderError::Timeout)?;
+    let first = match candidates {
+        Ok(candidates) => {
+            fetch_first_available(
+                automatic_candidates(query, candidates),
+                deadline,
+                |candidate| async move { fetch_candidate(client, &candidate).await },
+            )
+            .await
+        }
+        Err(error) => Err(error),
+    };
+    if source != "youtube_music" || first.as_ref().is_ok_and(|result| !result.is_empty()) {
+        return first;
+    }
+    // SMTC may expose an MV's translated metadata rather than the album song's
+    // localized title/artist. Search videos only after Songs gave no usable lyrics,
+    // sharing the original deadline and the same recording identity safeguards.
+    let videos = tokio::time::timeout_at(
         deadline,
-        |candidate| async move { fetch_candidate(client, &candidate).await },
+        crate::youtube_music::search_videos(client, &query.search_phrase()),
     )
     .await
+    .map_err(|_| ProviderError::Timeout)??;
+    let mut fallback = first;
+    for video in automatic_candidates(query, videos) {
+        match tokio::time::timeout_at(deadline, fetch_candidate(client, &video)).await {
+            Ok(Ok(result)) if !result.cues.is_empty() => return Ok(result),
+            Ok(Ok(result)) if !result.is_empty() => {
+                // Keep the MV's plain lyrics before looking up its localized song.
+                // An exhausted enrichment deadline must not erase downloaded text.
+                if !fallback.as_ref().is_ok_and(|saved| !saved.is_empty()) {
+                    fallback = Ok(result);
+                }
+                if let Ok(Ok(synced)) = tokio::time::timeout_at(
+                    deadline,
+                    crate::youtube_music::localized_song_lyrics(client, query, &video),
+                )
+                .await
+                {
+                    if !synced.cues.is_empty() {
+                        return Ok(synced);
+                    }
+                }
+            }
+            Ok(Ok(_)) => {}
+            outcome => {
+                if !fallback.as_ref().is_ok_and(|saved| !saved.is_empty()) {
+                    fallback = Err(match outcome {
+                        Ok(Err(error)) => error,
+                        _ => ProviderError::Timeout,
+                    });
+                }
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+    }
+    fallback
 }
 
 // ---------------------------------------------------------------- LRCLIB
@@ -749,6 +808,7 @@ pub async fn fetch_one(
         "musixmatch" => crate::musixmatch::fetch(client, musixmatch_session, query).await,
         "netease" => netease(client, query).await,
         "qqmusic" => qqmusic(client, query).await,
+        "youtube_music" => automatic_search(client, query, "youtube_music").await,
         _ => Ok(LyricsResult::empty("")),
     }
 }
@@ -846,7 +906,11 @@ impl Chain {
         }
         match outcome {
             Ok(mut result) => {
-                if result.cues.iter().any(|cue| !cue.words.is_empty()) {
+                // Native timing wins, but plain lyrics must not prevent another
+                // enabled provider from supplying a synchronized recording.
+                if (result.source == "YouTube Music" && !result.cues.is_empty())
+                    || result.cues.iter().any(|cue| !cue.words.is_empty())
+                {
                     result.errors = std::mem::take(&mut self.errors);
                     return Some(result);
                 }
@@ -1236,6 +1300,12 @@ mod tests {
         valid.source = "qqmusic".into();
         valid.id = "003abcXYZ".into();
         assert!(validate_candidate(&valid).is_ok());
+        valid.source = "youtube_music".into();
+        valid.id = "Abc_def-123".into();
+        assert!(validate_candidate(&valid).is_ok());
+        valid.id = "Abc/def1234".into();
+        assert!(validate_candidate(&valid).is_err());
+        valid.id = "Abc_def-123".into();
         valid.title = "x".repeat(1025);
         assert!(validate_candidate(&valid).is_err());
     }
@@ -1252,6 +1322,102 @@ mod tests {
         assert_eq!(selected.len(), MAX_AUTOMATIC_FETCHES);
         assert_eq!(selected[0].id, "4");
         assert!(!selected.iter().any(|item| item.id == "2" || item.id == "3"));
+    }
+
+    #[test]
+    fn native_lyrics_win_and_missing_native_keeps_fallback_chain() {
+        let result = Chain::default()
+            .consider(
+                "YouTube Music",
+                Ok(LyricsResult::from_raw(
+                    "[00:01]Native line",
+                    "YouTube Music",
+                )),
+            )
+            .unwrap();
+        assert_eq!(result.source, "YouTube Music");
+        assert!(!result.cues.is_empty());
+        for native in [
+            Ok(LyricsResult::empty("YouTube Music")),
+            Ok(LyricsResult::from_raw(
+                "Native plain lyrics",
+                "YouTube Music",
+            )),
+            Err(ProviderError::Http),
+        ] {
+            let mut chain = Chain::default();
+            assert!(chain.consider("YouTube Music", native).is_none());
+            assert!(chain
+                .consider(
+                    "LRCLIB",
+                    Ok(LyricsResult::from_raw("[00:01]Fallback", "LRCLIB"))
+                )
+                .is_none());
+            assert_eq!(chain.finish().source, "LRCLIB");
+        }
+        let mut plain = Chain::default();
+        assert!(plain
+            .consider(
+                "YouTube Music",
+                Ok(LyricsResult::from_raw(
+                    "Native plain lyrics",
+                    "YouTube Music"
+                ))
+            )
+            .is_none());
+        assert!(plain.consider("LRCLIB", Err(ProviderError::Http)).is_none());
+        assert_eq!(plain.finish().text, "Native plain lyrics");
+    }
+
+    #[tokio::test]
+    #[ignore = "public YouTube Music regression for the user's SMTC music-video metadata"]
+    async fn live_youtube_smtc_music_video_lyrics() {
+        let query = TrackQuery {
+            track: "Just a Sunny Day for You".into(),
+            artists: vec!["YORUSHIKA".into()],
+            album: String::new(),
+            duration_ms: 199_000,
+            spotify_id: None,
+        };
+        let result = fetch_lyrics(
+            &client().unwrap(),
+            &crate::musixmatch::Session::new(),
+            &query,
+            &crate::settings::Settings::default().lyric_order(crate::player::PlayerKind::Ytmusic),
+        )
+        .await;
+        eprintln!(
+            "source={}, title={}, lines={}, cues={}, errors={:?}",
+            result.source,
+            result.matched_title,
+            result.text.lines().count(),
+            result.cues.len(),
+            result.errors
+        );
+        assert!(
+            !result.is_empty(),
+            "the screenshot recording has native lyrics"
+        );
+        assert_eq!(result.source, "YouTube Music");
+        assert!(
+            !result.cues.is_empty(),
+            "prefer the verified song's native time-stamped lyrics over MV plain text"
+        );
+    }
+
+    #[test]
+    fn youtube_candidates_require_recording_identity_for_automatic_lookup() {
+        let mut exact = candidate("Abc_def-123");
+        exact.source = "youtube_music".into();
+        let mut unknown_duration = exact.clone();
+        unknown_duration.duration_ms = 0;
+        let mut live = exact.clone();
+        live.title.push_str(" (Live)");
+        let mut cover = exact.clone();
+        cover.artists = vec!["Cover artist".into()];
+        let selected =
+            automatic_candidates(&query(), vec![unknown_duration, live, cover, exact.clone()]);
+        assert_eq!(selected, vec![exact]);
     }
 
     #[test]

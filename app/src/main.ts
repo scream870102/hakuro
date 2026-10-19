@@ -12,12 +12,13 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { activeLine, emptySample, formatTime, positionAt, type Sample } from "./clock";
 import { applyTheme, SEARCH_TRANSLATIONS, SETTINGS_PREVIEW, type ClickThrough, type Config, type Settings, type WindowStylePreview } from "./config";
-import { createDeck, type CubeFace } from "./deck";
+import { createDeck, stretchedHeight, type CubeFace } from "./deck";
 import {
   describeCommands, PALETTE_CLOSED, PALETTE_READY, PALETTE_RUN, PALETTE_SHOW,
   type Command, type PaletteAction, type PaletteSnapshot,
 } from "./palette";
 import { CHILD_WINDOW, created, openPanel, placeOverMain } from "./windows";
+import { DEFAULT_SHORTCUTS, shortcutFromEvent, shortcutLabel } from "./shortcuts";
 
 interface Cue {
   time_ms: number;
@@ -90,8 +91,6 @@ const ui = {
   previous: element<HTMLButtonElement>("previous"),
   playPause: element<HTMLButtonElement>("play-pause"),
   next: element<HTMLButtonElement>("next"),
-  barPrevious: element<HTMLButtonElement>("bar-prev"),
-  barNext: element<HTMLButtonElement>("bar-next"),
   barPlay: element<HTMLButtonElement>("bar-play"),
   lineNow: element("line-now"),
   lineTotal: element("line-total"),
@@ -104,7 +103,18 @@ const ui = {
   volume: element<HTMLInputElement>("volume"),
   volumeValue: element<HTMLOutputElement>("volume-value"),
   volumeControl: element("volume-control"),
+  compactLyrics: element<HTMLInputElement>("compact-lyrics"),
+  cubeLyrics: element("cube-lyrics"),
+  lidTitle: element("lid-title"),
+  lidArtist: element("lid-artist"),
+  lidFill: element("lid-fill"),
+  lidTime: element("lid-time"),
+  lidTotal: element("lid-total"),
+  spineTitle: element("spine-title"),
+  spineArtist: element("spine-artist"),
 };
+/** Where the lyrics live in the full window; compact moves them onto the cube's front. */
+const lyricsHome = { parent: ui.lyrics.parentElement!, before: ui.lyrics.nextElementSibling };
 
 const state = {
   trackId: "",
@@ -131,7 +141,7 @@ const state = {
   statusNotice: "",
 };
 
-const deck = createDeck({ seekBy });
+const deck = createDeck({ seekBy, dragWindow: () => void appWindow.startDragging() });
 const lineNumber = (index: number) => String(index + 1).padStart(2, "0");
 
 // ---------------------------------------------------------------- rendering
@@ -160,7 +170,13 @@ function dismissNotice() {
 function renderTrackName() {
   const alternate = state.matchedTitle && state.matchedTitle !== state.trackName;
   ui.trackName.textContent = state.trackName + (alternate ? ` (${state.matchedTitle})` : "");
+  // Compact sets the same name down the cube's spine and on its lid.
+  ui.spineTitle.textContent = ui.lidTitle.textContent = ui.trackName.textContent;
   deck.setTitle(state.trackName === "No track playing" ? "" : state.trackName);
+}
+
+function renderArtist(text: string) {
+  ui.trackArtist.textContent = ui.spineArtist.textContent = ui.lidArtist.textContent = text;
 }
 
 function clearLyrics(placeholder: string) {
@@ -297,10 +313,10 @@ function frame() {
   const position = positionAt(state.sample, now);
   const duration = state.sample.durationMs;
 
-  ui.timeCurrent.textContent = formatTime(position);
-  ui.timeTotal.textContent = formatTime(duration);
+  ui.timeCurrent.textContent = ui.lidTime.textContent = formatTime(position);
+  ui.timeTotal.textContent = ui.lidTotal.textContent = formatTime(duration);
   const fraction = duration > 0 ? Math.min(1, position / duration) : 0;
-  ui.scrubberFill.style.width = `${fraction * 100}%`;
+  ui.scrubberFill.style.width = ui.lidFill.style.width = `${fraction * 100}%`;
   ui.scrubberKnob.style.left = `${fraction * 100}%`;
   ui.scrubber.setAttribute("aria-valuenow", String(Math.round(position)));
   ui.scrubber.setAttribute("aria-valuemax", String(Math.round(duration)));
@@ -486,9 +502,10 @@ async function patchSettings(patch: Partial<Settings>, control?: { disabled: boo
   }
 }
 
-/** Reflect the pin in the button and in the window itself. */
+/** Reflect the pin in the button, the cube's edges and the window itself. */
 function setPinned(pinned: boolean) {
   ui.pin.setAttribute("aria-pressed", String(pinned));
+  document.body.classList.toggle("is-pinned", pinned);
   ui.pin.title = pinned ? "Stop keeping on top" : "Keep on top";
   void appWindow.setAlwaysOnTop(pinned);
   applyClickThrough();
@@ -510,17 +527,25 @@ void appWindow.onFocusChanged(({ payload: focused }) => {
   applyClickThrough();
 });
 
-// Compact keeps the header, the cube beside three lines, and the bar. These
-// numbers mirror `body.is-compact` in the stylesheet, so the window can never be
-// dragged smaller than the three lines the mode promises.
-const COMPACT_MIN_WIDTH = 340;
-// Chrome (32px) and bar (34px) rows, their two hairlines, and a little slack.
-const COMPACT_CHROME = 72;
+// Compact is the cube alone on clear glass. Its edge fits three lines of lyrics
+// for when it stretches, and the window leaves the cube room to turn: as tall as
+// the stretched cube stands end-on, stretched or not, so the lyrics only ever
+// widen it. The stylesheet reads the edge and the stretch from --compact-s and --lw.
+const COMPACT_MIN_EDGE = 150;
 const FULL_MIN_WIDTH = 520;
 const FULL_MIN_HEIGHT = 460;
 
-const compactMinHeight = (lyricSize: number) =>
-  Math.ceil(3 * (document.body.classList.contains("has-translations") ? lyricSize * 2.23 + 22 : lyricSize * 1.32 + 18)) + COMPACT_CHROME;
+/** The cube's edge, how far the lyrics stretch it, and the window around both. */
+function compactGeometry(lyricSize: number, stretched: boolean) {
+  const translated = document.body.classList.contains("has-translations");
+  const lines = 3 * (translated ? lyricSize * 2.23 + 22 : lyricSize * 1.32 + 18);
+  const edge = Math.max(COMPACT_MIN_EDGE, Math.ceil(lines + 16));
+  const stretch = Math.round(edge * 1.9);
+  // The plain cube stands well under this at its own rest. Plus the pin's glow
+  // round the edges, top and bottom.
+  const height = Math.ceil(stretchedHeight(edge, edge + stretch)) + 24;
+  return { edge, stretch, size: new LogicalSize(2 * edge + (stretched ? stretch : 0), height) };
+}
 
 function updateTranslationLayout() {
   const visible = state.showTranslations;
@@ -531,36 +556,55 @@ function updateTranslationLayout() {
 
 /** The full-mode size to come back to, remembered at the moment of switching. */
 let roomySize: LogicalSize | undefined;
+/** Whether full mode filled the screen, so coming back fills it again. */
+let roomyMaximized = false;
 let appliedCompact: boolean | undefined;
 
 async function applyWindowBounds(settings: Settings) {
-  const { compact, compactLyricSize } = settings;
-  const minHeight = compactMinHeight(compactLyricSize);
-  await appWindow.setMinSize(
-    compact
-      ? new LogicalSize(COMPACT_MIN_WIDTH, minHeight)
-      : new LogicalSize(FULL_MIN_WIDTH, FULL_MIN_HEIGHT),
-  );
-
+  const { compact } = settings;
   const first = appliedCompact === undefined;
   const switched = !first && appliedCompact !== compact;
   appliedCompact = compact;
-  // Full mode opens at the size the configuration asks for. Compact has to
-  // shrink even on the first run: nothing remembers the window size between
-  // launches, so otherwise a stored compact mode would reopen at full size.
-  if (!switched && !(first && compact)) return;
 
   if (compact) {
-    roomySize = (await appWindow.innerSize()).toLogical(await appWindow.scaleFactor());
-    await appWindow.setSize(new LogicalSize(Math.max(COMPACT_MIN_WIDTH, 460), minHeight));
-  } else if (roomySize) {
-    await appWindow.setSize(roomySize);
+    const { edge, stretch, size } = compactGeometry(settings.compactLyricSize, settings.compactLyrics);
+    const root = document.documentElement.style;
+    root.setProperty("--compact-s", `${edge}px`);
+    root.setProperty("--lw", `${stretch}px`);
+    // Nothing remembers the window size between launches, so a stored compact
+    // mode has to size the window itself, and full mode needs a size to return to.
+    if (first || switched) {
+      // A maximized window keeps its size whatever is asked of it, which would
+      // leave the cube on a screenful of glass; let go of the screen first.
+      roomyMaximized = await appWindow.isMaximized();
+      if (roomyMaximized) await appWindow.unmaximize();
+      roomySize = (await appWindow.innerSize()).toLogical(await appWindow.scaleFactor());
+    }
+    // An undecorated window's shadow comes with a border, which on clear glass
+    // draws a frame round nothing.
+    await appWindow.setShadow(false);
+    // The cube decides the size; a window dragged bigger would only be more glass.
+    await appWindow.setResizable(false);
+    await appWindow.setMinSize(size);
+    await appWindow.setSize(size);
+    return;
   }
+
+  await appWindow.setShadow(true);
+  await appWindow.setResizable(true);
+  await appWindow.setMinSize(new LogicalSize(FULL_MIN_WIDTH, FULL_MIN_HEIGHT));
+  if (switched && roomySize) await appWindow.setSize(roomySize);
+  if (switched && roomyMaximized) await appWindow.maximize();
 }
 
 ui.mode.addEventListener("click", () => {
   if (!config) return;
   void patchSettings({ compact: !config.settings.compact }, ui.mode);
+});
+
+ui.compactLyrics.addEventListener("change", () => {
+  if (!config) return;
+  void patchSettings({ compactLyrics: ui.compactLyrics.checked }, ui.compactLyrics);
 });
 
 ui.pin.addEventListener("click", () => {
@@ -584,6 +628,13 @@ window.addEventListener("resize", () => {
   void syncMaximized();
   recentre();
 });
+// Compact's cube eases to its new size after the window has resized, and its
+// face is the lyrics' viewport, so the sung line is centred again once it settles.
+document.body.addEventListener("transitionend", (event) => {
+  if (event.target === document.body && event.propertyName === "--s" && document.body.classList.contains("is-compact")) {
+    recentre();
+  }
+});
 
 // --------------------------------------------------------------- transport
 
@@ -593,9 +644,6 @@ ui.previous.addEventListener("click", () => void send("previous_track"));
 ui.reload.addEventListener("click", () => void send("reload_lyrics"));
 element("refresh-playback").addEventListener("click", () => void send("refresh_playback"));
 ui.reconnect.addEventListener("click", () => void send("connect"));
-// Compact's skip buttons are the cube's, moved to the bar.
-ui.barPrevious.addEventListener("click", () => ui.previous.click());
-ui.barNext.addEventListener("click", () => ui.next.click());
 ui.barPlay.addEventListener("click", () => ui.playPause.click());
 
 /** Seek relative to where the song is now: the record's spin and the palette. */
@@ -619,13 +667,25 @@ let config: Config | undefined;
 function applyConfig(value: Config) {
   const changedPlayer = config && config.settings.player !== value.settings.player;
   config = value;
+  const commandBinding = (value.settings.shortcuts ?? DEFAULT_SHORTCUTS).find((item) => item.action === "commands");
+  const commandHint = shortcutLabel(commandBinding?.accelerator ?? "");
+  const commandButton = element("cmdk-open");
+  const commandKeys = commandButton.querySelector("kbd");
+  if (commandKeys) { commandKeys.textContent = commandHint; commandKeys.hidden = !commandHint; }
+  commandButton.title = commandHint ? `Commands (${commandHint})` : "Commands";
   if (changedPlayer) resetVolume();
   applyTheme(value.settings.theme);
   ui.follow.checked = value.settings.followLyrics;
 
   const { compact } = value.settings;
+  const stretched = compact && value.settings.compactLyrics;
   const switched = document.body.classList.contains("is-compact") !== compact;
   document.body.classList.toggle("is-compact", compact);
+  document.body.classList.toggle("is-stretched", stretched);
+  ui.compactLyrics.checked = value.settings.compactLyrics;
+  deck.setLayout({ compact, stretched });
+  if (compact && ui.lyrics.parentElement !== ui.cubeLyrics) ui.cubeLyrics.append(ui.lyrics);
+  if (!compact && ui.lyrics.parentElement !== lyricsHome.parent) lyricsHome.parent.insertBefore(ui.lyrics, lyricsHome.before);
   ui.mode.setAttribute("aria-pressed", String(compact));
   ui.mode.title = compact ? "Full mode" : "Compact mode";
   setWindowStyle(
@@ -672,6 +732,8 @@ const previewReady = listen<WindowStylePreview>(SETTINGS_PREVIEW, ({ payload }) 
     compact ? payload.compactOpacity : payload.opacity,
     compact ? payload.compactLyricSize : payload.lyricSize,
   );
+  // Compact's type size is also its cube's size, so the window follows the dial.
+  if (compact && config) void applyWindowBounds({ ...config.settings, compactLyricSize: payload.compactLyricSize });
 });
 
 // Find lyrics and the source picker work on the song playing when they open.
@@ -784,8 +846,6 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
   ui.playPause.disabled = !payload.hasTrack;
   ui.next.disabled = !payload.hasTrack || !payload.canSkipNext;
   ui.previous.disabled = !payload.hasTrack || !payload.canSkipPrevious;
-  ui.barNext.disabled = ui.next.disabled;
-  ui.barPrevious.disabled = ui.previous.disabled;
   ui.barPlay.disabled = ui.playPause.disabled;
   // The icon swaps in CSS (body.is-playing); the name says what a press does.
   ui.barPlay.title = payload.isPlaying ? "Pause" : "Play";
@@ -800,7 +860,7 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
     state.trackName = "No track playing";
     state.matchedTitle = "";
     renderTrackName();
-    ui.trackArtist.textContent = "";
+    renderArtist("");
     showAlbumArt(null);
     if (changed) clearLyrics("Waiting for playback…");
     return;
@@ -808,7 +868,7 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
 
   state.trackName = payload.name;
   renderTrackName();
-  ui.trackArtist.textContent = payload.artists.join(", ");
+  renderArtist(payload.artists.join(", "));
   showAlbumArt(payload.albumArt);
   if (changed) clearLyrics("Looking for lyrics…");
 });
@@ -819,13 +879,13 @@ const lyricsReady = listen<LyricsEvent>("lyrics", ({ payload }) => {
   renderLyrics(payload);
 });
 
-// Ctrl+Alt+P is the way back from a window that ignores the mouse, so it flips
+// The recovery shortcut is the way back from a window that ignores the mouse, so it flips
 // between the two absolute modes rather than cycling through "auto".
-const clickThroughReady = listen("toggle-click-through", () => {
+function toggleClickThrough() {
   if (!config) return;
   const clickThrough: ClickThrough = config.settings.clickThrough === "always" ? "off" : "always";
   void patchSettings({ clickThrough });
-});
+}
 
 const statusReady = listen<StatusEvent>("status", ({ payload }) => {
   ui.statusText.textContent = payload.message;
@@ -847,29 +907,30 @@ const turn = (face: CubeFace, label: string, hint: string, words: string): Comma
 // never disagree with the window about what a command means.
 const COMMANDS: Command[] = [
   {
-    group: "PLAYBACK", icon: () => (state.isPlaying ? "❚❚" : "▶"),
+    id: "playPause", group: "PLAYBACK", icon: () => (state.isPlaying ? "❚❚" : "▶"),
     label: () => (state.isPlaying ? "Pause" : "Play"), hint: () => (state.isPlaying ? "暫停" : "播放"),
     words: "toggle play pause", enabled: usable(ui.playPause), run: () => ui.playPause.click(),
   },
-  { group: "PLAYBACK", icon: "»", label: "Next track", hint: "下一首", words: "skip", enabled: usable(ui.next), run: () => ui.next.click() },
-  { group: "PLAYBACK", icon: "«", label: "Previous track", hint: "上一首", words: "skip back", enabled: usable(ui.previous), run: () => ui.previous.click() },
-  { group: "PLAYBACK", icon: "→", label: "Forward 10 seconds", hint: "快轉 10 秒", words: "seek", enabled: () => state.canSeek, run: () => seekBy(10_000) },
-  { group: "PLAYBACK", icon: "←", label: "Back 10 seconds", hint: "倒轉 10 秒", words: "seek rewind", enabled: () => state.canSeek, run: () => seekBy(-10_000) },
-  { group: "PLAYBACK", icon: "+", label: "Volume up", hint: "音量 +5", words: "louder", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(5) },
-  { group: "PLAYBACK", icon: "−", label: "Volume down", hint: "音量 −5", words: "quieter", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(-5) },
+  { id: "next", group: "PLAYBACK", icon: "»", label: "Next track", hint: "下一首", words: "skip", enabled: usable(ui.next), run: () => ui.next.click() },
+  { id: "previous", group: "PLAYBACK", icon: "«", label: "Previous track", hint: "上一首", words: "skip back", enabled: usable(ui.previous), run: () => ui.previous.click() },
+  { id: "seekForward", group: "PLAYBACK", icon: "→", label: "Forward 10 seconds", hint: "快轉 10 秒", words: "seek", enabled: () => state.canSeek, run: () => seekBy(10_000) },
+  { id: "seekBackward", group: "PLAYBACK", icon: "←", label: "Back 10 seconds", hint: "倒轉 10 秒", words: "seek rewind", enabled: () => state.canSeek, run: () => seekBy(-10_000) },
+  { id: "volumeUp", group: "PLAYBACK", icon: "+", label: "Volume up", hint: "音量 +5", words: "louder", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(5) },
+  { id: "volumeDown", group: "PLAYBACK", icon: "−", label: "Volume down", hint: "音量 −5", words: "quieter", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(-5) },
   { group: "PLAYBACK", icon: "↺", label: "Refresh playback", hint: "重新整理播放狀態", words: "sync", run: () => element("refresh-playback").click() },
   { group: "PLAYBACK", icon: "!", label: "Retry connection", hint: "重新連線", words: "reconnect", visible: () => !ui.reconnect.hidden, run: () => ui.reconnect.click() },
-  { group: "LYRICS", icon: "↧", label: "Follow lyrics", hint: "自動跟隨歌詞", words: "scroll auto", state: () => onOff(ui.follow.checked), enabled: () => !ui.follow.disabled, run: () => ui.follow.click() },
+  { id: "followLyrics", group: "LYRICS", icon: "↧", label: "Follow lyrics", hint: "自動跟隨歌詞", words: "scroll auto", state: () => onOff(ui.follow.checked), enabled: () => !ui.follow.disabled, run: () => ui.follow.click() },
   {
-    group: "LYRICS", icon: "文", label: "Show translations", hint: "顯示翻譯", words: "translation bilingual",
+    id: "translations", group: "LYRICS", icon: "文", label: "Show translations", hint: "顯示翻譯", words: "translation bilingual",
     state: () => onOff(state.showTranslations), run: () => setTranslations(!state.showTranslations),
   },
-  { group: "LYRICS", icon: "⌕", label: "Find lyrics…", hint: "搜尋歌詞", words: "search match", enabled: usable(ui.search), run: () => ui.search.click() },
+  { id: "findLyrics", group: "LYRICS", icon: "⌕", label: "Find lyrics…", hint: "搜尋歌詞", words: "search match", enabled: usable(ui.search), run: () => ui.search.click() },
   { group: "LYRICS", icon: "⇄", label: "Lyrics source…", hint: "歌詞來源", words: "provider", enabled: usable(ui.sourceBadge), run: () => ui.sourceBadge.click() },
-  { group: "LYRICS", icon: "↻", label: "Reload lyrics", hint: "重新載入歌詞", words: "refresh download", enabled: usable(ui.reload), run: () => ui.reload.click() },
-  { group: "WINDOW", icon: "◱", label: "Compact mode", hint: "精簡模式", words: "mini small", state: () => onOff(document.body.classList.contains("is-compact")), enabled: usable(ui.mode), run: () => ui.mode.click() },
-  { group: "WINDOW", icon: "▲", label: "Keep on top", hint: "置頂", words: "pin always", state: () => onOff(ui.pin.getAttribute("aria-pressed") === "true"), enabled: usable(ui.pin), run: () => ui.pin.click() },
-  { group: "WINDOW", icon: "≡", label: "Settings…", hint: () => (appVersion ? `設定 · v${appVersion}` : "設定"), words: "preferences options version 版本", run: () => element("settings-open").click() },
+  { id: "reloadLyrics", group: "LYRICS", icon: "↻", label: "Reload lyrics", hint: "重新載入歌詞", words: "refresh download", enabled: usable(ui.reload), run: () => ui.reload.click() },
+  { id: "compact", group: "WINDOW", icon: "◱", label: "Compact mode", hint: "精簡模式", words: "mini small", state: () => onOff(document.body.classList.contains("is-compact")), enabled: usable(ui.mode), run: () => ui.mode.click() },
+  { id: "alwaysOnTop", group: "WINDOW", icon: "▲", label: "Keep on top", hint: "置頂", words: "pin always", state: () => onOff(ui.pin.getAttribute("aria-pressed") === "true"), enabled: usable(ui.pin), run: () => ui.pin.click() },
+  { id: "clickThrough", group: "WINDOW", icon: "◇", label: "Click-through", hint: "滑鼠穿透", words: "mouse ignore", state: () => onOff(config?.settings.clickThrough === "always"), run: toggleClickThrough },
+  { id: "settings", group: "WINDOW", icon: "≡", label: "Settings…", hint: () => (appVersion ? `設定 · v${appVersion}` : "設定"), words: "preferences options version 版本", run: () => element("settings-open").click() },
   { group: "WINDOW", icon: "_", label: "Minimize", hint: "最小化", words: "hide", run: () => element("win-minimize").click() },
   { group: "WINDOW", icon: "□", label: () => (document.body.classList.contains("is-maximized") ? "Restore" : "Maximize"), hint: "最大化", words: "maximize restore full", run: () => element("win-maximize").click() },
   turn("front", "Cover", "方塊轉到封面", "front"),
@@ -919,12 +980,16 @@ async function openPalette() {
     const place = await placeOverMain(PALETTE_WIDTH, PALETTE_HEIGHT, 0.15);
     await palette.setSize(new LogicalSize(place.width, place.height));
     await palette.setPosition(new LogicalPosition(place.x, place.y));
+    const bindings = config?.settings.shortcuts ?? DEFAULT_SHORTCUTS;
+    const launcher = bindings.find((binding) => binding.action === "commands");
     const snapshot: PaletteSnapshot = {
-      commands: describeCommands(COMMANDS),
+      commands: describeCommands(COMMANDS, bindings),
       lines: paletteLines(),
       title: state.trackName,
       trackKey: state.trackId,
       accent: config?.settings.theme.accent,
+      shortcut: launcher?.accelerator ?? "",
+      shortcutGlobal: launcher?.global ?? false,
     };
     // The palette draws this, then shows itself and takes the focus.
     await emitTo("palette", PALETTE_SHOW, snapshot);
@@ -934,11 +999,21 @@ async function openPalette() {
 }
 
 element("cmdk-open").addEventListener("click", () => void openPalette());
+function runShortcut(action: string) {
+  if (action === "commands") { void openPalette(); return; }
+  if (action === "clickThrough") { toggleClickThrough(); return; }
+  const command = COMMANDS.find((item) => item.id === action);
+  if (command && (command.enabled?.() ?? true) && (command.visible?.() ?? true)) command.run();
+}
+const shortcutReady = listen<string>("shortcut", ({ payload }) => runShortcut(payload));
 window.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
-    event.preventDefault();
-    void openPalette();
-  }
+  if (event.defaultPrevented || (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable=true]"))) return;
+  const accelerator = shortcutFromEvent(event);
+  if (!accelerator) return;
+  const binding = (config?.settings.shortcuts ?? DEFAULT_SHORTCUTS).find((item) => !item.global && item.accelerator === accelerator);
+  if (!binding) return;
+  event.preventDefault();
+  runShortcut(binding.action);
 });
 
 const paletteRunReady = listen<PaletteAction>(PALETTE_RUN, ({ payload }) => {
@@ -970,7 +1045,7 @@ requestAnimationFrame(frame);
 async function start() {
   try {
     await Promise.all([
-      playbackReady, lyricsReady, statusReady, clickThroughReady, previewReady, translationsReady,
+      playbackReady, lyricsReady, statusReady, shortcutReady, previewReady, translationsReady,
       paletteRunReady, paletteClosedReady,
     ]);
     void syncMaximized();
@@ -982,6 +1057,7 @@ async function start() {
       await openSettings();
     }
     else await send("connect");
+    if (config?.storageWarning && !state.notice) setNotice(config.storageWarning);
   } catch (error) { setNotice(String(error)); }
 }
 void start();

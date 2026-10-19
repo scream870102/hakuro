@@ -3,6 +3,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import html from "../palette.html?raw";
 import type { PaletteCommand, PaletteSnapshot } from "./palette";
+import { describeCommands } from "./palette";
 import { isolateListeners } from "./test-listeners";
 
 isolateListeners(window, document);
@@ -80,6 +81,25 @@ it("tells the main window it is ready, then draws a snapshot, shows itself and t
   expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#123456");
   expect(el("pal-list").textContent).toContain("Compact mode");
   expect(el("pal-version").textContent).toBe("HAKURO v1.3.0");
+});
+
+it("shows saved shortcut keys and global scope, including search results, and removes stale bindings", async () => {
+  const commands = [{ id: "compact", group: "WINDOW", label: "Compact mode", icon: "◱", run: () => {}, state: () => ({ text: "ON", on: true }) }];
+  await show({ commands: describeCommands(commands, [{ action: "compact", accelerator: "Ctrl+Alt+KeyC", global: true }]), shortcut: "Ctrl+KeyJ" });
+  const badges = () => [...el("pal-list").querySelectorAll("kbd")].map((node) => node.textContent);
+  expect(badges()).toEqual(["Ctrl", "Alt", "C"]);
+  expect(el("pal-list").textContent).toContain("GLOBAL");
+  expect(el("pal-list").textContent).toContain("ON");
+  expect(el("pal-binding").textContent).toBe("Ctrl+J OPEN / CLOSE");
+  type("compact");
+  expect(badges()).toEqual(["Ctrl", "Alt", "C"]);
+  await show({ commands: describeCommands(commands, [{ action: "compact", accelerator: "F8", global: false }]), shortcut: "F9", shortcutGlobal: true });
+  expect(badges()).toEqual(["F8"]);
+  expect(el("pal-list").textContent).not.toContain("GLOBAL");
+  expect(el("pal-binding").textContent).toBe("F9 GLOBAL OPEN");
+  await show({ commands: describeCommands(commands, []), shortcut: "" });
+  expect(badges()).toEqual([]);
+  expect(el("pal-binding").textContent).toBe("");
 });
 
 it("runs the best match on Enter, finding commands by their Chinese names too, and hides", async () => {

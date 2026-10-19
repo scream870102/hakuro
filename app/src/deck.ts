@@ -46,6 +46,8 @@ export interface Deck {
   /** The outlined word behind everything. */
   setTitle(text: string): void;
   turnTo(face: CubeFace): void;
+  /** Compact moves the dial round to the left face; a stretched cube rests turned nearer to face-on. */
+  setLayout(layout: { compact: boolean; stretched: boolean }): void;
 }
 
 const NORMALS: Record<string, [number, number, number]> = {
@@ -58,7 +60,12 @@ const LIGHT = (() => {
 })();
 const REST_X = -29;
 const REST_Y = -36;
+/** Stretched, the front carries the lyrics, so the cube turns to show more of it. */
+const STRETCHED_REST = { x: -24, y: -14 };
 const FACE_TURN: Record<CubeFace, number> = { front: 0, right: -90, back: 180, left: 90 };
+/** The idle float: how far the cube bobs (px) and sways (deg) while it rests. */
+const BOB = 5;
+const SWAY = 1.6;
 /** One full turn of the record moves playback this far. */
 const SCRATCH_MS_PER_TURN = 10_000;
 /** A press that travels less than this is a tap, not a drag. */
@@ -75,12 +82,44 @@ function retrigger(el: Element, name: string) {
   el.classList.add(name);
 }
 
-export function createDeck(options: { seekBy(ms: number): void }): Deck {
+/**
+ * How tall the stretched cube (edge x edge x length) stands on screen resting on
+ * any of its sides, float included: the room compact's window leaves it. Turned
+ * end-on, its length tips toward the reader and the near end looms. Mirrors the
+ * cube's transform below and the scene's perspective in styles.css.
+ */
+export function stretchedHeight(edge: number, length: number) {
+  const perspective = Math.max(1500, edge * 7);
+  const tilt = (STRETCHED_REST.x * Math.PI) / 180;
+  let reach = 0;
+  for (const turn of Object.values(FACE_TURN)) {
+    for (const sway of [-SWAY, 0, SWAY]) {
+      const yaw = ((STRETCHED_REST.y + turn + sway) * Math.PI) / 180;
+      for (const x of [-length / 2, length / 2]) {
+        for (const y of [-edge / 2, edge / 2]) {
+          for (const z of [-edge / 2, edge / 2]) {
+            // rotateX(tilt) rotateY(yaw), then the perspective divide.
+            const turned = z * Math.cos(yaw) - x * Math.sin(yaw);
+            const up = y * Math.cos(tilt) - turned * Math.sin(tilt);
+            const near = y * Math.sin(tilt) + turned * Math.cos(tilt);
+            reach = Math.max(reach, (Math.abs(up) * perspective) / (perspective - near));
+          }
+        }
+      }
+    }
+  }
+  return 2 * (reach + BOB);
+}
+
+export function createDeck(options: { seekBy(ms: number): void; dragWindow(): void }): Deck {
   const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
   const scene = byId("scene");
   const cube = byId("cube");
   const faces = [...cube.querySelectorAll<HTMLElement>(".face")];
   const front = byId("cover-face");
+  const coverBox = byId("cover-box");
+  const rightFace = cube.querySelector<HTMLElement>(".face--right")!;
+  const leftFace = cube.querySelector<HTMLElement>(".face--left")!;
   const coverBase = byId<HTMLImageElement>("album-art");
   const coverPeek = byId<HTMLImageElement>("cover-peek");
   const discArt = byId<HTMLImageElement>("disc-art");
@@ -98,6 +137,8 @@ export function createDeck(options: { seekBy(ms: number): void }): Deck {
   const motion = typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
   const calm = () => motion?.matches ?? false;
 
+  let rest = { x: REST_X, y: REST_Y };
+  let compact = false;
   const rx = new Spring(REST_X, 120, 12);
   const ry = new Spring(REST_Y, 120, 12);
   const lift = new Spring(0, 260, 13);
@@ -155,27 +196,27 @@ export function createDeck(options: { seekBy(ms: number): void }): Deck {
     }
   }
 
-  /** offsetX/Y are in the target's own (3D-transformed) space; climb to the face. */
+  /** offsetX/Y are in the target's own (3D-transformed) space; climb to the cover. */
   function aimLens(event: PointerEvent) {
     let el = event.target instanceof HTMLElement ? event.target : null;
-    if (!el || !front.offsetWidth) return;
+    if (!el || !coverBox.offsetWidth) return;
     let x = event.offsetX;
     let y = event.offsetY;
-    for (; el && el !== front; el = el.offsetParent as HTMLElement | null) {
+    for (; el && el !== coverBox; el = el.offsetParent as HTMLElement | null) {
       x += el.offsetLeft;
       y += el.offsetTop;
     }
-    lx.target = (x / front.offsetWidth) * 100;
-    ly.target = (y / front.offsetHeight) * 100;
+    lx.target = (x / coverBox.offsetWidth) * 100;
+    ly.target = (y / coverBox.offsetHeight) * 100;
     if (lens.value < 0.02) {
       lx.snap(lx.target);
       ly.snap(ly.target);
     }
   }
-  front.addEventListener("pointerenter", () => { lensOn = true; });
-  front.addEventListener("pointerleave", () => { lensOn = false; });
-  front.addEventListener("pointermove", aimLens);
-  front.addEventListener("pointerdown", (event) => {
+  coverBox.addEventListener("pointerenter", () => { lensOn = true; });
+  coverBox.addEventListener("pointerleave", () => { lensOn = false; });
+  coverBox.addEventListener("pointermove", aimLens);
+  coverBox.addEventListener("pointerdown", (event) => {
     aimLens(event);
     lens.kick(4);
   });
@@ -244,10 +285,16 @@ export function createDeck(options: { seekBy(ms: number): void }): Deck {
   try { if (localStorage.getItem(HINT_KEY)) hint.classList.add("gone"); } catch { /* keep the hint */ }
 
   scene.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || (event.target as Element).closest("button, input, .vinyl, .dial")) return;
+    if (event.button !== 0) return;
+    // Compact's window is the cube on clear glass: the glass moves the window.
+    if (compact && event.target === scene) {
+      options.dragWindow();
+      return;
+    }
+    if ((event.target as Element).closest("button, input, .vinyl, .dial, .lyrics")) return;
     drag = {
       x: event.clientX, y: event.clientY, rx: rx.value, ry: ry.value, t: performance.now(), vel: 0, moved: 0,
-      cover: Boolean((event.target as Element).closest(".face--front")),
+      cover: Boolean((event.target as Element).closest(".cover-box")),
     };
     scene.setPointerCapture?.(event.pointerId);
     scene.classList.add("is-dragging");
@@ -269,8 +316,8 @@ export function createDeck(options: { seekBy(ms: number): void }): Deck {
     const tap = drag.cover && drag.moved < TAP_SLOP && event.type === "pointerup";
     ry.velocity = drag.vel * 0.5;
     const projected = ry.value + drag.vel * 0.12;
-    ry.target = REST_Y + Math.round((projected - REST_Y) / 90) * 90;
-    rx.target = REST_X;
+    ry.target = rest.y + Math.round((projected - rest.y) / 90) * 90;
+    rx.target = rest.x;
     rx.velocity = 0;
     drag = null;
     scene.classList.remove("is-dragging");
@@ -291,10 +338,22 @@ export function createDeck(options: { seekBy(ms: number): void }): Deck {
   }
 
   function turnTo(face: CubeFace) {
-    const base = REST_Y + FACE_TURN[face];
+    const base = rest.y + FACE_TURN[face];
     ry.target = base + Math.round((ry.value - base) / 360) * 360;
-    rx.target = REST_X;
+    rx.target = rest.x;
     thump(0.5, 0);
+  }
+
+  function setLayout(layout: { compact: boolean; stretched: boolean }) {
+    compact = layout.compact;
+    const home = compact ? leftFace : rightFace;
+    if (dial.parentElement !== home) home.append(dial);
+    const next = layout.compact && layout.stretched ? STRETCHED_REST : { x: REST_X, y: REST_Y };
+    if (next.y === rest.y && next.x === rest.x) return;
+    // Keep whichever face was turned to the reader; only the resting angle moves.
+    ry.target = next.y + Math.round((ry.target - rest.y) / 90) * 90;
+    rx.target = next.x;
+    rest = next;
   }
 
   // ------------------------------------------------ the record on top
@@ -427,9 +486,6 @@ export function createDeck(options: { seekBy(ms: number): void }): Deck {
       thump(0.7, dir);
     });
   }
-  for (const id of ["bar-prev", "bar-next"]) {
-    byId(id).addEventListener("click", (event) => retrigger(event.currentTarget as HTMLElement, "hit"));
-  }
 
   // ------------------------------------------------------- tool faces
 
@@ -460,6 +516,8 @@ export function createDeck(options: { seekBy(ms: number): void }): Deck {
       } else if (target.hasAttribute("aria-pressed")) {
         pressed = target.getAttribute("aria-pressed");
       }
+      // A plain switch (the way back to full mode) is never "pressed".
+      if (tool.hasAttribute("data-plain")) pressed = null;
       if (pressed !== null && tool.getAttribute("aria-pressed") !== pressed) tool.setAttribute("aria-pressed", pressed);
     }
   }
@@ -520,8 +578,8 @@ export function createDeck(options: { seekBy(ms: number): void }): Deck {
     squash.step(dt);
     const still = drag || calm();
     const t = now / 1000;
-    const bob = still ? 0 : Math.sin(t * 1.3) * 5;
-    const sway = still ? 0 : Math.sin(t * 0.7) * 1.6;
+    const bob = still ? 0 : Math.sin(t * 1.3) * BOB;
+    const sway = still ? 0 : Math.sin(t * 0.7) * SWAY;
     const sy = squash.value;
     const sxz = 1 + (1 - sy) * 0.55;
     cube.style.transform = `translate3d(0, ${(lift.value + bob).toFixed(2)}px, 0) rotateX(${rx.value.toFixed(2)}deg) rotateY(${(ry.value + sway).toFixed(2)}deg) scale3d(${sxz.toFixed(3)}, ${sy.toFixed(3)}, ${sxz.toFixed(3)})`;
@@ -570,5 +628,6 @@ export function createDeck(options: { seekBy(ms: number): void }): Deck {
       bgWord.textContent = text;
     },
     turnTo,
+    setLayout,
   };
 }

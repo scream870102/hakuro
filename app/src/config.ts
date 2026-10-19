@@ -3,6 +3,8 @@
  * settings window, and the few things both do with it.
  */
 
+import type { ShortcutBinding } from "./shortcuts";
+
 export type ClickThrough = "off" | "auto" | "always";
 /** Which player Hakuro follows. Exactly one is live at a time. */
 export type PlayerKind = "spotify" | "ytmusic";
@@ -20,9 +22,13 @@ export interface Settings {
   opacity: number;
   clickThrough: ClickThrough;
   compact: boolean;
+  /** Compact's cube stretches sideways to show the lyrics. */
+  compactLyrics: boolean;
+  /** Stored but unused: compact's window is the cube alone, with no background to thin. */
   compactOpacity: number;
   lyricSize: number;
   compactLyricSize: number;
+  shortcuts: ShortcutBinding[];
 }
 
 export interface Config {

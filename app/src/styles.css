@@ -5,10 +5,17 @@
 @import "./base.css";
 
 @property --s { syntax: "<length>"; inherits: true; initial-value: 200px; }
+/* How far compact stretches the cube sideways for the lyrics. Only this eases:
+   the edge already eases on body, and a second transition on the width would
+   lag it and leave the cube out of square while the window resizes. */
+@property --stretch { syntax: "<length>"; inherits: true; initial-value: 0px; }
 
 
 body {
-  --s: clamp(110px, min(21vw, 27vh), 220px);
+  --object-width: max(220px, 38vw);
+  /* Fit the cube to its column and the space above the song metadata, without
+     a desktop-size ceiling that leaves it stranded in a maximized window. */
+  --s: max(110px, min(calc((var(--object-width) - 26px) * .6), calc((100vh - 180px) * .4)));
   display: grid;
   grid-template-rows: 40px minmax(0, 1fr) 48px;
   overflow: hidden;
@@ -21,7 +28,7 @@ body {
 
 .bg { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; opacity: var(--ui-opacity); }
 .bg__band {
-  position: absolute; left: -12%; top: 22%; width: 52%; height: 44%;
+  position: absolute; left: -12%; top: 22%; width: calc(var(--object-width) + 12vw - 24px); height: 44%;
   background: var(--accent);
   transform: skewY(-17deg);
   transform-origin: 0 50%;
@@ -31,7 +38,7 @@ body {
   background: radial-gradient(circle, var(--accent) 38%, transparent 42%) 0 0 / 11px 11px;
   -webkit-mask: linear-gradient(#000, transparent);
 }
-.bg__band--thin { top: 76%; height: 3%; left: -20%; width: 58%; opacity: .9; }
+.bg__band--thin { top: 76%; height: 3%; left: -20%; width: calc(var(--object-width) + 20vw - 40px); opacity: .9; }
 .bg__band--thin::after { display: none; }
 .bg__word {
   position: absolute; left: 30%; top: 46%; white-space: nowrap;
@@ -102,9 +109,9 @@ body.is-maximized .icon-maximize { display: none; }
 
 /* ---------- deck ---------- */
 
-.deck { display: grid; grid-template-columns: minmax(220px, 38%) minmax(0, 1fr); min-height: 0; }
+.deck { display: grid; grid-template-columns: var(--object-width) minmax(0, 1fr); min-height: 0; }
 .object-zone { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; min-height: 0; padding: 0 0 20px 26px; }
-.scene { position: relative; display: grid; place-items: center; min-height: 0; perspective: 1500px; cursor: grab; touch-action: none; }
+.scene { position: relative; display: grid; place-items: center; min-height: 0; perspective: max(1500px, calc(var(--s) * 7)); cursor: grab; touch-action: none; }
 .scene.is-dragging { cursor: grabbing; }
 .shadow {
   position: absolute; left: 50%; top: calc(50% + var(--s) * .95); width: calc(var(--s) * 1.5); height: calc(var(--s) * .32);
@@ -116,15 +123,22 @@ body.is-maximized .icon-maximize { display: none; }
   background: radial-gradient(closest-side, var(--accent-glow), color-mix(in srgb, var(--accent) 12%, transparent) 55%, transparent);
   transform: translateX(-50%) scale(var(--gs, 1)); opacity: var(--go, .25); pointer-events: none; mix-blend-mode: screen;
 }
-.cube { position: relative; width: var(--s); height: var(--s); transform-style: preserve-3d; will-change: transform; }
+.cube {
+  --stretch: 0px;
+  --w: calc(var(--s) + var(--stretch));
+  position: relative; width: var(--w); height: var(--s); transform-style: preserve-3d; will-change: transform;
+  transition: --stretch .6s cubic-bezier(.2, 1.05, .3, 1);
+}
 /* The core only plugs the gaps at the rounded corners; it must never take the
    pointer from the controls on the faces just in front of it. */
 .core { pointer-events: none; }
 .core i { position: absolute; inset: 1.5%; background: #070707; }
 .core i:nth-child(1) { transform: translateZ(calc(var(--s) * .485)); }
 .core i:nth-child(2) { transform: rotateY(180deg) translateZ(calc(var(--s) * .485)); }
-.core i:nth-child(3) { transform: rotateY(90deg) translateZ(calc(var(--s) * .485)); }
-.core i:nth-child(4) { transform: rotateY(-90deg) translateZ(calc(var(--s) * .485)); }
+/* The ends sit an edge apart from the middle, however far the cube stretches. */
+.core i:nth-child(3), .core i:nth-child(4) { left: calc((var(--w) - var(--s) * .97) / 2); right: auto; width: calc(var(--s) * .97); }
+.core i:nth-child(3) { transform: rotateY(90deg) translateZ(calc(var(--w) / 2 - var(--s) * .015)); }
+.core i:nth-child(4) { transform: rotateY(-90deg) translateZ(calc(var(--w) / 2 - var(--s) * .015)); }
 .core i:nth-child(5) { transform: rotateX(90deg) translateZ(calc(var(--s) * .485)); }
 .core i:nth-child(6) { transform: rotateX(-90deg) translateZ(calc(var(--s) * .485)); }
 .face {
@@ -138,8 +152,9 @@ body.is-maximized .icon-maximize { display: none; }
 }
 .face--front { transform: translateZ(calc(var(--s) / 2)); }
 .face--back { transform: rotateY(180deg) translateZ(calc(var(--s) / 2)); }
-.face--right { transform: rotateY(90deg) translateZ(calc(var(--s) / 2)); }
-.face--left { transform: rotateY(-90deg) translateZ(calc(var(--s) / 2)); }
+.face--right, .face--left { right: auto; left: calc((var(--w) - var(--s)) / 2); width: var(--s); }
+.face--right { transform: rotateY(90deg) translateZ(calc(var(--w) / 2)); }
+.face--left { transform: rotateY(-90deg) translateZ(calc(var(--w) / 2)); }
 .face--top { transform: rotateX(90deg) translateZ(calc(var(--s) / 2)); }
 .face--bottom { transform: rotateX(-90deg) translateZ(calc(var(--s) / 2)); }
 .face__label { position: absolute; left: 9%; top: 8%; font: 700 calc(var(--s) * .042)/1 var(--mono); letter-spacing: .16em; color: #4a4a47; }
@@ -165,6 +180,11 @@ body.is-maximized .icon-maximize { display: none; }
    state; a tap toggles playback and the confirmed state floods the cover. */
 .face--front { --mx: 50%; --my: 50%; --lk: 0; --gray: grayscale(1) contrast(1.1) brightness(.6); cursor: pointer; }
 .scene.is-dragging .face--front { cursor: grabbing; }
+/* Everything that is the cover, in one box, so compact can stop it at the cube's
+   edge. It centres the empty placeholder, as the face did. */
+.cover-box { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; border-radius: inherit; }
+/* Compact's own pieces; the section at the end shows them. */
+.face__lyrics, .lid, .lid__meta, .spine, .tool.tool--compact { display: none; }
 .cover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; -webkit-user-drag: none; }
 .cover:not([src]) { display: none; }
 .cover--base { filter: var(--gray); }
@@ -415,20 +435,17 @@ body.hide-translations .lyric-translation { display: none; }
 .bar__btn:disabled { opacity: .35; }
 .bar__btn--alert { align-self: center; height: 30px; margin-right: 12px; border: 1.5px solid var(--accent); color: var(--accent); }
 
-.bar__skip, .bar__play {
-  display: none; place-items: center; align-self: stretch; width: 34px; flex-shrink: 0;
+/* Always there, unlike the old follow and reload pair: the one control a glance
+   at the corner should find. */
+.bar__play {
+  display: grid; place-items: center; align-self: stretch; width: 54px; flex-shrink: 0;
   border-left: 1px solid var(--line); color: var(--accent);
   filter: drop-shadow(0 0 4px var(--accent-glow));
   transition: background .15s, color .15s, transform .14s cubic-bezier(.3, 1.6, .5, 1);
 }
-.bar__skip svg { width: 13px; height: 13px; fill: currentColor; }
-.bar__skip:hover:not(:disabled), .bar__play:hover:not(:disabled) { background: var(--accent); color: #000; filter: none; }
-.bar__skip:active:not(:disabled), .bar__play:active:not(:disabled) { transform: scale(.84); }
-.bar__skip:disabled, .bar__play:disabled { opacity: .3; filter: none; }
-.bar__skip.hit { animation: hit .5s cubic-bezier(.2, 1.8, .4, 1); }
-/* Always there, unlike the old follow and reload pair: the one control a glance
-   at the corner should find. Compact taps the cover instead. */
-.bar__play { display: grid; width: 54px; }
+.bar__play:hover:not(:disabled) { background: var(--accent); color: #000; filter: none; }
+.bar__play:active:not(:disabled) { transform: scale(.84); }
+.bar__play:disabled { opacity: .3; filter: none; }
 .bar__play svg { width: 17px; height: 17px; fill: currentColor; }
 .bar__play .icon-pause, body.is-playing .bar__play .icon-play { display: none; }
 body.is-playing .bar__play .icon-pause { display: block; }
@@ -437,59 +454,110 @@ body.shake { animation: shake .28s linear; }
 
 /* ---------- compact ---------- */
 
-/* Cube, lyrics and the scrubber; nothing else earns the room. The window
-   buttons go too, which is why the mode toggle sits with the ones that stay. */
+/* The cube alone, in a transparent window: no header, no bar, no poster. Its
+   edge (--compact-s) and the stretch the lyrics add (--lw) come from main.ts,
+   which sizes the window around them. */
 body.is-compact {
-  --s: min(76px, calc((100vh - 66px) * .55));
-  grid-template-rows: 32px minmax(0, 1fr) 34px;
+  --s: var(--compact-s, 150px);
+  grid-template-rows: minmax(0, 1fr);
+  background: transparent;
 }
-/* The record on top reaches further up than the cube's middle suggests. */
-body.is-compact .cube { margin-top: calc(var(--s) * .14); }
-body.is-compact .status,
-body.is-compact .window-controls__sep,
-body.is-compact #win-minimize,
-body.is-compact #win-maximize,
-body.is-compact #win-close,
+body.is-compact .bg,
+body.is-compact .chrome,
+body.is-compact .bar,
 body.is-compact .meta,
 body.is-compact .hint,
 body.is-compact .lyrics-head,
-body.is-compact .bar__play,
-body.is-compact .bg__word,
-body.is-compact .shadow,
 body.is-compact .face__label,
-body.is-compact .tool b {
+body.is-compact .vinyl,
+body.is-compact .face--left .tools,
+body.is-compact .dial .skip {
   display: none;
 }
-body.is-compact .chrome { gap: 10px; padding-left: 10px; }
-body.is-compact .brand__mark { width: 29px; height: 19px; mask-size: 33px; }
-body.is-compact .window-button { width: 34px; }
-body.is-compact .cmdk span, body.is-compact .cmdk kbd { display: none; }
-body.is-compact .cmdk { height: 20px; padding: 0 7px; }
-body.is-compact .deck { grid-template-columns: 124px minmax(0, 1fr); }
+body.is-compact .deck { grid-template-columns: minmax(0, 1fr); }
 body.is-compact .object-zone { grid-template-rows: minmax(0, 1fr); padding: 0; }
-body.is-compact .lyrics-zone { grid-template-rows: minmax(0, 1fr); padding: 2px 14px 0 12px; }
-body.is-compact .lyrics {
-  /* Room for three lines at any type size: the line being sung, and its
-     neighbours on either side. The window's minimum height matches this. */
-  min-height: calc(3 * (var(--lyric-size) * 1.32 + 18px));
-  /* A fade sized for a full page would swallow the lines compact exists to show. */
-  mask-image: none;
+/* The empty glass around the cube moves the window; the cube itself still turns. */
+body.is-compact .scene { cursor: move; }
+body.is-compact .cube { cursor: grab; }
+body.is-compact .scene.is-dragging .cube { cursor: grabbing; }
+body.is-compact .shadow { top: calc(50% + var(--s) * .7); }
+body.is-compact .glow { top: calc(50% + var(--s) * .66); }
+/* What is left of the lyrics column is an overlay for the shards and notices. */
+body.is-compact .lyrics-zone { position: fixed; inset: 0; padding: 0; pointer-events: none; }
+body.is-compact .notice { bottom: 6px; padding: 6px 10px; font-size: 10.5px; pointer-events: auto; }
+
+/* Lyrics on: the cube stretches to the right and its front carries them on
+   past the cover. */
+body.is-compact.is-stretched .cube { --stretch: var(--lw, 0px); }
+body.is-compact .cover-box { right: auto; width: var(--s); }
+body.is-compact.is-stretched .cover-box { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+body.is-compact .face__lyrics {
+  display: block; position: absolute; top: 0; bottom: 0; left: var(--s); width: var(--lw);
+  padding-left: calc(var(--s) * .1); border-left: 1px solid var(--line); cursor: auto;
 }
-body.is-compact.has-translations .lyrics { min-height: calc(3 * (var(--lyric-size) * 2.23 + 22px)); }
-/* The line being sung leans in by scaling, not by growing, so the three-line
-   promise above holds at every size. */
+body.is-compact .lyrics { mask-image: linear-gradient(transparent, #000 8%, #000 92%, transparent); }
+/* The line being sung leans in by scaling, not by growing, so the three lines
+   the cube is sized for always fit. */
 body.is-compact .lyrics__list { padding-right: 14%; }
 body.is-compact .line { padding-left: 0; }
-body.is-compact .line--seekable::before, body.is-compact .line.is-active::after { display: none; }
+body.is-compact .line--seekable::before { display: none; }
 body.is-compact .line.is-active { scale: 1.12; }
-/* Sized to the cube's fixed 124px column, not the window: the whole cube sits
-   on the accent, and the lyrics start just past its edge. */
-body.is-compact .bg__band { left: -36px; top: 26%; height: 60%; width: 162px; }
-body.is-compact .bar { gap: 0; padding-left: 12px; }
-body.is-compact .time { min-width: 34px; margin-right: 10px; font-size: 10.5px; }
-body.is-compact .scrubber { margin-right: 10px; }
-body.is-compact .bar__skip { display: grid; }
-body.is-compact .notice { bottom: 6px; padding: 6px 10px; font-size: 10.5px; }
+body.is-compact .line.is-active::after { left: 0; width: calc(100% * var(--lp, 0)); }
+
+/* top: the lid. Window switches at the back, the transport at the front edge. */
+body.is-compact .lid {
+  display: grid; grid-template-rows: 1fr 1fr; align-items: center; justify-items: center;
+  position: absolute; top: 0; bottom: 0; left: 0; width: var(--s); padding: 7% 0 5%; box-sizing: border-box;
+}
+.lid__row { display: flex; align-items: center; gap: calc(var(--s) * .05); }
+.tool--icon { justify-content: center; width: calc(var(--s) * .22); height: calc(var(--s) * .2); padding: 0; }
+.tool--icon svg { width: 44%; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: square; }
+.tool--glow { border-color: transparent; color: var(--accent); filter: drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 calc(var(--s) * .05) var(--accent-glow)); }
+.tool--glow svg { width: 72%; fill: currentColor; stroke: none; }
+.tool--glow:hover:not(:disabled) { border-color: transparent; color: var(--accent); filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 calc(var(--s) * .09) var(--accent)) brightness(1.1); }
+.tool--glow:disabled { opacity: .25; filter: none; }
+.tool--play { width: calc(var(--s) * .28); height: calc(var(--s) * .28); }
+.tool--play svg { width: 86%; }
+.tool--play .icon-pause, body.is-playing .tool--play .icon-play { display: none; }
+body.is-playing .tool--play .icon-pause { display: block; }
+.tool--full:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+/* Beside the switches once the cube stretches: the song, and how far through it is. */
+body.is-compact .lid__meta {
+  display: grid; grid-template-columns: minmax(0, 1fr); align-content: center; gap: calc(var(--s) * .035);
+  position: absolute; top: 0; bottom: 0; left: var(--s); width: var(--lw); box-sizing: border-box;
+  padding: 0 calc(var(--s) * .12) 0 calc(var(--s) * .1); border-left: 1px solid var(--line);
+}
+.lid__title { overflow: hidden; font: 900 calc(var(--s) * .12)/1.2 var(--display); color: var(--ink); white-space: nowrap; text-overflow: ellipsis; }
+.lid__artist { overflow: hidden; font: 700 calc(var(--s) * .05)/1.2 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-2); white-space: nowrap; text-overflow: ellipsis; }
+.lid__progress {
+  display: flex; align-items: center; gap: calc(var(--s) * .05); margin-top: calc(var(--s) * .03);
+  font: 700 calc(var(--s) * .05)/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink-2);
+}
+.lid__track { position: relative; flex: 1; height: 3px; background: #2a2a2a; }
+.lid__fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
+
+/* right: the spine. The volume dial moves round to the left face. */
+body.is-compact .spine {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--s) * .05);
+  position: absolute; inset: 9% 0; writing-mode: vertical-rl;
+}
+.spine__title, .spine__artist { max-height: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.spine__title { font: 900 calc(var(--s) * .1)/1.1 var(--display); letter-spacing: .1em; color: var(--ink); }
+.spine__artist { font: 700 calc(var(--s) * .05)/1.2 var(--mono); letter-spacing: .22em; text-transform: uppercase; color: var(--ink-2); }
+
+/* back: the lyric tools, plus settings, since compact has no header. Stretched,
+   the face is wide and short, so they stand in a row. */
+body.is-compact .face--back .tools { width: calc(var(--s) * .76); padding-top: 0; }
+body.is-compact.is-stretched .face--back .tools { grid-auto-flow: column; grid-auto-columns: 1fr; width: calc(var(--w) * .84); }
+body.is-compact.is-stretched .face--back .tool { padding: 0 calc(var(--s) * .06); }
+body.is-compact .tool--compact { display: flex; }
+
+/* Kept on top: the cube's edges light up. */
+body.is-compact .cover-shade { border-radius: inherit; }
+body.is-compact.is-pinned .face,
+body.is-compact.is-pinned .cover-shade {
+  box-shadow: inset 0 0 0 2px var(--accent), inset 0 0 calc(var(--s) * .14) rgb(0 0 0 / .55), 0 0 12px var(--accent-glow);
+}
 
 /* The window buttons never move; the brand side gives way as the window narrows. */
 @media (max-width: 760px) {
