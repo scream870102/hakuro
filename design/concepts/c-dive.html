@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hakuro · Ink Dive</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Dela+Gothic+One&family=JetBrains+Mono:wght@700&family=Noto+Sans+TC:wght@700;900&display=swap" rel="stylesheet">
+<style>
+/* Concept C — Ink Dive.
+   You look straight down a manga-inked shaft between buildings. Upcoming lines
+   wait further down; on each new line the camera dives, the old line rushes past
+   the lens, and focus lines burst. Every press splashes ink and throws an
+   onomatopoeia. Palette: paper white, ink black, screentone greys, acid yellow. */
+:root {
+  --paper: #f2f2ee;
+  --ink: #0b0b0b;
+  --grey: #9a9a96;
+  --acid: #e8ff00;
+  --manga: "Dela Gothic One", "Yu Gothic UI", sans-serif;
+  --lyric: "Anton", "Dela Gothic One", "Yu Gothic UI", sans-serif;
+  --tc: "Noto Sans TC", "Microsoft JhengHei UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  --fs: clamp(28px, 6vw, 66px);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { overflow: hidden; background: var(--ink); color: var(--ink); font-family: var(--manga); -webkit-font-smoothing: antialiased; user-select: none; font-synthesis: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible { outline: 3px solid var(--acid); outline-offset: 2px; }
+
+/* ---------- the shaft ---------- */
+.viewport { position: fixed; inset: 0; perspective: 700px; perspective-origin: var(--pox, 50%) var(--poy, 46%); overflow: hidden; cursor: crosshair; }
+.world { position: absolute; left: 50%; top: 46%; width: 0; height: 0; transform-style: preserve-3d; }
+.wall { position: absolute; background-color: var(--paper); backface-visibility: visible; }
+.wall--l, .wall--r { width: 6000px; height: var(--vh); top: calc(var(--vh) / -2); transform-origin: 0 50%; }
+.wall--l { left: calc(var(--vw) / -2); }
+.wall--r { left: calc(var(--vw) / 2); }
+.wall--t, .wall--b { width: var(--vw); height: 6000px; left: calc(var(--vw) / -2); transform-origin: 50% 0; }
+.wall--t { top: calc(var(--vh) / -2); }
+.wall--b { top: calc(var(--vh) / 2); }
+.exit { position: absolute; left: -900px; top: -900px; width: 1800px; height: 1800px; transform: translateZ(-3600px); border-radius: 50%;
+  background: radial-gradient(closest-side, var(--acid), rgb(232 255 0 / .5) 22%, rgb(232 255 0 / .12) 48%, transparent 70%); opacity: calc(.7 + var(--beat, 0) * .3); }
+.exit::after { content: "↓"; position: absolute; inset: 0; display: grid; place-items: center; font: 520px/1 var(--manga); color: var(--ink); opacity: .85; }
+.planes { position: absolute; left: 0; top: 0; transform-style: preserve-3d; }
+.lp { position: absolute; left: 0; top: 0; width: min(84vw, 860px); text-align: center; cursor: pointer; will-change: transform, opacity; }
+.lp__text {
+  font: 400 var(--fs)/1.12 var(--lyric); color: #fff; letter-spacing: .01em;
+  text-shadow: 3px 0 var(--ink), -3px 0 var(--ink), 0 3px var(--ink), 0 -3px var(--ink), 2.2px 2.2px var(--ink), -2.2px -2.2px var(--ink), 2.2px -2.2px var(--ink), -2.2px 2.2px var(--ink), 8px 8px 0 var(--ink);
+}
+.lp:not(.is-active) .lp__tr { visibility: hidden; }
+.lp__tr { display: inline-block; margin-top: .55em; padding: 6px 13px; background: #fff; border: 3px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); font: 900 16px/1.35 var(--tc); color: var(--ink); transform: rotate(-2.2deg); letter-spacing: .04em; }
+.w { display: inline-block; white-space: pre; transition: transform .18s cubic-bezier(.3, 1.8, .5, 1), color .12s; }
+.lp.is-active .w.sung { color: var(--acid); }
+.lp.is-active .w.now { color: var(--acid); transform: scale(1.16) rotate(-4deg) translateY(-4px); }
+.lp.is-past .lp__text { color: #d4d4d0; }
+.notes { display: inline-flex; gap: .3em; }
+.notes span { display: inline-block; transform: translateY(calc(var(--beat, 0) * -12px)); }
+.notes span:nth-child(2) { transform: translateY(calc(var(--beat, 0) * 10px)); }
+
+#lines, #ink { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#ink { z-index: 20; }
+.impact { position: fixed; inset: 0; pointer-events: none; z-index: 6; opacity: 0; background: radial-gradient(circle, var(--ink) 30%, transparent 33%) 0 0 / 7px 7px; mix-blend-mode: multiply; }
+.impact.on { animation: impact .26s steps(3) both; }
+
+/* ---------- HUD panels ---------- */
+.top { position: fixed; left: 0; right: 0; top: 0; height: 112px; z-index: 10; pointer-events: none; }
+.title-panel {
+  position: absolute; left: 0; top: 0; width: min(560px, 64vw); height: 104px; pointer-events: auto;
+  background: var(--ink); color: #fff; clip-path: polygon(0 0, 100% 0, 86% 100%, 0 100%);
+  display: flex; align-items: center; gap: 14px; padding: 0 90px 0 16px;
+}
+.title-panel::after { content: ""; position: absolute; inset: 0; background: radial-gradient(circle, rgb(255 255 255 / .09) 35%, transparent 38%) 0 0 / 6px 6px; -webkit-mask: linear-gradient(100deg, transparent 55%, #000); pointer-events: none; }
+.stamp { flex: none; width: 46px; height: 46px; background: #fff; color: var(--ink); display: grid; grid-template-rows: repeat(3, 1fr); padding: 4px 5px; font: 700 10px/1 var(--mono); letter-spacing: .05em; }
+.stamp span { display: flex; justify-content: space-between; align-items: center; }
+.tp-text { min-width: 0; }
+.tp-title { margin: 0; font: 400 25px/1.1 var(--manga); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-artist { margin: 6px 0 0; font: 700 10px var(--mono); letter-spacing: .18em; color: var(--acid); white-space: nowrap; }
+.bubble {
+  position: absolute; left: min(300px, 34vw); top: 78px; pointer-events: auto; z-index: 2;
+  background: #fff; border: 3px solid var(--ink); border-radius: 50% / 46%; padding: 7px 16px; font: 700 10.5px var(--mono); letter-spacing: .12em; color: var(--ink);
+  transform: rotate(-4deg); transition: transform .18s cubic-bezier(.3, 1.8, .5, 1);
+}
+.bubble::after { content: ""; position: absolute; left: 14px; top: -11px; border: 7px solid transparent; border-bottom: 10px solid var(--ink); border-top: 0; transform: skewX(30deg); }
+.bubble:hover { transform: rotate(3deg) scale(1.08); background: var(--acid); }
+.bubble:active { transform: scale(.9); }
+.art-panel { position: absolute; left: min(470px, 52vw); top: 10px; width: 86px; height: 86px; pointer-events: auto; background: #fff; border: 3px solid var(--ink); padding: 4px; transform: rotate(5deg); box-shadow: 6px 6px 0 var(--ink); transition: transform .3s cubic-bezier(.3, 1.6, .5, 1); }
+.art-panel:hover { transform: rotate(-3deg) scale(1.06); }
+.art-panel img { width: 100%; height: 100%; display: block; object-fit: cover; filter: grayscale(1) contrast(1.6) brightness(1.1); }
+.art-panel::after { content: ""; position: absolute; inset: 4px; background: radial-gradient(circle, rgb(0 0 0 / .45) 30%, transparent 34%) 0 0 / 5px 5px; mix-blend-mode: multiply; }
+.win { position: absolute; right: 10px; top: 10px; display: flex; gap: 6px; pointer-events: auto; }
+.win button { width: 32px; height: 30px; display: grid; place-items: center; background: #fff; border: 2.5px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); transition: transform .14s cubic-bezier(.3, 1.8, .5, 1), background .1s; }
+.win button svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.win button:hover { background: var(--acid); transform: translate(-1px, -2px) rotate(-6deg); }
+.win button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
+.win button[aria-pressed="true"] { background: var(--ink); color: var(--acid); }
+.win .close:hover { background: var(--ink); color: #fff; }
+
+.bottom { position: fixed; left: 0; right: 0; bottom: 0; height: 136px; z-index: 10; }
+.bottom__ink { position: absolute; inset: 0; background: var(--ink); clip-path: polygon(0 22px, 100% 0, 100% 100%, 0 100%); }
+.bottom__paper {
+  position: absolute; inset: 6px 0 0; background: var(--paper); clip-path: polygon(0 22px, 100% 0, 100% 100%, 0 100%);
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; grid-template-rows: 40px 1fr; column-gap: 18px; align-items: center; padding: 26px 22px 10px;
+}
+.bottom__paper::before { content: ""; position: absolute; inset: 0; background: radial-gradient(circle, rgb(0 0 0 / .1) 30%, transparent 34%) 0 0 / 6px 6px; -webkit-mask: linear-gradient(80deg, #000, transparent 40%); pointer-events: none; }
+.seek { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; position: relative; }
+.time { font: 700 11px var(--mono); min-width: 36px; }
+.scrub { position: relative; flex: 1; height: 30px; cursor: pointer; touch-action: none; --pp: 0%; }
+.scrub__line { position: absolute; left: 0; right: 0; top: 50%; height: 5px; margin-top: -2.5px; background: var(--ink); }
+.scrub__fill { position: absolute; left: 0; top: 50%; height: 11px; margin-top: -5.5px; width: var(--pp); background: var(--acid); border: 2.5px solid var(--ink); }
+.cues i { position: absolute; top: 4px; width: 2px; height: 7px; background: var(--ink); }
+.scrub__knob { position: absolute; top: 50%; left: var(--pp); width: 22px; height: 22px; background: var(--ink); border: 3px solid var(--acid); transform: translate(-50%, -50%) rotate(45deg); transition: width .15s cubic-bezier(.3, 1.8, .5, 1), height .15s cubic-bezier(.3, 1.8, .5, 1); }
+.scrub:hover .scrub__knob, .scrub.drag .scrub__knob { width: 28px; height: 28px; }
+.transport { display: flex; align-items: center; gap: 10px; }
+.tbtn { width: 44px; height: 44px; border-radius: 50%; background: var(--ink); color: #fff; display: grid; place-items: center; box-shadow: 4px 4px 0 rgb(0 0 0 / .25); transition: transform .16s cubic-bezier(.3, 1.8, .5, 1), background .12s, color .12s; }
+.tbtn svg { width: 46%; height: 46%; fill: currentColor; }
+.tbtn:hover { transform: scale(1.1) rotate(-8deg); color: var(--acid); }
+.tbtn:active { transform: scale(.82); }
+.tbtn--main { width: 54px; height: 54px; background: var(--acid); color: var(--ink); border: 3.5px solid var(--ink); }
+.tbtn--main:hover { color: var(--ink); background: #fff; }
+.icon-pause { display: none; }
+body.is-playing .icon-play { display: none; }
+body.is-playing .icon-pause { display: block; }
+.vol { display: flex; align-items: center; gap: 10px; font: 700 10px var(--mono); letter-spacing: .14em; }
+.vol__bar { position: relative; width: 150px; height: 22px; border: 3px solid var(--ink); background: #fff; transform: skewX(-14deg); cursor: ew-resize; touch-action: none; --v: 64%; overflow: hidden; }
+.vol__fill { position: absolute; inset: 0 auto 0 0; width: var(--v); background: radial-gradient(circle, var(--ink) 42%, transparent 46%) 0 0 / 5px 5px, var(--acid); border-right: 3px solid var(--ink); }
+.vol b { font: 400 18px/1 var(--manga); min-width: 34px; }
+.vol.max .vol__bar { animation: wobble .3s; }
+.spacer { min-width: 0; }
+.tools { display: flex; gap: 8px; align-items: center; }
+.tool { padding: 8px 12px; background: #fff; border: 2.5px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); font: 700 10px var(--mono); letter-spacing: .12em; transition: transform .14s cubic-bezier(.3, 1.8, .5, 1), background .1s; }
+.tool:hover { background: var(--acid); transform: rotate(-4deg); }
+.tool:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
+.tool[aria-pressed="true"] { background: var(--ink); color: var(--acid); }
+
+/* onomatopoeia */
+.sfx { position: fixed; z-index: 30; pointer-events: none; font: 400 54px/1 var(--manga); color: var(--acid); white-space: nowrap;
+  text-shadow: 4px 0 var(--ink), -4px 0 var(--ink), 0 4px var(--ink), 0 -4px var(--ink), 3px 3px var(--ink), -3px -3px var(--ink), 3px -3px var(--ink), -3px 3px var(--ink), 7px 7px 0 var(--ink);
+  animation: pop 1s cubic-bezier(.2, 1.6, .4, 1) both; }
+.toast { position: fixed; left: 50%; top: 128px; z-index: 25; pointer-events: none; transform: translate(-50%, -10px) rotate(-2deg); opacity: 0; background: #fff; border: 3px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); padding: 8px 14px; font: 700 11px var(--mono); letter-spacing: .1em; transition: .3s cubic-bezier(.2, 1.7, .4, 1); }
+.toast.show { opacity: 1; transform: translate(-50%, 0) rotate(-2deg); }
+body.shake .viewport, body.shake .top { animation: shake .3s linear; }
+
+/* ---------- compact ---------- */
+body.is-compact { --fs: 24px; }
+body.is-compact .title-panel { height: 34px; width: 62vw; padding-right: 50px; }
+body.is-compact .stamp, body.is-compact .tp-artist, body.is-compact .art-panel, body.is-compact .bubble,
+body.is-compact .win .wide, body.is-compact .vol, body.is-compact .tools, body.is-compact .lp__tr { display: none; }
+body.is-compact .tp-title { font-size: 14px; }
+body.is-compact .win { top: 3px; }
+body.is-compact .win button { width: 26px; height: 24px; box-shadow: 2px 2px 0 var(--ink); }
+body.is-compact .bottom { height: 54px; }
+body.is-compact .bottom__paper { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: 1fr; padding: 16px 12px 6px; column-gap: 10px; }
+body.is-compact .seek { grid-column: 2; grid-row: 1; }
+body.is-compact .transport { grid-column: 1; grid-row: 1; gap: 5px; }
+body.is-compact .tbtn { width: 26px; height: 26px; }
+body.is-compact .tbtn--main { width: 30px; height: 30px; border-width: 2.5px; }
+body.is-compact .time { font-size: 9px; min-width: 26px; }
+body.is-compact .lp { width: 90vw; }
+
+@keyframes pop { 0% { transform: translate(-50%, -50%) rotate(var(--r)) scale(.2); opacity: 0; } 18% { transform: translate(-50%, -50%) rotate(var(--r)) scale(1.25); opacity: 1; } 32% { transform: translate(-50%, -50%) rotate(var(--r)) scale(1); } 75% { opacity: 1; } 100% { transform: translate(-50%, -90%) rotate(var(--r)) scale(1.05); opacity: 0; } }
+@keyframes impact { 0% { opacity: .55; } 50% { opacity: .2; } 100% { opacity: 0; } }
+@keyframes shake { 0%, 100% { transform: none; } 20% { transform: translate(-7px, 3px) rotate(-.4deg); } 40% { transform: translate(6px, -4px) rotate(.4deg); } 60% { transform: translate(-4px, -2px); } 80% { transform: translate(3px, 2px); } }
+@keyframes wobble { 0%, 100% { transform: skewX(-14deg); } 30% { transform: skewX(-14deg) scale(1.12, .85); } 60% { transform: skewX(-14deg) scale(.95, 1.08); } }
+</style>
+</head>
+<body class="is-playing">
+<div class="viewport" id="viewport">
+  <div class="world" id="world">
+    <div class="wall wall--l" id="wall-l"></div>
+    <div class="wall wall--r" id="wall-r"></div>
+    <div class="wall wall--t" id="wall-t"></div>
+    <div class="wall wall--b" id="wall-b"></div>
+    <div class="exit"></div>
+    <div class="planes" id="planes"></div>
+  </div>
+</div>
+<canvas id="lines"></canvas>
+<div class="impact" id="impact"></div>
+
+<header class="top" data-tauri-drag-region>
+  <div class="title-panel" data-tauri-drag-region>
+    <div class="stamp" aria-hidden="true"><span><b>H</b><b>A</b></span><span><b>K</b><b>U</b></span><span><b>R</b><b>O</b></span></div>
+    <div class="tp-text">
+      <h1 class="tp-title" id="title">—</h1>
+      <p class="tp-artist" id="artist">—</p>
+    </div>
+  </div>
+  <button class="bubble" id="source">SRC: NETEASE ▾</button>
+  <div class="art-panel"><img id="art" alt=""></div>
+  <nav class="win">
+    <button class="wide" id="w-search" title="Find lyrics"><svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="3"/><path d="m7.3 7.3 3 3"/></svg></button>
+    <button class="wide" id="w-settings" title="Settings"><svg viewBox="0 0 12 12"><path d="M1.8 4h8.4M1.8 8h8.4"/><circle cx="4.2" cy="4" r="1.5"/><circle cx="7.8" cy="8" r="1.5"/></svg></button>
+    <button class="wide" id="w-refresh" title="Refresh playback"><svg viewBox="0 0 12 12"><path d="M9.9 5.2A4 4 0 1 0 9.4 8M10 1.9v3.3H6.7"/></svg></button>
+    <button id="w-compact" title="Compact mode" aria-pressed="false"><svg viewBox="0 0 12 12"><path d="M6 1.4v3.1M4.4 3l1.6 1.5L7.6 3M6 10.6V7.5M4.4 9l1.6-1.5L7.6 9"/></svg></button>
+    <button id="w-pin" title="Keep on top" aria-pressed="false"><svg viewBox="0 0 12 12"><path d="M3.6 1.4h4.8M5 1.4v2.8L3.4 6h5.2L7 4.2V1.4M6 6v3.2"/></svg></button>
+    <button class="w-chrome" title="Minimize"><svg viewBox="0 0 12 12"><path d="M2.5 6h7"/></svg></button>
+    <button class="w-chrome wide" title="Maximize"><svg viewBox="0 0 12 12"><path d="M2.5 2.5h7v7h-7z"/></svg></button>
+    <button class="w-chrome close" title="Close"><svg viewBox="0 0 12 12"><path d="M2.6 2.6l6.8 6.8M9.4 2.6l-6.8 6.8"/></svg></button>
+  </nav>
+</header>
+
+<footer class="bottom">
+  <div class="bottom__ink"></div>
+  <div class="bottom__paper">
+    <div class="seek">
+      <span class="time" id="t-cur">0:00</span>
+      <div class="scrub" id="scrub" role="slider" aria-label="Seek" tabindex="0">
+        <div class="scrub__line"></div><div class="cues" id="cues"></div><div class="scrub__fill"></div><div class="scrub__knob"></div>
+      </div>
+      <span class="time" id="t-total">0:00</span>
+    </div>
+    <div class="transport">
+      <button class="tbtn" id="prev" aria-label="Previous track"><svg viewBox="0 0 24 24"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg></button>
+      <button class="tbtn tbtn--main" id="play" aria-label="Play or pause">
+        <svg class="icon-play" viewBox="0 0 24 24"><path d="M7 4.8v14.4a.9.9 0 0 0 1.38.76l11.2-7.2a.9.9 0 0 0 0-1.52L8.38 4.04A.9.9 0 0 0 7 4.8Z"/></svg>
+        <svg class="icon-pause" viewBox="0 0 24 24"><path d="M6 4h4.2v16H6zM13.8 4H18v16h-4.2z"/></svg>
+      </button>
+      <button class="tbtn" id="next" aria-label="Next track"><svg viewBox="0 0 24 24"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg></button>
+    </div>
+    <div class="vol" id="vol-wrap">VOL<div class="vol__bar" id="vol" role="slider" aria-label="Volume" tabindex="0"><div class="vol__fill"></div></div><b id="vol-num">64</b></div>
+    <div class="spacer"></div>
+    <div class="tools">
+      <button class="tool" id="follow" aria-pressed="true">FOLLOW!</button>
+      <button class="tool" id="reload">RELOAD</button>
+    </div>
+  </div>
+</footer>
+<canvas id="ink"></canvas>
+<div class="toast" id="toast"></div>
+
+<script src="hk-mock.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const root = document.documentElement;
+  HK.bindKeys();
+
+  const GAP = 520;      // depth between lyric lines (px)
+  const TILE = 150;     // facade tile length along the shaft
+  const AHEAD = 6;
+
+  let toastTimer;
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.remove("show");
+    void t.offsetWidth;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 1700);
+  }
+
+  /* ---------- facade texture (inked line-art, generated) ---------- */
+  function facade(alongX) {
+    // Drawn with floors perpendicular to the shaft's depth axis.
+    const w = 190, h = TILE;
+    const g = `
+      <rect width="${w}" height="${h}" fill="#f2f2ee"/>
+      <path d="M0 1.5H${w}M0 ${h / 2}H${w}" stroke="#0b0b0b" stroke-width="3"/>
+      <rect x="14" y="12" width="46" height="44" fill="#fff" stroke="#0b0b0b" stroke-width="2.5"/>
+      <path d="M18 52l38-36M26 54l32-30M18 40l22-22M40 54l18-18" stroke="#0b0b0b" stroke-width="1.2"/>
+      <rect x="72" y="12" width="46" height="44" fill="#0b0b0b"/>
+      <rect x="78" y="18" width="12" height="32" fill="#2a2a2a"/>
+      <rect x="132" y="24" width="30" height="22" fill="#fff" stroke="#0b0b0b" stroke-width="2.2"/>
+      <circle cx="147" cy="35" r="7" fill="none" stroke="#0b0b0b" stroke-width="1.6"/>
+      <path d="M140 35h14M147 28v14" stroke="#0b0b0b" stroke-width="1"/>
+      <path d="M176 0V${h}" stroke="#0b0b0b" stroke-width="4"/>
+      <rect x="14" y="88" width="30" height="46" fill="#fff" stroke="#0b0b0b" stroke-width="2.5"/>
+      <path d="M20 90v44M26 90v44M32 90v44M38 90v44" stroke="#0b0b0b" stroke-width="1"/>
+      <rect x="56" y="86" width="72" height="22" fill="#0b0b0b"/>
+      <rect x="62" y="94" width="40" height="5" fill="#e8ff00"/>
+      <rect x="140" y="90" width="22" height="40" fill="none" stroke="#0b0b0b" stroke-width="2.2"/>
+      <path d="M140 110h22" stroke="#0b0b0b" stroke-width="1.5"/>`;
+    const svg = alongX
+      ? `<svg xmlns="http://www.w3.org/2000/svg" width="${h}" height="${w}"><g transform="translate(${h} 0) rotate(90)">${g}</g></svg>`
+      : `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${g}</svg>`;
+    return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+  }
+  const fogX = "linear-gradient(90deg, rgba(11,11,11,0) 0px, rgba(11,11,11,.35) 700px, rgba(11,11,11,.85) 1900px, #0b0b0b 3000px)";
+  const fogY = "linear-gradient(180deg, rgba(11,11,11,0) 0px, rgba(11,11,11,.35) 700px, rgba(11,11,11,.85) 1900px, #0b0b0b 3000px)";
+  const toneX = "radial-gradient(circle, rgba(11,11,11,.2) 32%, transparent 36%) 0 0 / 6px 6px";
+  for (const id of ["wall-l", "wall-r"]) $(id).style.background = `${fogX}, ${toneX}, ${facade(true)} 0 0 / ${TILE}px auto, #f2f2ee`;
+  for (const id of ["wall-t", "wall-b"]) $(id).style.background = `${fogY}, ${toneX}, ${facade(false)} 0 0 / auto ${TILE}px, #f2f2ee`;
+
+  /* ---------- sizing ---------- */
+  let VW = 0, VH = 0;
+  function resize() {
+    VW = innerWidth;
+    VH = innerHeight;
+    root.style.setProperty("--vw", VW + "px");
+    root.style.setProperty("--vh", VH + "px");
+    for (const c of [linesCv, inkCv]) {
+      const dpr = devicePixelRatio || 1;
+      c.width = VW * dpr;
+      c.height = VH * dpr;
+      c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+  }
+
+  /* ---------- lyric planes ---------- */
+  const planesEl = $("planes");
+  let planes = [];
+  let active = -1;
+  function renderPlanes(t) {
+    planesEl.innerHTML = t.lines.map((l, i) => {
+      const body = l.instrumental
+        ? '<span class="notes"><span>♪</span><span>♪</span><span>♪</span></span>'
+        : l.words.map((w) => `<span class="w">${esc(w.text)}</span>`).join("");
+      return `<div class="lp" data-i="${i}"><div class="lp__text">${body}</div>${l.tr ? `<div class="lp__tr">${esc(l.tr)}</div>` : ""}</div>`;
+    }).join("");
+    planes = [...planesEl.children].map((el, i) => ({
+      el, i,
+      words: [...el.querySelectorAll(".w")],
+      ox: (i % 2 ? 1 : -1) * (0.05 + ((i * 37) % 5) * 0.012),
+      oy: (((i * 53) % 7) - 3) * 0.012,
+      rot: (((i * 29) % 9) - 4) * 1.4,
+    }));
+  }
+  planesEl.addEventListener("click", (e) => {
+    const lp = e.target.closest(".lp");
+    if (!lp) return;
+    const i = +lp.dataset.i;
+    HK.seek(HK.track().lines[i].t + 1);
+    onomatopoeia(e.clientX, e.clientY, i > active ? "ズーム!" : "バック!");
+    splat(e.clientX, e.clientY, 1);
+    HK.sfx("whoosh");
+    burstLines(1);
+  });
+
+  const cam = new HK.Spring(-1, 70, 15);
+  function layoutPlanes() {
+    const c = cam.value;
+    for (const p of planes) {
+      const k = p.i - c;                      // >0 ahead (deeper), <0 behind the lens
+      if (k > AHEAD || k < -1.3) { p.el.style.visibility = "hidden"; continue; }
+      p.el.style.visibility = "visible";
+      const z = -k * GAP;
+      const spread = HK.clamp(k, 0, 1.4);
+      const x = p.ox * VW * spread, y = p.oy * VH * spread + (k < 0 ? k * 60 : 0);
+      const r = p.rot * spread + Math.sin(c * 1.7) * 0.8;
+      p.el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, ${z.toFixed(1)}px) rotateZ(${r.toFixed(2)}deg) translate(-50%, -50%)`;
+      const op = k < 0 ? HK.clamp(1 + k * 1.6, 0, 1) : k < 0.15 ? 1 : HK.clamp(0.62 - (k - 1) * 0.12, 0.1, 0.62);
+      p.el.style.opacity = op.toFixed(3);
+      p.el.style.filter = k < -0.05 ? `blur(${(-k * 6).toFixed(1)}px)` : k > 2.2 ? "grayscale(1) brightness(.85)" : "none";
+    }
+  }
+  function setActive(i) {
+    active = i;
+    for (const p of planes) {
+      p.el.classList.toggle("is-active", p.i === i);
+      p.el.classList.toggle("is-past", p.i < i);
+    }
+    cam.target = Math.max(i, -0.8);
+  }
+
+  /* ---------- focus lines (集中線) ---------- */
+  const linesCv = $("lines");
+  const lctx = linesCv.getContext("2d");
+  const RAYS = Array.from({ length: 170 }, () => ({ a: Math.random() * Math.PI * 2, w: 0.004 + Math.random() * 0.012, r: Math.random() }));
+  let burst = 0;
+  function burstLines(p) { burst = Math.max(burst, p); }
+  function drawLines(vx, vy) {
+    lctx.clearRect(0, 0, VW, VH);
+    const base = HK.state.playing ? 0.18 : 0;
+    const level = Math.min(1.2, base + burst);
+    if (level < 0.02) return;
+    const R = Math.hypot(VW, VH);
+    lctx.fillStyle = "#0b0b0b";
+    const count = Math.floor(RAYS.length * Math.min(1, 0.35 + level * 0.65));
+    for (let k = 0; k < count; k++) {
+      const ray = RAYS[k];
+      const inner = R * (0.5 - level * 0.16 + ray.r * 0.14 + Math.random() * 0.03);
+      const a = ray.a;
+      const w = ray.w * (0.6 + level);
+      lctx.beginPath();
+      lctx.moveTo(vx + Math.cos(a) * inner, vy + Math.sin(a) * inner);
+      lctx.lineTo(vx + Math.cos(a - w) * R, vy + Math.sin(a - w) * R);
+      lctx.lineTo(vx + Math.cos(a + w) * R, vy + Math.sin(a + w) * R);
+      lctx.closePath();
+      lctx.fill();
+    }
+  }
+
+  /* ---------- ink splats ---------- */
+  const inkCv = $("ink");
+  const ictx = inkCv.getContext("2d");
+  let splats = [];
+  function splat(x, y, power = 1) {
+    const blob = [];
+    const n = 18;
+    const r = (26 + Math.random() * 18) * power;
+    for (let k = 0; k < n; k++) blob.push(r * (0.75 + Math.random() * 0.5));
+    const drops = Array.from({ length: 7 + ((Math.random() * 6) | 0) }, () => {
+      const a = Math.random() * Math.PI * 2;
+      const d = r * (1.2 + Math.random() * 1.6);
+      return { x: Math.cos(a) * d, y: Math.sin(a) * d, r: 2 + Math.random() * 7 * power };
+    });
+    splats.push({ x, y, blob, drops, born: performance.now(), drip: Math.random() * 0.6 + 0.4 });
+  }
+  function drawInk(now) {
+    ictx.clearRect(0, 0, VW, VH);
+    splats = splats.filter((s) => now - s.born < 1500);
+    for (const s of splats) {
+      const t = (now - s.born) / 1500;
+      const grow = Math.min(1, (now - s.born) / 90);
+      ictx.globalAlpha = t < 0.6 ? 1 : 1 - (t - 0.6) / 0.4;
+      ictx.fillStyle = "#e8ff00";
+      ictx.strokeStyle = "#0b0b0b";
+      ictx.lineWidth = 3;
+      ictx.beginPath();
+      s.blob.forEach((r, k) => {
+        const a = (k / s.blob.length) * Math.PI * 2;
+        const rr = r * grow * (1 + (Math.sin(a) > 0.6 ? t * s.drip * 1.4 : 0));
+        const px = s.x + Math.cos(a) * rr, py = s.y + Math.sin(a) * rr + (Math.sin(a) > 0.6 ? t * 40 * s.drip : 0);
+        k ? ictx.lineTo(px, py) : ictx.moveTo(px, py);
+      });
+      ictx.closePath();
+      ictx.fill();
+      ictx.stroke();
+      for (const d of s.drops) {
+        ictx.beginPath();
+        ictx.arc(s.x + d.x * grow, s.y + d.y * grow + t * 20, d.r, 0, Math.PI * 2);
+        ictx.fill();
+        ictx.stroke();
+      }
+    }
+    ictx.globalAlpha = 1;
+  }
+
+  /* ---------- onomatopoeia ---------- */
+  function onomatopoeia(x, y, text, size) {
+    const el = document.createElement("div");
+    el.className = "sfx";
+    el.textContent = text;
+    el.style.left = x + "px";
+    el.style.top = y + "px";
+    el.style.setProperty("--r", (Math.random() * 30 - 15).toFixed(1) + "deg");
+    if (size) el.style.fontSize = size + "px";
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1000);
+  }
+  function shake() {
+    document.body.classList.remove("shake");
+    void document.body.offsetWidth;
+    document.body.classList.add("shake");
+  }
+  function impact() {
+    const el = $("impact");
+    el.classList.remove("on");
+    void el.offsetWidth;
+    el.classList.add("on");
+  }
+  function hitButton(el, text, power = 1) {
+    const r = el.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    splat(x, y, power);
+    onomatopoeia(x + (Math.random() * 60 - 30), y - 60, text);
+    burstLines(0.7 * power);
+  }
+
+  /* ---------- tunnel clicks ---------- */
+  const TAPS = ["ポン", "ピチャ!", "SPLAT!", "ベチャ"];
+  $("viewport").addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".lp")) return;
+    splat(e.clientX, e.clientY, 0.8);
+    onomatopoeia(e.clientX, e.clientY - 50, TAPS[(Math.random() * TAPS.length) | 0], 38);
+    burstLines(0.45);
+    HK.sfx("drop");
+  });
+
+  /* ---------- transport + tools ---------- */
+  $("play").addEventListener("click", (e) => {
+    const playing = !HK.state.playing;
+    hitButton(e.currentTarget, playing ? "ドン!" : "ピタッ", 1.3);
+    shake();
+    HK.toggle();
+  });
+  $("next").addEventListener("click", (e) => { hitButton(e.currentTarget, "ギュン!"); HK.next(); });
+  $("prev").addEventListener("click", (e) => { hitButton(e.currentTarget, "バック!"); HK.prev(); });
+  $("source").addEventListener("click", (e) => { hitButton(e.currentTarget, "チェンジ!", 0.7); HK.cycleSource(); HK.sfx("snap"); });
+  $("follow").addEventListener("click", (e) => { hitButton(e.currentTarget, HK.state.follow ? "フリー" : "ロック!", 0.7); HK.setFollow(!HK.state.follow); });
+  $("reload").addEventListener("click", (e) => { hitButton(e.currentTarget, "リロード!", 0.8); HK.refreshLyrics(); });
+  $("w-search").addEventListener("click", (e) => { hitButton(e.currentTarget, "サーチ", 0.5); HK.sfx("pop"); toast("FIND LYRICS — DIALOG NOT IN THIS PROTOTYPE"); });
+  $("w-settings").addEventListener("click", (e) => { hitButton(e.currentTarget, "セット", 0.5); HK.sfx("pop"); toast("SETTINGS — DIALOG NOT IN THIS PROTOTYPE"); });
+  $("w-refresh").addEventListener("click", (e) => { hitButton(e.currentTarget, "シャキーン", 0.5); HK.sfx("click"); toast("PLAYBACK REFRESHED"); });
+  $("w-compact").addEventListener("click", (e) => { hitButton(e.currentTarget, "シュッ", 0.5); HK.setCompact(!HK.state.compact); });
+  $("w-pin").addEventListener("click", (e) => { hitButton(e.currentTarget, "ピン!", 0.5); HK.setPinned(!HK.state.pinned); });
+  document.querySelectorAll(".w-chrome").forEach((b) => b.addEventListener("click", (e) => { hitButton(e.currentTarget, "!?", 0.4); HK.sfx("click"); toast("WINDOW CONTROL — PROTOTYPE"); }));
+  document.querySelectorAll("button").forEach((b) => b.addEventListener("pointerenter", () => HK.sfx("tick")));
+
+  HK.on("state", (playing) => { document.body.classList.toggle("is-playing", playing); HK.sfx(playing ? "impact" : "thunk"); });
+  HK.on("source", (s) => { $("source").textContent = `SRC: ${s.toUpperCase()} ▾`; });
+  HK.on("follow", (on) => { $("follow").setAttribute("aria-pressed", on); $("follow").textContent = on ? "FOLLOW!" : "FREE"; HK.sfx("snap"); });
+  HK.on("pin", (on) => { $("w-pin").setAttribute("aria-pressed", on); HK.sfx("snap"); toast(on ? "PINNED ON TOP" : "UNPINNED"); });
+  HK.on("compact", (on) => { $("w-compact").setAttribute("aria-pressed", on); HK.sfx("whoosh"); burstLines(1); setTimeout(resize, 50); });
+  HK.on("refresh", () => {
+    cam.snap(cam.value - 3);
+    setActive(HK.lineAt(HK.position()));
+    HK.sfx("whoosh");
+    toast(`LYRICS RELOADED FROM ${HK.state.source.toUpperCase()}`);
+  });
+
+  /* ---------- volume ---------- */
+  const vol = $("vol");
+  let volDrag = false;
+  function volFrom(e) {
+    const r = vol.getBoundingClientRect();
+    HK.setVolume(((e.clientX - r.left) / r.width) * 100);
+  }
+  vol.addEventListener("pointerdown", (e) => { volDrag = true; vol.setPointerCapture(e.pointerId); volFrom(e); HK.sfx("click"); });
+  vol.addEventListener("pointermove", (e) => { if (volDrag) volFrom(e); });
+  vol.addEventListener("pointerup", () => { volDrag = false; HK.sfx("snap"); });
+  vol.addEventListener("wheel", (e) => { e.preventDefault(); HK.setVolume(HK.state.volume - Math.sign(e.deltaY) * 3); }, { passive: false });
+  let lastBlip = 0;
+  HK.on("volume", (v) => {
+    vol.style.setProperty("--v", v + "%");
+    $("vol-num").textContent = v;
+    const now = performance.now();
+    if (now - lastBlip > 30) { lastBlip = now; HK.sfx("blip", v); }
+    if (v === 100) {
+      const w = $("vol-wrap");
+      w.classList.remove("max"); void w.offsetWidth; w.classList.add("max");
+      const r = vol.getBoundingClientRect();
+      splat(r.right, r.top + r.height / 2, 0.9);
+      onomatopoeia(r.right, r.top - 30, "MAX!!", 44);
+      HK.sfx("impact");
+    }
+  });
+
+  /* ---------- scrubber ---------- */
+  const scrub = $("scrub");
+  let scrubbing = null;
+  function scrubTo(e) {
+    const r = scrub.getBoundingClientRect();
+    const ms = HK.clamp((e.clientX - r.left) / r.width, 0, 1) * HK.track().duration;
+    const li = HK.lineAt(ms);
+    if (li !== scrubbing.li) { scrubbing.li = li; HK.sfx("tick"); burstLines(0.6); }
+    HK.seek(ms);
+  }
+  scrub.addEventListener("pointerdown", (e) => { scrubbing = { li: active }; scrub.setPointerCapture(e.pointerId); scrub.classList.add("drag"); HK.sfx("click"); scrubTo(e); });
+  scrub.addEventListener("pointermove", (e) => { if (scrubbing) scrubTo(e); });
+  const endScrub = () => { if (scrubbing) { scrubbing = null; scrub.classList.remove("drag"); HK.sfx("snap"); } };
+  scrub.addEventListener("pointerup", endScrub);
+  scrub.addEventListener("pointercancel", endScrub);
+
+  /* ---------- track + line ---------- */
+  function applyTrack(t) {
+    $("title").textContent = t.title;
+    $("artist").textContent = `${t.artist} — ${t.album}`.toUpperCase();
+    $("art").src = HK.artURL(t, 256);
+    $("t-total").textContent = HK.fmt(t.duration);
+    $("cues").innerHTML = t.lines.map((l) => `<i style="left:${(l.t / t.duration) * 100}%"></i>`).join("");
+    renderPlanes(t);
+    cam.snap(-4);
+    setActive(-1);
+  }
+  HK.on("track", (t, dir) => {
+    HK.sfx("whoosh");
+    burstLines(1.2);
+    impact();
+    shake();
+    onomatopoeia(VW / 2, VH * 0.42, dir < 0 ? "巻き戻し!" : "NEXT!!", 80);
+    applyTrack(t);
+  });
+  HK.on("line", (i, prev) => {
+    setActive(i);
+    if (i >= 0 && i === prev + 1 && !scrubbing) { burstLines(0.85); impact(); HK.sfx("whoosh"); }
+  });
+  let beat = 0;
+  HK.on("beat", (n, down) => { beat = down ? 1 : 0.5; if (down) burstLines(0.3); });
+
+  /* ---------- look around ---------- */
+  const look = { x: new HK.Spring(50, 50, 13), y: new HK.Spring(46, 50, 13) };
+  window.addEventListener("pointermove", (e) => {
+    look.x.target = 50 + (e.clientX / VW - 0.5) * -22;
+    look.y.target = 46 + (e.clientY / VH - 0.5) * -18;
+  });
+
+  /* ---------- frame ---------- */
+  const walls = ["wall-l", "wall-r", "wall-t", "wall-b"].map($);
+  HK.on("frame", (pos, dt, now) => {
+    cam.step(dt);
+    look.x.step(dt);
+    look.y.step(dt);
+    root.style.setProperty("--pox", look.x.value.toFixed(2) + "%");
+    root.style.setProperty("--poy", look.y.value.toFixed(2) + "%");
+    const camZ = cam.value * GAP;
+    const zNear = 640 - TILE + (((camZ % TILE) + TILE) % TILE);
+    walls[0].style.transform = walls[1].style.transform = `translateZ(${zNear.toFixed(1)}px) rotateY(90deg)`;
+    walls[2].style.transform = walls[3].style.transform = `translateZ(${zNear.toFixed(1)}px) rotateX(-90deg)`;
+    layoutPlanes();
+    if (active >= 0 && planes[active]) {
+      const line = HK.track().lines[active];
+      planes[active].words.forEach((el, j) => {
+        const p = HK.wordProgress(line.words[j], pos);
+        el.classList.toggle("sung", p >= 1);
+        el.classList.toggle("now", p > 0 && p < 1);
+      });
+    }
+    beat *= Math.pow(0.88, dt / 16);
+    root.style.setProperty("--beat", beat.toFixed(3));
+    burst *= Math.pow(0.93, dt / 16);
+    const vx = (look.x.value / 100) * VW, vy = (look.y.value / 100) * VH;
+    drawLines(vx, vy);
+    drawInk(now);
+    const dur = HK.track().duration;
+    scrub.style.setProperty("--pp", ((pos / dur) * 100).toFixed(3) + "%");
+    $("t-cur").textContent = HK.fmt(pos);
+  });
+
+  window.addEventListener("resize", resize);
+  resize();
+  applyTrack(HK.track());
+  HK.emit("source", HK.state.source);
+  HK.emit("volume", HK.state.volume);
+})();
+</script>
+</body>
+</html>

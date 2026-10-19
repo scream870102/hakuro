@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hakuro · Liquid</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Manrope:wght@500;600;700&family=Noto+Serif+JP:wght@500;700&display=swap" rel="stylesheet">
+<style>
+/* Concept D — Liquid (free concept).
+   The window is a pool of ink in water, simulated on the GPU and tinted with the
+   album art's colours. The cursor stirs it, every press drops into it, each new
+   line sweeps across it, the beat keeps it moving and the volume decides how hard.
+   Pausing lets it settle and drain of colour. UI floats on top as frosted glass. */
+:root {
+  --c1: #ff2e88; --c2: #ff8a00; --c3: #2b1055; --c4: #ffe14d;
+  --serif: "Instrument Serif", "Noto Serif JP", "Yu Mincho", serif;
+  --jp: "Noto Serif JP", "Instrument Serif", "Yu Mincho", serif;
+  --tc: "Noto Serif TC", "Noto Serif JP", "PMingLiU", serif;
+  --ui: "Manrope", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --glass: rgb(255 255 255 / .075);
+  --glass-line: rgb(255 255 255 / .16);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { overflow: hidden; background: #07070b; color: #fff; font-family: var(--ui); -webkit-font-smoothing: antialiased; user-select: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+#fluid { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+.fallback { position: fixed; inset: 0; background: radial-gradient(60% 60% at 30% 30%, var(--c1), transparent), radial-gradient(60% 60% at 70% 70%, var(--c2), transparent), #07070b; display: none; }
+.veil { position: fixed; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 90% at 50% 40%, transparent 55%, rgb(0 0 0 / .45)), linear-gradient(90deg, rgb(0 0 0 / 0), rgb(0 0 0 / .26) 62%, rgb(0 0 0 / .08)); }
+.grain { position: fixed; inset: -50%; pointer-events: none; opacity: .08; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E"); }
+.glass { background: var(--glass); border: 1px solid var(--glass-line); backdrop-filter: blur(22px) saturate(1.6); -webkit-backdrop-filter: blur(22px) saturate(1.6); box-shadow: inset 0 1px 0 rgb(255 255 255 / .18), 0 24px 60px rgb(0 0 0 / .35); }
+
+/* ---------- chrome ---------- */
+.chrome { position: fixed; left: 0; right: 0; top: 0; height: 52px; display: flex; align-items: center; padding: 0 12px 0 26px; gap: 16px; z-index: 5; }
+.mark { font: italic 400 26px/1 var(--serif); letter-spacing: -.01em; }
+.status { display: flex; align-items: center; gap: 8px; font: 600 11px var(--ui); color: rgb(255 255 255 / .6); }
+.status i { width: 7px; height: 7px; border-radius: 50%; background: #fff; box-shadow: 0 0 10px #fff; animation: breathe 2.4s ease-in-out infinite; }
+.chrome__drag { flex: 1; align-self: stretch; }
+.win { display: flex; gap: 6px; }
+.win button { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; color: rgb(255 255 255 / .82); transition: transform .3s cubic-bezier(.3, 1.6, .5, 1), background .2s; }
+.win button svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.3; }
+.win button:hover { background: rgb(255 255 255 / .16); transform: scale(1.1); }
+.win button:active { transform: scale(.85); }
+.win button[aria-pressed="true"] { background: #fff; color: #111; }
+.win .close:hover { background: #fff; color: #111; }
+
+/* ---------- record + meta ---------- */
+.side { position: fixed; left: 40px; top: 50%; transform: translateY(-54%); width: 250px; z-index: 3; }
+.card-wrap { perspective: 900px; width: 230px; }
+.card { position: relative; width: 230px; aspect-ratio: 1; border-radius: 22px; overflow: hidden; transform-style: preserve-3d; cursor: pointer;
+  box-shadow: 0 40px 80px rgb(0 0 0 / .5), 0 0 0 1px rgb(255 255 255 / .18); will-change: transform; }
+.card img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.card__sheen { position: absolute; inset: 0; pointer-events: none; mix-blend-mode: soft-light;
+  background: radial-gradient(70% 70% at var(--sx, 30%) var(--sy, 20%), rgb(255 255 255 / .75), transparent 60%); }
+.card__edge { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 1px 0 rgb(255 255 255 / .45), inset 0 0 0 1px rgb(255 255 255 / .12); }
+.card.squish { animation: squish .55s cubic-bezier(.3, 1.6, .5, 1); }
+body:not(.is-playing) .card img { filter: saturate(.35) brightness(.8); transition: filter .8s; }
+.card img { transition: filter .8s; }
+.reflect { width: 230px; height: 60px; margin-top: 6px; border-radius: 22px; overflow: hidden; opacity: .25; transform: scaleY(-1); -webkit-mask: linear-gradient(to top, #000, transparent 80%); filter: blur(3px); }
+.reflect img { width: 100%; display: block; }
+.meta { margin-top: 2px; }
+.meta h1 { margin: 0; font: 400 34px/1.08 var(--serif); letter-spacing: -.01em; }
+.meta h1.jp { font-family: var(--jp); font-weight: 700; font-size: 27px; letter-spacing: .02em; }
+.meta p { margin: 8px 0 0; font: 600 12px var(--ui); color: rgb(255 255 255 / .62); letter-spacing: .02em; }
+.chip { margin-top: 16px; display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 14px; border-radius: 99px; font: 700 11px var(--ui); letter-spacing: .04em; transition: transform .3s cubic-bezier(.3, 1.6, .5, 1); }
+.chip i { width: 8px; height: 8px; border-radius: 50%; background: linear-gradient(135deg, var(--c1), var(--c2)); box-shadow: 0 0 10px var(--c1); }
+.chip:hover { transform: scale(1.06); }
+.chip:active { transform: scale(.92); }
+
+/* ---------- lyrics ---------- */
+.lyrics { position: fixed; left: 330px; right: 34px; top: 60px; bottom: 112px; overflow: hidden; z-index: 2;
+  -webkit-mask: linear-gradient(transparent, #000 16%, #000 82%, transparent); }
+.lyric-list { list-style: none; margin: 0; padding: 0; will-change: transform; }
+.ln { padding: 12px 6px; transform-origin: 0 50%; transition: opacity .6s, filter .6s, transform .7s cubic-bezier(.2, 1.3, .3, 1); cursor: pointer; opacity: .38; filter: blur(1.4px); transform: scale(.9); }
+.ln.d1 { opacity: .5; filter: blur(.6px); }
+.ln.past { opacity: .22; }
+.ln.active { opacity: 1; filter: none; transform: scale(1); }
+.ln:hover { opacity: .8; filter: none; }
+.ln__t { margin: 0; font: 500 36px/1.24 var(--jp); letter-spacing: .01em; }
+.ln__t.latin { font-family: var(--serif); font-weight: 400; font-size: 42px; line-height: 1.1; letter-spacing: -.005em; }
+.ln__tr { margin: 6px 0 0; font: italic 400 18px/1.4 var(--serif), var(--tc); color: rgb(255 255 255 / .62); }
+.ln:not(.active) .ln__tr { font-size: 15px; }
+.w { display: inline; white-space: pre-wrap; }
+.ln.active .w { color: rgb(255 255 255 / .42); transition: color .3s, text-shadow .5s; }
+.ln.active .w.sung { color: #fff; text-shadow: 0 0 22px rgb(255 255 255 / .45); }
+.ln.active .w.now { color: transparent; background: linear-gradient(90deg, #fff var(--p), rgb(255 255 255 / .42) calc(var(--p) + 8%)); -webkit-background-clip: text; background-clip: text; }
+.dots { display: inline-flex; gap: 10px; }
+.dots i { width: 12px; height: 12px; border-radius: 50%; background: #fff; opacity: .35; transform: scale(calc(.7 + var(--beat, 0) * .5)); }
+.ln.active .dots i { opacity: 1; box-shadow: 0 0 18px #fff; }
+
+/* ---------- dock ---------- */
+.dock { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); width: min(880px, calc(100vw - 44px)); height: 70px; border-radius: 99px; z-index: 5;
+  display: flex; align-items: center; gap: 6px; padding: 0 12px 0 10px; }
+.btn { position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; flex: none; transition: transform .35s cubic-bezier(.3, 1.6, .5, 1), background .2s; }
+.btn svg { width: 20px; height: 20px; fill: currentColor; }
+.btn:hover { background: rgb(255 255 255 / .12); transform: scale(1.08); }
+.btn:active { transform: scale(.82); transition-duration: .08s; }
+.btn::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 2px solid #fff; opacity: 0; pointer-events: none; }
+.btn.ring::after { animation: ring .6s ease-out; }
+.btn--play { width: 54px; height: 54px; background: #fff; color: #0b0b10; box-shadow: 0 0 30px rgb(255 255 255 / .3); }
+.btn--play:hover { background: #fff; transform: scale(1.1); }
+.btn--play svg { width: 22px; height: 22px; }
+.btn--sm svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.btn--sm[aria-pressed="true"] { color: #fff; background: rgb(255 255 255 / .18); }
+.btn--sm[aria-pressed="false"] { color: rgb(255 255 255 / .5); }
+.icon-pause { display: none; }
+body.is-playing .icon-play { display: none; }
+body.is-playing .icon-pause { display: block; }
+.seek { flex: 1; display: flex; align-items: center; gap: 12px; padding: 0 12px; min-width: 0; }
+.time { font: 600 11px var(--ui); color: rgb(255 255 255 / .62); font-variant-numeric: tabular-nums; min-width: 32px; }
+.slider { position: relative; flex: 1; height: 28px; cursor: pointer; touch-action: none; --pp: 0%; }
+.slider__track { position: absolute; left: 0; right: 0; top: 50%; height: 4px; margin-top: -2px; border-radius: 9px; background: rgb(255 255 255 / .18); transition: height .25s cubic-bezier(.3, 1.6, .5, 1), margin .25s cubic-bezier(.3, 1.6, .5, 1); overflow: hidden; }
+.slider__fill { position: absolute; inset: 0 auto 0 0; width: var(--pp); background: linear-gradient(90deg, var(--c3), var(--c1), var(--c2)); box-shadow: 0 0 16px var(--c1); }
+.slider__knob { position: absolute; top: 50%; left: var(--pp); width: 14px; height: 14px; border-radius: 50%; background: #fff; transform: translate(-50%, -50%) scale(0); box-shadow: 0 0 18px #fff; transition: transform .3s cubic-bezier(.3, 1.6, .5, 1); }
+.slider:hover .slider__track, .slider.drag .slider__track { height: 9px; margin-top: -4.5px; }
+.slider:hover .slider__knob, .slider.drag .slider__knob { transform: translate(-50%, -50%) scale(1); }
+.slider.drag .slider__knob { transform: translate(-50%, -50%) scale(1.35); }
+.vol { display: flex; align-items: center; gap: 8px; width: 140px; flex: none; padding-right: 6px; }
+.vol svg { width: 18px; height: 18px; fill: none; stroke: #fff; stroke-width: 1.6; flex: none; opacity: .8; }
+.vol .slider { --pp: 64%; }
+.vol .slider__fill { background: #fff; box-shadow: 0 0 12px rgb(255 255 255 / .6); }
+.sep { width: 1px; height: 30px; background: rgb(255 255 255 / .14); flex: none; }
+
+.toast { position: fixed; left: 50%; bottom: 106px; z-index: 9; pointer-events: none; padding: 10px 18px; border-radius: 99px; font: 600 12px var(--ui); transform: translate(-50%, 14px) scale(.9); opacity: 0; transition: .45s cubic-bezier(.2, 1.6, .4, 1); }
+.toast.show { transform: translate(-50%, 0) scale(1); opacity: 1; }
+
+/* ---------- compact ---------- */
+body.is-compact .side, body.is-compact .status, body.is-compact .win .wide, body.is-compact .vol, body.is-compact .sep, body.is-compact .btn--sm, body.is-compact .ln__tr { display: none; }
+body.is-compact .chrome { height: 34px; padding-left: 16px; }
+body.is-compact .mark { font-size: 19px; }
+body.is-compact .win button { width: 26px; height: 26px; }
+body.is-compact .lyrics { left: 18px; right: 18px; top: 34px; bottom: 58px; }
+body.is-compact .ln { padding: 4px 4px; }
+body.is-compact .ln__t { font-size: 17px; }
+body.is-compact .ln__t.latin { font-size: 20px; }
+body.is-compact .ln.active .ln__t { font-size: 22px; }
+body.is-compact .ln.active .ln__t.latin { font-size: 25px; }
+body.is-compact .dock { height: 44px; bottom: 8px; width: calc(100vw - 16px); padding: 0 6px; }
+body.is-compact .btn { width: 30px; height: 30px; }
+body.is-compact .btn--play { width: 34px; height: 34px; }
+body.is-compact .btn svg { width: 14px; height: 14px; }
+
+@keyframes breathe { 50% { opacity: .35; } }
+@keyframes ring { 0% { opacity: .9; transform: scale(.9); } 100% { opacity: 0; transform: scale(1.9); } }
+@keyframes squish { 0% { scale: .9; } 40% { scale: 1.05; } 100% { scale: 1; } }
+@keyframes enter { from { translate: 0 14px; opacity: 0; } }
+.lyric-list.enter .ln { animation: enter .9s cubic-bezier(.2, 1, .3, 1) backwards; animation-delay: calc(var(--i) * 40ms); }
+</style>
+</head>
+<body class="is-playing">
+<canvas id="fluid"></canvas>
+<div class="fallback" id="fallback"></div>
+<div class="veil" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="chrome" data-tauri-drag-region>
+  <span class="mark">hakuro</span>
+  <span class="status"><i></i>Spotify</span>
+  <div class="chrome__drag" data-tauri-drag-region></div>
+  <nav class="win">
+    <button class="wide" id="w-search" title="Find lyrics"><svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="3"/><path d="m7.3 7.3 3 3"/></svg></button>
+    <button class="wide" id="w-settings" title="Settings"><svg viewBox="0 0 12 12"><path d="M1.8 4h8.4M1.8 8h8.4"/><circle cx="4.2" cy="4" r="1.5"/><circle cx="7.8" cy="8" r="1.5"/></svg></button>
+    <button class="wide" id="w-refresh" title="Refresh playback"><svg viewBox="0 0 12 12"><path d="M9.9 5.2A4 4 0 1 0 9.4 8M10 1.9v3.3H6.7"/></svg></button>
+    <button id="w-compact" title="Compact mode" aria-pressed="false"><svg viewBox="0 0 12 12"><path d="M6 1.4v3.1M4.4 3l1.6 1.5L7.6 3M6 10.6V7.5M4.4 9l1.6-1.5L7.6 9"/></svg></button>
+    <button id="w-pin" title="Keep on top" aria-pressed="false"><svg viewBox="0 0 12 12"><path d="M3.6 1.4h4.8M5 1.4v2.8L3.4 6h5.2L7 4.2V1.4M6 6v3.2"/></svg></button>
+    <button class="w-chrome" title="Minimize"><svg viewBox="0 0 12 12"><path d="M2.5 6h7"/></svg></button>
+    <button class="w-chrome wide" title="Maximize"><svg viewBox="0 0 12 12"><path d="M2.5 2.5h7v7h-7z"/></svg></button>
+    <button class="w-chrome close" title="Close"><svg viewBox="0 0 12 12"><path d="M2.6 2.6l6.8 6.8M9.4 2.6l-6.8 6.8"/></svg></button>
+  </nav>
+</header>
+
+<aside class="side">
+  <div class="card-wrap"><div class="card" id="card" title="Play or pause"><img id="art" alt=""><div class="card__sheen" id="sheen"></div><div class="card__edge"></div></div></div>
+  <div class="reflect"><img id="art-r" alt=""></div>
+  <div class="meta">
+    <h1 id="title">—</h1>
+    <p id="artist">—</p>
+    <button class="chip glass" id="source"><i></i><span id="source-name">NetEase</span> ▾</button>
+  </div>
+</aside>
+
+<main class="lyrics" id="lyrics"><ol class="lyric-list" id="lyric-list"></ol></main>
+
+<nav class="dock glass">
+  <button class="btn" id="prev" aria-label="Previous track"><svg viewBox="0 0 24 24"><path d="M6 5h2.4v14H6zM19 6.2v11.6a.8.8 0 0 1-1.24.67L9.6 12.67a.8.8 0 0 1 0-1.34l8.16-5.8A.8.8 0 0 1 19 6.2Z"/></svg></button>
+  <button class="btn btn--play" id="play" aria-label="Play or pause">
+    <svg class="icon-play" viewBox="0 0 24 24"><path d="M7.5 5.2v13.6a.9.9 0 0 0 1.37.77l10.6-6.8a.9.9 0 0 0 0-1.54L8.87 4.43A.9.9 0 0 0 7.5 5.2Z"/></svg>
+    <svg class="icon-pause" viewBox="0 0 24 24"><path d="M6.5 4.5h3.6v15H6.5zM13.9 4.5h3.6v15h-3.6z"/></svg>
+  </button>
+  <button class="btn" id="next" aria-label="Next track"><svg viewBox="0 0 24 24"><path d="M15.6 5H18v14h-2.4zM5 6.2v11.6a.8.8 0 0 0 1.24.67l8.16-5.8a.8.8 0 0 0 0-1.34l-8.16-5.8A.8.8 0 0 0 5 6.2Z"/></svg></button>
+  <div class="seek">
+    <span class="time" id="t-cur">0:00</span>
+    <div class="slider" id="scrub" role="slider" aria-label="Seek" tabindex="0"><div class="slider__track"><div class="slider__fill"></div></div><div class="slider__knob"></div></div>
+    <span class="time" id="t-total">0:00</span>
+  </div>
+  <span class="sep"></span>
+  <div class="vol">
+    <svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" stroke-linecap="round"/></svg>
+    <div class="slider" id="vol" role="slider" aria-label="Volume" tabindex="0"><div class="slider__track"><div class="slider__fill"></div></div><div class="slider__knob"></div></div>
+  </div>
+  <span class="sep"></span>
+  <button class="btn btn--sm" id="follow" aria-pressed="true" title="Follow lyrics"><svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h9M5 17h12"/></svg></button>
+  <button class="btn btn--sm" id="reload" aria-pressed="true" title="Refresh lyrics"><svg viewBox="0 0 24 24"><path d="M19.5 10.5A7.5 7.5 0 1 0 18.6 16M20 4.5v6h-6"/></svg></button>
+</nav>
+<div class="toast glass" id="toast"></div>
+
+<script src="hk-mock.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const root = document.documentElement;
+  HK.bindKeys();
+
+  let toastTimer;
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.remove("show");
+    void t.offsetWidth;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 1700);
+  }
+
+  /* =========================================================
+     GPU fluid (stable fluids: advect, curl, pressure, project)
+     ========================================================= */
+  const canvas = $("fluid");
+  const gl = canvas.getContext("webgl2", { alpha: false, depth: false, stencil: false, antialias: false });
+  const fluid = { ok: false, splat() {}, burst() {}, sweep() {} };
+  if (gl && gl.getExtension("EXT_color_buffer_float")) {
+    try { initFluid(); } catch (err) { console.warn("fluid disabled:", err.message); }
+  }
+  if (!fluid.ok) $("fallback").style.display = "block";
+
+  function initFluid() {
+    const P = { SIM: 128, DYE: 720, DENSITY: 0.22, VELOCITY: 0.25, PRESSURE: 0.8, ITER: 20, CURL: 24, RADIUS: 0.24, FORCE: 5200 };
+    const vsSrc = `precision highp float;
+      attribute vec2 aPosition; varying vec2 vUv, vL, vR, vT, vB; uniform vec2 texelSize;
+      void main () { vUv = aPosition * .5 + .5; vL = vUv - vec2(texelSize.x, 0.); vR = vUv + vec2(texelSize.x, 0.);
+        vT = vUv + vec2(0., texelSize.y); vB = vUv - vec2(0., texelSize.y); gl_Position = vec4(aPosition, 0., 1.); }`;
+    const H = "precision highp float; precision highp sampler2D; varying vec2 vUv, vL, vR, vT, vB;";
+    const FS = {
+      splat: `${H} uniform sampler2D uTarget; uniform float aspectRatio, radius; uniform vec3 color; uniform vec2 point;
+        void main () { vec2 p = vUv - point; p.x *= aspectRatio; vec3 s = exp(-dot(p, p) / radius) * color;
+          gl_FragColor = vec4(texture2D(uTarget, vUv).xyz + s, 1.); }`,
+      advect: `${H} uniform sampler2D uVelocity, uSource; uniform vec2 texelSize; uniform float dt, dissipation;
+        void main () { vec2 coord = vUv - dt * texture2D(uVelocity, vUv).xy * texelSize;
+          gl_FragColor = texture2D(uSource, coord) / (1. + dissipation * dt); }`,
+      divergence: `${H} uniform sampler2D uVelocity;
+        void main () { float L = texture2D(uVelocity, vL).x, R = texture2D(uVelocity, vR).x, T = texture2D(uVelocity, vT).y, B = texture2D(uVelocity, vB).y;
+          vec2 C = texture2D(uVelocity, vUv).xy;
+          if (vL.x < 0.) L = -C.x; if (vR.x > 1.) R = -C.x; if (vT.y > 1.) T = -C.y; if (vB.y < 0.) B = -C.y;
+          gl_FragColor = vec4(.5 * (R - L + T - B), 0., 0., 1.); }`,
+      curl: `${H} uniform sampler2D uVelocity;
+        void main () { float L = texture2D(uVelocity, vL).y, R = texture2D(uVelocity, vR).y, T = texture2D(uVelocity, vT).x, B = texture2D(uVelocity, vB).x;
+          gl_FragColor = vec4(.5 * (R - L - T + B), 0., 0., 1.); }`,
+      vorticity: `${H} uniform sampler2D uVelocity, uCurl; uniform float curl, dt;
+        void main () { float L = texture2D(uCurl, vL).x, R = texture2D(uCurl, vR).x, T = texture2D(uCurl, vT).x, B = texture2D(uCurl, vB).x, C = texture2D(uCurl, vUv).x;
+          vec2 f = .5 * vec2(abs(T) - abs(B), abs(R) - abs(L)); f /= length(f) + .0001; f *= curl * C; f.y *= -1.;
+          vec2 v = texture2D(uVelocity, vUv).xy + f * dt; gl_FragColor = vec4(clamp(v, -1000., 1000.), 0., 1.); }`,
+      pressure: `${H} uniform sampler2D uPressure, uDivergence;
+        void main () { float L = texture2D(uPressure, vL).x, R = texture2D(uPressure, vR).x, T = texture2D(uPressure, vT).x, B = texture2D(uPressure, vB).x;
+          gl_FragColor = vec4((L + R + B + T - texture2D(uDivergence, vUv).x) * .25, 0., 0., 1.); }`,
+      gradient: `${H} uniform sampler2D uPressure, uVelocity;
+        void main () { float L = texture2D(uPressure, vL).x, R = texture2D(uPressure, vR).x, T = texture2D(uPressure, vT).x, B = texture2D(uPressure, vB).x;
+          vec2 v = texture2D(uVelocity, vUv).xy - vec2(R - L, T - B); gl_FragColor = vec4(v, 0., 1.); }`,
+      scale: `${H} uniform sampler2D uTexture; uniform float value; void main () { gl_FragColor = value * texture2D(uTexture, vUv); }`,
+      display: `${H} uniform sampler2D uTexture; uniform vec2 texelSize; uniform float uSat, uGlow;
+        void main () {
+          vec3 c = texture2D(uTexture, vUv).rgb;
+          float dx = length(texture2D(uTexture, vR).rgb) - length(texture2D(uTexture, vL).rgb);
+          float dy = length(texture2D(uTexture, vT).rgb) - length(texture2D(uTexture, vB).rgb);
+          vec3 n = normalize(vec3(dx, dy, length(texelSize)));
+          float diffuse = clamp(dot(n, vec3(0., 0., 1.)) + .7, .7, 1.);
+          vec3 col = c * diffuse;
+          float spec = pow(max(dot(n, normalize(vec3(-.35, .5, 1.))), 0.), 36.);
+          col += spec * .55 * smoothstep(.02, .3, length(c));
+          col = 1. - exp(-col * (2.3 + uGlow));
+          float l = dot(col, vec3(.299, .587, .114));
+          col = mix(vec3(l), col, uSat);
+          gl_FragColor = vec4(col + vec3(.018, .018, .03), 1.); }`,
+    };
+    const compile = (type, src) => {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src);
+      gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      return s;
+    };
+    const vs = compile(gl.VERTEX_SHADER, vsSrc);
+    const prog = (src) => {
+      const p = gl.createProgram();
+      gl.attachShader(p, vs);
+      gl.attachShader(p, compile(gl.FRAGMENT_SHADER, src));
+      gl.bindAttribLocation(p, 0, "aPosition");
+      gl.linkProgram(p);
+      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+      const u = {};
+      const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < n; i++) { const name = gl.getActiveUniform(p, i).name; u[name] = gl.getUniformLocation(p, name); }
+      return { u, use() { gl.useProgram(p); return u; } };
+    };
+    const progs = Object.fromEntries(Object.entries(FS).map(([k, v]) => [k, prog(v)]));
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, -1, 1, 1, 1, 1, -1]), gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array([0, 1, 2, 0, 2, 3]), gl.STATIC_DRAW);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.enableVertexAttribArray(0);
+    const blit = (target) => {
+      if (target) { gl.viewport(0, 0, target.w, target.h); gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo); }
+      else { gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight); gl.bindFramebuffer(gl.FRAMEBUFFER, null); }
+      gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+    };
+    function fbo(w, h, ifmt, fmt) {
+      gl.activeTexture(gl.TEXTURE0);
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, gl.HALF_FLOAT, null);
+      const fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) throw new Error("framebuffer incomplete");
+      gl.viewport(0, 0, w, h);
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      return { tex, fbo: fb, w, h, tx: 1 / w, ty: 1 / h, attach(i) { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, tex); return i; } };
+    }
+    function double(w, h, ifmt, fmt) {
+      let a = fbo(w, h, ifmt, fmt), b = fbo(w, h, ifmt, fmt);
+      return { get read() { return a; }, get write() { return b; }, swap() { [a, b] = [b, a]; }, w, h, tx: 1 / w, ty: 1 / h };
+    }
+    const res = (r) => {
+      const ar = gl.drawingBufferWidth / gl.drawingBufferHeight;
+      const min = Math.round(r), max = Math.round(r * (ar < 1 ? 1 / ar : ar));
+      return ar > 1 ? [max, min] : [min, max];
+    };
+    let dye, vel, div, curlT, pres;
+    function allocate() {
+      const [sw, sh] = res(P.SIM), [dw, dh] = res(P.DYE);
+      dye = double(dw, dh, gl.RGBA16F, gl.RGBA);
+      vel = double(sw, sh, gl.RG16F, gl.RG);
+      div = fbo(sw, sh, gl.R16F, gl.RED);
+      curlT = fbo(sw, sh, gl.R16F, gl.RED);
+      pres = double(sw, sh, gl.R16F, gl.RED);
+    }
+    function resize() {
+      const dpr = Math.min(devicePixelRatio || 1, 1.5);
+      const w = Math.floor(innerWidth * dpr), h = Math.floor(innerHeight * dpr);
+      if (canvas.width === w && canvas.height === h) return;
+      canvas.width = w;
+      canvas.height = h;
+      allocate();
+    }
+    resize();
+    window.addEventListener("resize", () => { resize(); seed(6); });
+
+    function splat(x, y, dx, dy, color, radius = P.RADIUS) {
+      const ar = canvas.width / canvas.height;
+      let u = progs.splat.use();
+      gl.uniform1i(u.uTarget, vel.read.attach(0));
+      gl.uniform1f(u.aspectRatio, ar);
+      gl.uniform2f(u.point, x, y);
+      gl.uniform3f(u.color, dx, dy, 0);
+      gl.uniform1f(u.radius, (radius / 100) * (ar > 1 ? ar : 1));
+      blit(vel.write);
+      vel.swap();
+      gl.uniform1i(u.uTarget, dye.read.attach(0));
+      gl.uniform3f(u.color, color[0], color[1], color[2]);
+      blit(dye.write);
+      dye.swap();
+    }
+    const sim = { velocityDiss: P.VELOCITY, densityDiss: P.DENSITY, sat: 1, satTarget: 1, glow: 0 };
+    function step(dt) {
+      gl.disable(gl.BLEND);
+      let u = progs.curl.use();
+      gl.uniform2f(u.texelSize, vel.tx, vel.ty);
+      gl.uniform1i(u.uVelocity, vel.read.attach(0));
+      blit(curlT);
+      u = progs.vorticity.use();
+      gl.uniform2f(u.texelSize, vel.tx, vel.ty);
+      gl.uniform1i(u.uVelocity, vel.read.attach(0));
+      gl.uniform1i(u.uCurl, curlT.attach(1));
+      gl.uniform1f(u.curl, P.CURL);
+      gl.uniform1f(u.dt, dt);
+      blit(vel.write);
+      vel.swap();
+      u = progs.divergence.use();
+      gl.uniform2f(u.texelSize, vel.tx, vel.ty);
+      gl.uniform1i(u.uVelocity, vel.read.attach(0));
+      blit(div);
+      u = progs.scale.use();
+      gl.uniform1i(u.uTexture, pres.read.attach(0));
+      gl.uniform1f(u.value, P.PRESSURE);
+      blit(pres.write);
+      pres.swap();
+      u = progs.pressure.use();
+      gl.uniform2f(u.texelSize, vel.tx, vel.ty);
+      gl.uniform1i(u.uDivergence, div.attach(0));
+      for (let i = 0; i < P.ITER; i++) {
+        gl.uniform1i(u.uPressure, pres.read.attach(1));
+        blit(pres.write);
+        pres.swap();
+      }
+      u = progs.gradient.use();
+      gl.uniform2f(u.texelSize, vel.tx, vel.ty);
+      gl.uniform1i(u.uPressure, pres.read.attach(0));
+      gl.uniform1i(u.uVelocity, vel.read.attach(1));
+      blit(vel.write);
+      vel.swap();
+      u = progs.advect.use();
+      gl.uniform2f(u.texelSize, vel.tx, vel.ty);
+      gl.uniform1i(u.uVelocity, vel.read.attach(0));
+      gl.uniform1i(u.uSource, vel.read.attach(0));
+      gl.uniform1f(u.dt, dt);
+      gl.uniform1f(u.dissipation, sim.velocityDiss);
+      blit(vel.write);
+      vel.swap();
+      gl.uniform1i(u.uVelocity, vel.read.attach(0));
+      gl.uniform1i(u.uSource, dye.read.attach(1));
+      gl.uniform1f(u.dissipation, sim.densityDiss);
+      blit(dye.write);
+      dye.swap();
+    }
+    function render() {
+      const u = progs.display.use();
+      gl.uniform2f(u.texelSize, 1 / dye.w, 1 / dye.h);
+      gl.uniform1i(u.uTexture, dye.read.attach(0));
+      gl.uniform1f(u.uSat, sim.sat);
+      gl.uniform1f(u.uGlow, sim.glow);
+      blit(null);
+    }
+    function seed(n) {
+      for (let i = 0; i < n; i++) {
+        const c = paletteColor(i, 0.5);
+        splat(Math.random(), Math.random(), (Math.random() - 0.5) * 1800, (Math.random() - 0.5) * 1800, c, 0.5 + Math.random() * 0.4);
+      }
+    }
+    fluid.ok = true;
+    fluid.sim = sim;
+    fluid.step = step;
+    fluid.render = render;
+    fluid.seed = seed;
+    fluid.splat = splat;
+    // Screen-space helpers (pixels in, uv out).
+    fluid.burst = (px, py, power = 1, color) => {
+      const x = px / innerWidth, y = 1 - py / innerHeight;
+      const n = 10;
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2 + Math.random() * 0.3;
+        const f = 1400 * power;
+        splat(x + Math.cos(a) * 0.012, y + Math.sin(a) * 0.012, Math.cos(a) * f, Math.sin(a) * f, color || paletteColor(k, 0.26 * power), 0.18);
+      }
+      splat(x, y, 0, 0, color || paletteColor(Math.random() * 4, 0.55 * power), 0.3 * power);
+      sim.glow = Math.max(sim.glow, 0.5 * power);
+    };
+    fluid.sweep = (x0, x1, py) => {
+      const y = 1 - py / innerHeight;
+      const steps = 9;
+      for (let k = 0; k < steps; k++) {
+        const x = (x0 + ((x1 - x0) * k) / (steps - 1)) / innerWidth;
+        splat(x, y + (Math.random() - 0.5) * 0.04, 900 + Math.random() * 600, (Math.random() - 0.5) * 900, paletteColor(k * 0.6, 0.2), 0.2);
+      }
+    };
+  }
+
+  /* ---------- palette ---------- */
+  let palette = HK.track().palette.map(HK.hexToRgb);
+  function paletteColor(i, strength) {
+    const n = palette.length;
+    const a = palette[Math.floor(i) % n], b = palette[(Math.floor(i) + 1) % n];
+    const f = i % 1;
+    return [0, 1, 2].map((k) => ((a[k] + (b[k] - a[k]) * f) / 255) * strength);
+  }
+
+  /* ---------- pointer stirs the pool ---------- */
+  const pointer = { x: 0, y: 0, moved: false, hue: 0 };
+  window.addEventListener("pointermove", (e) => {
+    if (pointer.x || pointer.y) {
+      const dx = (e.clientX - pointer.x) / innerWidth, dy = (pointer.y - e.clientY) / innerHeight;
+      if (Math.abs(dx) + Math.abs(dy) > 0.0005 && fluid.ok) {
+        pointer.hue += 0.02;
+        fluid.splat(e.clientX / innerWidth, 1 - e.clientY / innerHeight, dx * 5200, dy * 5200, paletteColor(pointer.hue, 0.14), 0.18);
+      }
+    }
+    pointer.x = e.clientX;
+    pointer.y = e.clientY;
+    tilt(e);
+  });
+  window.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("button, .slider, .card, .ln")) return;
+    fluid.burst(e.clientX, e.clientY, 1);
+    HK.sfx("drop");
+  });
+  function ring(el) {
+    el.classList.remove("ring");
+    void el.offsetWidth;
+    el.classList.add("ring");
+  }
+  function pressFx(el, power = 1) {
+    const r = el.getBoundingClientRect();
+    fluid.burst(r.left + r.width / 2, r.top + r.height / 2, power);
+    ring(el);
+  }
+
+  /* ---------- album card tilt ---------- */
+  const card = $("card");
+  const tx = new HK.Spring(0, 120, 12), ty = new HK.Spring(0, 120, 12);
+  function tilt(e) {
+    const r = card.getBoundingClientRect();
+    const nx = (e.clientX - (r.left + r.width / 2)) / (innerWidth * 0.5);
+    const ny = (e.clientY - (r.top + r.height / 2)) / (innerHeight * 0.5);
+    tx.target = HK.clamp(ny * -14, -16, 16);
+    ty.target = HK.clamp(nx * 16, -18, 18);
+  }
+  card.addEventListener("click", () => {
+    card.classList.remove("squish");
+    void card.offsetWidth;
+    card.classList.add("squish");
+    pressFx(card, 1.6);
+    tx.kick(-120);
+    HK.toggle();
+  });
+
+  /* ---------- lyrics ---------- */
+  const list = $("lyric-list");
+  const box = $("lyrics");
+  let lines = [], words = [], active = -1;
+  const listY = new HK.Spring(0, 90, 17);
+  let manualY = 0;
+  function renderLyrics(t) {
+    list.innerHTML = t.lines.map((l, i) => {
+      const latin = !/[぀-ヿ一-鿿]/.test(l.text);
+      const body = l.instrumental ? '<span class="dots"><i></i><i></i><i></i></span>' : l.words.map((w) => `<span class="w">${esc(w.text)}</span>`).join("");
+      return `<li class="ln" data-i="${i}" style="--i:${i}"><p class="ln__t${latin ? " latin" : ""}">${body}</p>${l.tr ? `<p class="ln__tr">${esc(l.tr)}</p>` : ""}</li>`;
+    }).join("");
+    lines = [...list.children];
+    words = lines.map((li) => [...li.querySelectorAll(".w")]);
+    list.classList.remove("enter");
+    void list.offsetWidth;
+    list.classList.add("enter");
+    active = -1;
+    classify();
+  }
+  function classify() {
+    lines.forEach((li, j) => {
+      li.classList.toggle("active", j === active);
+      li.classList.toggle("past", j < active);
+      li.classList.toggle("d1", Math.abs(j - active) === 1);
+    });
+  }
+  list.addEventListener("click", (e) => {
+    const li = e.target.closest(".ln");
+    if (!li) return;
+    HK.seek(HK.track().lines[+li.dataset.i].t + 1);
+    fluid.burst(e.clientX, e.clientY, 1.2);
+    HK.sfx("pop");
+  });
+  box.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    if (HK.state.follow) { HK.setFollow(false); manualY = listY.value; }
+    manualY -= e.deltaY;
+  }, { passive: false });
+  const target = () => {
+    const li = lines[Math.max(0, active)];
+    if (!li) return 0;
+    return box.clientHeight * 0.42 - (li.offsetTop + li.offsetHeight / 2) + (active < 0 ? 80 : 0);
+  };
+
+  /* ---------- dock ---------- */
+  $("play").addEventListener("click", (e) => { pressFx(e.currentTarget, 1.3); HK.toggle(); });
+  $("prev").addEventListener("click", (e) => { pressFx(e.currentTarget); HK.sfx("click"); HK.prev(); });
+  $("next").addEventListener("click", (e) => { pressFx(e.currentTarget); HK.sfx("click"); HK.next(); });
+  $("follow").addEventListener("click", (e) => { pressFx(e.currentTarget, 0.6); HK.setFollow(!HK.state.follow); });
+  $("reload").addEventListener("click", (e) => { pressFx(e.currentTarget, 0.8); HK.refreshLyrics(); });
+  $("source").addEventListener("click", (e) => { pressFx(e.currentTarget, 0.8); HK.cycleSource(); HK.sfx("snap"); });
+  $("w-search").addEventListener("click", (e) => { pressFx(e.currentTarget, 0.5); HK.sfx("pop"); toast("Find lyrics — dialog not in this prototype"); });
+  $("w-settings").addEventListener("click", (e) => { pressFx(e.currentTarget, 0.5); HK.sfx("pop"); toast("Settings — dialog not in this prototype"); });
+  $("w-refresh").addEventListener("click", (e) => { pressFx(e.currentTarget, 0.5); HK.sfx("click"); toast("Playback refreshed"); });
+  $("w-compact").addEventListener("click", (e) => { pressFx(e.currentTarget, 0.8); HK.setCompact(!HK.state.compact); });
+  $("w-pin").addEventListener("click", (e) => { pressFx(e.currentTarget, 0.5); HK.setPinned(!HK.state.pinned); });
+  document.querySelectorAll(".w-chrome").forEach((b) => b.addEventListener("click", (e) => { pressFx(e.currentTarget, 0.4); HK.sfx("click"); toast("Window control — prototype"); }));
+  document.querySelectorAll(".btn, .win button, .chip").forEach((b) => b.addEventListener("pointerenter", () => HK.sfx("tick")));
+
+  function makeSlider(el, get, set, onDrag) {
+    let drag = false, last = null;
+    const from = (e) => {
+      const r = el.getBoundingClientRect();
+      const f = HK.clamp((e.clientX - r.left) / r.width, 0, 1);
+      set(f);
+      if (fluid.ok && last) fluid.splat(e.clientX / innerWidth, 1 - (r.top + r.height / 2) / innerHeight, (e.clientX - last) * 40, 300, paletteColor(f * 4, 0.12), 0.12);
+      last = e.clientX;
+      if (onDrag) onDrag(f);
+    };
+    el.addEventListener("pointerdown", (e) => { drag = true; last = null; el.classList.add("drag"); el.setPointerCapture(e.pointerId); HK.sfx("click"); from(e); });
+    el.addEventListener("pointermove", (e) => { if (drag) from(e); });
+    const end = () => { if (drag) { drag = false; el.classList.remove("drag"); HK.sfx("snap"); } };
+    el.addEventListener("pointerup", end);
+    el.addEventListener("pointercancel", end);
+    return () => drag;
+  }
+  let scrubLine = null;
+  const scrubbing = makeSlider($("scrub"), null, (f) => {
+    const ms = f * HK.track().duration;
+    const li = HK.lineAt(ms);
+    if (li !== scrubLine) { scrubLine = li; HK.sfx("tick"); }
+    HK.seek(ms);
+  });
+  makeSlider($("vol"), null, (f) => HK.setVolume(f * 100));
+  $("vol").addEventListener("wheel", (e) => { e.preventDefault(); HK.setVolume(HK.state.volume - Math.sign(e.deltaY) * 3); }, { passive: false });
+  let lastBlip = 0;
+  HK.on("volume", (v) => {
+    $("vol").style.setProperty("--pp", v + "%");
+    const now = performance.now();
+    if (now - lastBlip > 30) { lastBlip = now; HK.sfx("blip", v); }
+  });
+
+  /* ---------- state ---------- */
+  HK.on("state", (playing) => {
+    document.body.classList.toggle("is-playing", playing);
+    HK.sfx(playing ? "pop" : "drop");
+    if (fluid.ok) {
+      fluid.sim.velocityDiss = playing ? 0.25 : 1.6;
+      fluid.sim.satTarget = playing ? 1 : 0.25;
+    }
+  });
+  HK.on("source", (s) => { $("source-name").textContent = s; });
+  HK.on("follow", (on) => { $("follow").setAttribute("aria-pressed", on); HK.sfx("snap"); toast(on ? "Following lyrics" : "Scroll freely — follow is off"); });
+  HK.on("pin", (on) => { $("w-pin").setAttribute("aria-pressed", on); HK.sfx("snap"); toast(on ? "Pinned on top" : "Unpinned"); });
+  HK.on("compact", (on) => { $("w-compact").setAttribute("aria-pressed", on); HK.sfx("whoosh"); });
+  HK.on("refresh", () => {
+    renderLyrics(HK.track());
+    active = HK.lineAt(HK.position());
+    classify();
+    HK.sfx("drop");
+    toast(`Lyrics refreshed from ${HK.state.source}`);
+  });
+  function applyTrack(t) {
+    palette = t.palette.map(HK.hexToRgb);
+    t.palette.forEach((c, i) => root.style.setProperty(`--c${i + 1}`, c));
+    const url = HK.artURL(t, 512);
+    $("art").src = url;
+    $("art-r").src = url;
+    const title = $("title");
+    title.textContent = t.title;
+    title.classList.toggle("jp", /[぀-ヿ一-鿿]/.test(t.title));
+    $("artist").textContent = `${t.artist} — ${t.album}`;
+    $("t-total").textContent = HK.fmt(t.duration);
+    renderLyrics(t);
+  }
+  HK.on("track", (t) => {
+    HK.sfx("whoosh");
+    applyTrack(t);
+    if (fluid.ok) {
+      fluid.sim.densityDiss = 3;
+      setTimeout(() => (fluid.sim.densityDiss = 0.22), 700);
+      [[0, 0], [1, 0], [0, 1], [1, 1]].forEach(([x, y], k) => fluid.splat(x * 0.9 + 0.05, y * 0.9 + 0.05, (0.5 - x) * 4000, (0.5 - y) * 4000, paletteColor(k, 0.4), 0.9));
+      fluid.sim.glow = 1;
+    }
+  });
+  HK.on("line", (i) => {
+    active = i;
+    classify();
+    if (i >= 0 && fluid.ok) {
+      requestAnimationFrame(() => {
+        const li = lines[i];
+        if (!li) return;
+        const r = li.querySelector(".ln__t").getBoundingClientRect();
+        fluid.sweep(r.left, Math.min(r.right, r.left + 600), r.top + r.height / 2 + 4);
+      });
+    }
+  });
+  let beat = 0;
+  HK.on("beat", (n, down) => {
+    beat = down ? 1 : 0.5;
+    if (!fluid.ok) return;
+    const energy = HK.state.volume / 100;
+    const side = n % 4;
+    const x = side === 0 ? 0.02 : side === 2 ? 0.98 : Math.random();
+    const y = side === 1 ? 0.02 : side === 3 ? 0.98 : Math.random();
+    fluid.splat(x, y, (0.5 - x) * 2600 * energy, (0.5 - y) * 2600 * energy, paletteColor(n * 0.37, down ? 0.3 : 0.16), down ? 0.4 : 0.24);
+  });
+
+  /* ---------- frame ---------- */
+  HK.on("frame", (pos, dt) => {
+    if (fluid.ok) {
+      const s = fluid.sim;
+      s.sat += (s.satTarget - s.sat) * Math.min(1, dt / 500);
+      s.glow *= Math.pow(0.9, dt / 16);
+      fluid.step(Math.min(dt / 1000, 1 / 60));
+      fluid.render();
+    }
+    tx.step(dt);
+    ty.step(dt);
+    card.style.transform = `rotateX(${tx.value.toFixed(2)}deg) rotateY(${ty.value.toFixed(2)}deg)`;
+    $("sheen").style.setProperty("--sx", (50 - ty.value * 2.5).toFixed(1) + "%");
+    $("sheen").style.setProperty("--sy", (50 + tx.value * 2.5).toFixed(1) + "%");
+
+    if (active >= 0 && words[active]) {
+      const line = HK.track().lines[active];
+      words[active].forEach((el, j) => {
+        const p = HK.wordProgress(line.words[j], pos);
+        el.classList.toggle("sung", p >= 1);
+        el.classList.toggle("now", p > 0 && p < 1);
+        if (p > 0 && p < 1) el.style.setProperty("--p", (p * 100).toFixed(1) + "%");
+      });
+    }
+    listY.target = HK.state.follow ? target() : manualY;
+    listY.step(dt);
+    list.style.transform = `translateY(${listY.value.toFixed(2)}px)`;
+    beat *= Math.pow(0.9, dt / 16);
+    root.style.setProperty("--beat", beat.toFixed(3));
+    $("scrub").style.setProperty("--pp", ((pos / HK.track().duration) * 100).toFixed(3) + "%");
+    $("t-cur").textContent = HK.fmt(pos);
+  });
+
+  applyTrack(HK.track());
+  HK.emit("source", HK.state.source);
+  HK.emit("volume", HK.state.volume);
+  if (fluid.ok) fluid.seed(8);
+})();
+</script>
+</body>
+</html>

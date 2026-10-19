@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hakuro · Stardust</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@900&family=Noto+Sans+TC:wght@500&family=Unbounded:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* Concept E — Stardust (free concept).
+   Every lyric line is written in ~14k particles. On a new line they tear loose,
+   swirl and re-form; sung words ignite in the album's colour. The album art is a
+   slowly spinning galaxy disc under the words. The cursor parts the particles,
+   clicks send shockwaves, and the volume sets how brightly everything glows. */
+:root { --c1: #ff2e88; --c2: #ff8a00; --ui: "Unbounded", "Segoe UI", sans-serif; --tc: "Noto Sans TC", "Microsoft JhengHei UI", sans-serif; }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { overflow: hidden; background: #040408; color: #fff; font-family: var(--ui); -webkit-font-smoothing: antialiased; user-select: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible { outline: 1.5px solid #fff; outline-offset: 3px; }
+#gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+.loading { position: fixed; inset: 0; display: grid; place-items: center; font: 400 10px var(--ui); letter-spacing: .5em; color: rgb(255 255 255 / .5); pointer-events: none; transition: opacity .8s; }
+.loading.gone { opacity: 0; }
+
+.chrome { position: fixed; left: 0; right: 0; top: 0; height: 50px; display: flex; align-items: center; gap: 18px; padding: 0 12px 0 24px; z-index: 5; }
+.brand { font: 600 11px var(--ui); letter-spacing: .5em; }
+.status { display: flex; align-items: center; gap: 8px; font: 400 9px var(--ui); letter-spacing: .25em; color: rgb(255 255 255 / .5); }
+.status i { width: 5px; height: 5px; border-radius: 50%; background: var(--c1); box-shadow: 0 0 10px var(--c1); }
+.drag { flex: 1; align-self: stretch; }
+.win { display: flex; gap: 4px; }
+.win button { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: rgb(255 255 255 / .7); border: 1px solid transparent; transition: border-color .2s, color .2s, transform .3s cubic-bezier(.3, 1.6, .5, 1); }
+.win button svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+.win button:hover { border-color: rgb(255 255 255 / .5); color: #fff; transform: scale(1.1); }
+.win button:active { transform: scale(.8); }
+.win button[aria-pressed="true"] { border-color: var(--c1); color: var(--c1); box-shadow: 0 0 12px color-mix(in srgb, var(--c1) 50%, transparent); }
+
+.sub { position: fixed; left: 50%; top: 63%; transform: translateX(-50%); width: min(80vw, 760px); text-align: center; pointer-events: none; z-index: 3; }
+.sub__tr { margin: 0; font: 500 17px/1.5 var(--tc); color: rgb(255 255 255 / .82); letter-spacing: .12em; text-shadow: 0 0 18px rgb(0 0 0 / .8); min-height: 1.5em; transition: opacity .5s, transform .5s; }
+.sub__next { margin: 14px 0 0; font: 400 10px/1.6 var(--ui); letter-spacing: .2em; color: rgb(255 255 255 / .38); min-height: 1.6em; }
+.sub__next b { font-weight: 600; color: rgb(255 255 255 / .55); margin-right: 10px; }
+.sub.swap .sub__tr { opacity: 0; transform: translateY(8px); }
+
+.info { position: fixed; left: 24px; bottom: 58px; display: flex; align-items: center; gap: 14px; z-index: 4; max-width: 34vw; }
+.disc-thumb { position: relative; width: 48px; height: 48px; border-radius: 50%; overflow: hidden; flex: none; box-shadow: 0 0 0 1px rgb(255 255 255 / .25), 0 0 24px color-mix(in srgb, var(--c1) 45%, transparent); animation: spin 6s linear infinite; }
+body:not(.is-playing) .disc-thumb { animation-play-state: paused; }
+.disc-thumb img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.disc-thumb::after { content: ""; position: absolute; left: 50%; top: 50%; width: 9px; height: 9px; margin: -4.5px; border-radius: 50%; background: #040408; box-shadow: 0 0 0 1px rgb(255 255 255 / .3); }
+.info__t { min-width: 0; }
+.info h1 { margin: 0; font: 600 13px/1.3 var(--ui), "Noto Sans JP", sans-serif; letter-spacing: .06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.info p { margin: 4px 0 0; font: 400 9px var(--ui); letter-spacing: .22em; color: rgb(255 255 255 / .5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { margin-top: 8px; font: 400 8.5px var(--ui); letter-spacing: .24em; color: rgb(255 255 255 / .7); padding: 5px 10px; border-radius: 99px; border: 1px solid rgb(255 255 255 / .25); transition: border-color .2s, transform .3s cubic-bezier(.3, 1.6, .5, 1); }
+.chip:hover { border-color: var(--c1); transform: scale(1.06); }
+.chip:active { transform: scale(.9); }
+
+.transport { position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%); display: flex; align-items: center; gap: 18px; z-index: 4; }
+.orb { position: relative; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; border: 1px solid rgb(255 255 255 / .28); transition: transform .35s cubic-bezier(.3, 1.6, .5, 1), border-color .2s, box-shadow .3s; }
+.orb svg { width: 16px; height: 16px; fill: #fff; }
+.orb:hover { transform: scale(1.12); border-color: #fff; box-shadow: 0 0 20px rgb(255 255 255 / .3); }
+.orb:active { transform: scale(.82); transition-duration: .08s; }
+.orb--main { width: 64px; height: 64px; border-color: transparent; background: radial-gradient(circle, rgb(255 255 255 / .14), transparent 70%); }
+.orb--main svg { width: 20px; height: 20px; }
+.orb--main::before { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1.5px dashed color-mix(in srgb, var(--c1) 80%, white); animation: spin 9s linear infinite; }
+body:not(.is-playing) .orb--main::before { animation-play-state: paused; border-style: solid; border-color: rgb(255 255 255 / .35); }
+.orb::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 1px solid #fff; opacity: 0; pointer-events: none; }
+.orb.ping::after { animation: ping .7s ease-out; }
+.icon-pause { display: none; }
+body.is-playing .icon-play { display: none; }
+body.is-playing .icon-pause { display: block; }
+
+.right { position: fixed; right: 24px; bottom: 60px; display: flex; align-items: center; gap: 14px; z-index: 4; }
+.vol { display: flex; align-items: center; gap: 10px; font: 400 8.5px var(--ui); letter-spacing: .24em; color: rgb(255 255 255 / .55); }
+.vol__bar { position: relative; width: 96px; height: 20px; cursor: ew-resize; touch-action: none; --v: 64%; }
+.vol__bar::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: rgb(255 255 255 / .25); }
+.vol__bar::after { content: ""; position: absolute; left: 0; top: 50%; height: 2px; margin-top: -.5px; width: var(--v); background: linear-gradient(90deg, var(--c2), var(--c1)); box-shadow: 0 0 10px var(--c1); }
+.vol b { font: 600 10px var(--ui); color: #fff; min-width: 22px; }
+.ghost { font: 400 8.5px var(--ui); letter-spacing: .24em; color: rgb(255 255 255 / .6); padding: 7px 11px; border-radius: 99px; border: 1px solid rgb(255 255 255 / .2); transition: border-color .2s, color .2s, transform .3s cubic-bezier(.3, 1.6, .5, 1); }
+.ghost:hover { border-color: #fff; color: #fff; }
+.ghost:active { transform: scale(.88); }
+.ghost[aria-pressed="true"] { border-color: var(--c1); color: #fff; }
+
+.seek { position: fixed; left: 24px; right: 24px; bottom: 16px; height: 22px; display: flex; align-items: center; gap: 14px; z-index: 4; font: 400 9px var(--ui); letter-spacing: .14em; color: rgb(255 255 255 / .55); font-variant-numeric: tabular-nums; }
+.scrub { position: relative; flex: 1; height: 22px; cursor: pointer; touch-action: none; --pp: 0%; }
+.scrub::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: rgb(255 255 255 / .16); }
+.scrub__fill { position: absolute; left: 0; top: 50%; height: 2px; margin-top: -.5px; width: var(--pp); background: linear-gradient(90deg, transparent, var(--c1)); }
+.scrub__head { position: absolute; top: 50%; left: var(--pp); width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%; background: #fff; box-shadow: 0 0 12px #fff, 0 0 24px var(--c1); transition: transform .25s cubic-bezier(.3, 1.6, .5, 1); }
+.scrub:hover .scrub__head, .scrub.drag .scrub__head { transform: scale(1.8); }
+.cues i { position: absolute; top: 50%; width: 1px; height: 5px; margin-top: -2.5px; background: rgb(255 255 255 / .35); }
+
+.toast { position: fixed; left: 50%; top: 60px; z-index: 9; pointer-events: none; font: 400 9px var(--ui); letter-spacing: .3em; padding: 8px 16px; border-radius: 99px; border: 1px solid rgb(255 255 255 / .25); background: rgb(4 4 8 / .6); transform: translate(-50%, -8px); opacity: 0; transition: .4s cubic-bezier(.2, 1.6, .4, 1); }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+body.is-compact .status, body.is-compact .win .wide, body.is-compact .info, body.is-compact .right, body.is-compact .sub__next { display: none; }
+body.is-compact .chrome { height: 34px; padding-left: 14px; }
+body.is-compact .sub { top: auto; bottom: 56px; }
+body.is-compact .sub__tr { font-size: 12px; }
+body.is-compact .transport { left: 14px; transform: none; bottom: 10px; gap: 6px; }
+body.is-compact .orb { width: 26px; height: 26px; }
+body.is-compact .orb--main { width: 32px; height: 32px; }
+body.is-compact .orb svg { width: 11px; height: 11px; }
+body.is-compact .seek { left: 136px; right: 14px; bottom: 12px; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes ping { 0% { opacity: .9; transform: scale(1); } 100% { opacity: 0; transform: scale(2.2); } }
+</style>
+</head>
+<body class="is-playing">
+<canvas id="gl"></canvas>
+<div class="loading" id="loading">GATHERING STARDUST</div>
+
+<header class="chrome" data-tauri-drag-region>
+  <span class="brand">HAKURO</span>
+  <span class="status"><i></i>SPOTIFY</span>
+  <div class="drag" data-tauri-drag-region></div>
+  <nav class="win">
+    <button class="wide" id="w-search" title="Find lyrics"><svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="3"/><path d="m7.3 7.3 3 3"/></svg></button>
+    <button class="wide" id="w-settings" title="Settings"><svg viewBox="0 0 12 12"><path d="M1.8 4h8.4M1.8 8h8.4"/><circle cx="4.2" cy="4" r="1.5"/><circle cx="7.8" cy="8" r="1.5"/></svg></button>
+    <button class="wide" id="w-refresh" title="Refresh playback"><svg viewBox="0 0 12 12"><path d="M9.9 5.2A4 4 0 1 0 9.4 8M10 1.9v3.3H6.7"/></svg></button>
+    <button id="w-compact" title="Compact mode" aria-pressed="false"><svg viewBox="0 0 12 12"><path d="M6 1.4v3.1M4.4 3l1.6 1.5L7.6 3M6 10.6V7.5M4.4 9l1.6-1.5L7.6 9"/></svg></button>
+    <button id="w-pin" title="Keep on top" aria-pressed="false"><svg viewBox="0 0 12 12"><path d="M3.6 1.4h4.8M5 1.4v2.8L3.4 6h5.2L7 4.2V1.4M6 6v3.2"/></svg></button>
+    <button class="w-chrome" title="Minimize"><svg viewBox="0 0 12 12"><path d="M2.5 6h7"/></svg></button>
+    <button class="w-chrome wide" title="Maximize"><svg viewBox="0 0 12 12"><path d="M2.5 2.5h7v7h-7z"/></svg></button>
+    <button class="w-chrome" title="Close"><svg viewBox="0 0 12 12"><path d="M2.6 2.6l6.8 6.8M9.4 2.6l-6.8 6.8"/></svg></button>
+  </nav>
+</header>
+
+<div class="sub" id="sub" aria-live="polite">
+  <p class="sub__tr" id="tr"></p>
+  <p class="sub__next" id="next-line"></p>
+</div>
+
+<div class="info">
+  <div class="disc-thumb"><img id="art" alt=""></div>
+  <div class="info__t">
+    <h1 id="title">—</h1>
+    <p id="artist">—</p>
+    <button class="chip" id="source">NETEASE ▾</button>
+  </div>
+</div>
+
+<div class="transport">
+  <button class="orb" id="prev" aria-label="Previous track"><svg viewBox="0 0 24 24"><path d="M6 5h2.4v14H6zM19 6.2v11.6a.8.8 0 0 1-1.24.67L9.6 12.67a.8.8 0 0 1 0-1.34l8.16-5.8A.8.8 0 0 1 19 6.2Z"/></svg></button>
+  <button class="orb orb--main" id="play" aria-label="Play or pause">
+    <svg class="icon-play" viewBox="0 0 24 24"><path d="M7.5 5.2v13.6a.9.9 0 0 0 1.37.77l10.6-6.8a.9.9 0 0 0 0-1.54L8.87 4.43A.9.9 0 0 0 7.5 5.2Z"/></svg>
+    <svg class="icon-pause" viewBox="0 0 24 24"><path d="M6.5 4.5h3.6v15H6.5zM13.9 4.5h3.6v15h-3.6z"/></svg>
+  </button>
+  <button class="orb" id="next" aria-label="Next track"><svg viewBox="0 0 24 24"><path d="M15.6 5H18v14h-2.4zM5 6.2v11.6a.8.8 0 0 0 1.24.67l8.16-5.8a.8.8 0 0 0 0-1.34l-8.16-5.8A.8.8 0 0 0 5 6.2Z"/></svg></button>
+</div>
+
+<div class="right">
+  <div class="vol">VOL<div class="vol__bar" id="vol" role="slider" aria-label="Volume" tabindex="0"></div><b id="vol-num">64</b></div>
+  <button class="ghost" id="follow" aria-pressed="true">FOLLOW</button>
+  <button class="ghost" id="reload">REFORM</button>
+</div>
+
+<div class="seek">
+  <span id="t-cur">0:00</span>
+  <div class="scrub" id="scrub" role="slider" aria-label="Seek" tabindex="0"><div class="cues" id="cues"></div><div class="scrub__fill"></div><div class="scrub__head"></div></div>
+  <span id="t-total">0:00</span>
+</div>
+<div class="toast" id="toast"></div>
+
+<script src="hk-mock.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+HK.bindKeys();
+
+let toastTimer;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.remove("show");
+  void t.offsetWidth;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1700);
+}
+
+/* ---------- renderer ---------- */
+const canvas = $("gl");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5));
+renderer.setClearColor(0x040408, 1);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 300);
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.9, 0.45, 0.2);
+composer.addPass(bloom);
+composer.addPass(new OutputPass());
+
+const TEXT_W = 18;        // world units the widest line may span
+const TEXT_Y = 1.6;       // lift the words above centre to leave room for the translation
+let camDist = 20;
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  composer.setSize(w, h);
+  bloom.setSize(w, h);
+  camera.aspect = w / h;
+  const fit = (TEXT_W / 0.84) / (2 * Math.tan(THREE.MathUtils.degToRad(22.5)) * camera.aspect);
+  camDist = Math.max(HK.state.compact ? 12.5 : 17, fit);
+  camera.updateProjectionMatrix();
+}
+
+/* ---------- shared uniforms ---------- */
+const U = {
+  uTime: { value: 0 },
+  uProgress: { value: 1 },
+  uSung: { value: 0 },
+  uBeat: { value: 0 },
+  uMouse: { value: new THREE.Vector3(999, 999, 0) },
+  uShock: { value: new THREE.Vector3(0, 0, 0) },
+  uShockT: { value: 9 },
+  uSat: { value: 1 },
+  uPR: { value: renderer.getPixelRatio() },
+  uColLit: { value: new THREE.Color("#ff2e88") },
+  uColHot: { value: new THREE.Color("#ffe14d") },
+  uColDim: { value: new THREE.Color("#9fb0ff") },
+  uExplode: { value: 0 },
+};
+
+/* ---------- text particles ---------- */
+const N = 14000;
+const pos = new Float32Array(N * 3);
+const from = new Float32Array(N * 3);
+const rand = new Float32Array(N * 4);
+const word = new Float32Array(N).fill(-1);
+const wordT = new Float32Array(N);
+const delay = new Float32Array(N);
+const ambient = new Float32Array(N * 3);
+for (let i = 0; i < N; i++) {
+  ambient[i * 3] = (Math.random() - 0.5) * 56;
+  ambient[i * 3 + 1] = (Math.random() - 0.5) * 34;
+  ambient[i * 3 + 2] = -Math.random() * 34 + 4;
+  for (let k = 0; k < 3; k++) pos[i * 3 + k] = from[i * 3 + k] = ambient[i * 3 + k];
+  for (let k = 0; k < 4; k++) rand[i * 4 + k] = Math.random();
+  delay[i] = Math.random();
+}
+const tGeo = new THREE.BufferGeometry();
+tGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+tGeo.setAttribute("aFrom", new THREE.BufferAttribute(from, 3));
+tGeo.setAttribute("aRand", new THREE.BufferAttribute(rand, 4));
+tGeo.setAttribute("aWord", new THREE.BufferAttribute(word, 1));
+tGeo.setAttribute("aWordT", new THREE.BufferAttribute(wordT, 1));
+tGeo.setAttribute("aDelay", new THREE.BufferAttribute(delay, 1));
+const textMat = new THREE.ShaderMaterial({
+  uniforms: U,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  vertexShader: `
+    attribute vec3 aFrom; attribute vec4 aRand; attribute float aWord, aWordT, aDelay;
+    uniform float uTime, uProgress, uSung, uBeat, uShockT, uPR;
+    uniform vec3 uMouse, uShock;
+    varying float vLit, vHot, vAmb, vR;
+    void main() {
+      float t = clamp((uProgress - aDelay * 0.4) / 0.6, 0.0, 1.0);
+      float e = t < 0.5 ? 4.0 * t * t * t : 1.0 - pow(-2.0 * t + 2.0, 3.0) * 0.5;
+      vec3 p = mix(aFrom, position, e);
+      float isText = step(0.0, aWord);
+      float mid = sin(3.14159 * t);
+      float ph = aRand.x * 6.2832;
+      vec3 swirl = vec3(sin(uTime * 0.9 + ph + p.y * 0.35), cos(uTime * 0.8 + aRand.y * 6.2832 + p.x * 0.3), sin(uTime * 0.6 + aRand.z * 6.2832));
+      p += swirl * (isText * (0.035 + mid * 2.6) + (1.0 - isText) * (0.6 + mid * 1.5));
+      vec2 dm = p.xy - uMouse.xy;
+      float m = smoothstep(2.6, 0.0, length(dm));
+      p.xy += normalize(dm + 1e-4) * m * 1.5;
+      p.z += m * 2.2;
+      vec2 ds = p.xy - uShock.xy;
+      float ring = exp(-pow(length(ds) - uShockT * 15.0, 2.0) * 0.5) * exp(-uShockT * 1.7);
+      p.xy += normalize(ds + 1e-4) * ring * 2.0;
+      p.z += ring * 3.5;
+      p *= 1.0 + uBeat * 0.012 * aRand.w;
+      float lit = isText * smoothstep(-0.02, 0.02, uSung - (aWord + aWordT));
+      float edge = isText * smoothstep(0.25, 0.0, abs(uSung - (aWord + aWordT)));
+      vLit = lit; vHot = edge; vAmb = 1.0 - isText; vR = aRand.z;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_Position = projectionMatrix * mv;
+      float size = mix(1.0, 0.42, vAmb) * (0.75 + aRand.z * 0.5) * (1.0 + lit * 0.25 + edge * 0.55);
+      gl_PointSize = size * 1.45 * uPR * (22.0 / -mv.z);
+    }`,
+  fragmentShader: `
+    uniform vec3 uColLit, uColHot, uColDim; uniform float uSat;
+    varying float vLit, vHot, vAmb, vR;
+    void main() {
+      vec2 c = gl_PointCoord - 0.5;
+      float d = length(c);
+      if (d > 0.5) discard;
+      float a = smoothstep(0.5, 0.05, d);
+      vec3 text = mix(uColDim * 0.75, uColLit, vLit);
+      text = mix(text, uColHot * 1.6, vHot);
+      vec3 amb = mix(uColDim, uColLit, vR) * 0.6;
+      vec3 col = mix(text, amb, vAmb);
+      float l = dot(col, vec3(0.299, 0.587, 0.114));
+      col = mix(vec3(l), col, uSat);
+      float alpha = a * mix(mix(0.55, 0.95, vLit), 0.16, vAmb);
+      gl_FragColor = vec4(col * alpha, alpha);
+    }`,
+});
+const textPts = new THREE.Points(tGeo, textMat);
+textPts.frustumCulled = false;
+scene.add(textPts);
+
+/* ---------- sample a line of text into particle targets ---------- */
+const tc = document.createElement("canvas");
+tc.width = 1800;
+tc.height = 460;
+const tctx = tc.getContext("2d", { willReadFrequently: true });
+const FONT = (s) => `900 ${s}px "Noto Sans JP", "Yu Gothic UI", sans-serif`;
+function layout(words) {
+  for (let s = 190; s >= 60; s -= 10) {
+    tctx.font = FONT(s);
+    const space = s * 0.12;
+    const rows = [[]];
+    let x = 0;
+    for (let i = 0; i < words.length; i++) {
+      const w = tctx.measureText(words[i]).width;
+      if (x + w > tc.width - 80 && rows[rows.length - 1].length) { rows.push([]); x = 0; }
+      rows[rows.length - 1].push({ i, text: words[i], w });
+      x += w + space;
+    }
+    if (rows.length <= 2 && rows.length * s * 1.18 <= tc.height - 20) return { s, rows, space };
+  }
+  return null;
+}
+function sample(words) {
+  const L = layout(words);
+  tctx.clearRect(0, 0, tc.width, tc.height);
+  if (!L) return [];
+  tctx.font = FONT(L.s);
+  tctx.textBaseline = "middle";
+  tctx.fillStyle = "#fff";
+  const boxes = [];
+  const lineH = L.s * 1.18;
+  const top = tc.height / 2 - (L.rows.length * lineH) / 2 + lineH / 2;
+  L.rows.forEach((row, r) => {
+    const width = row.reduce((a, b) => a + b.w, 0) + L.space * (row.length - 1);
+    let x = tc.width / 2 - width / 2;
+    const y = top + r * lineH;
+    for (const it of row) {
+      tctx.fillText(it.text.trim(), x, y);
+      boxes.push({ i: it.i, x0: x, x1: x + it.w, y0: y - lineH / 2, y1: y + lineH / 2 });
+      x += it.w + L.space;
+    }
+  });
+  const img = tctx.getImageData(0, 0, tc.width, tc.height).data;
+  let step = 3, pts = [];
+  for (;;) {
+    pts = [];
+    for (let y = 0; y < tc.height; y += step) for (let x = 0; x < tc.width; x += step) if (img[(y * tc.width + x) * 4 + 3] > 128) pts.push(x, y);
+    if (pts.length / 2 <= N * 0.92 || step > 8) break;
+    step++;
+  }
+  const scale = TEXT_W / tc.width;
+  const out = [];
+  for (let k = 0; k < pts.length; k += 2) {
+    const px = pts[k] + (Math.random() - 0.5) * step, py = pts[k + 1] + (Math.random() - 0.5) * step;
+    const b = boxes.find((b) => px >= b.x0 - 2 && px <= b.x1 + 2 && py >= b.y0 && py <= b.y1) || boxes[0];
+    out.push({ x: (px - tc.width / 2) * scale, y: -(py - tc.height / 2) * scale + TEXT_Y, z: (Math.random() - 0.5) * 0.3, w: b.i, t: (px - b.x0) / Math.max(1, b.x1 - b.x0) });
+  }
+  return out;
+}
+
+/* ---------- morphing ---------- */
+const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+let progress = 1, morphDur = 1500;
+function morphTo(targets) {
+  const p = progress;
+  for (let i = 0; i < N; i++) {
+    const t = Math.min(1, Math.max(0, (p - delay[i] * 0.4) / 0.6));
+    const e = ease(t);
+    for (let k = 0; k < 3; k++) from[i * 3 + k] = from[i * 3 + k] + (pos[i * 3 + k] - from[i * 3 + k]) * e;
+  }
+  const order = Array.from({ length: N }, (_, i) => i);
+  for (let i = N - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [order[i], order[j]] = [order[j], order[i]]; }
+  for (let k = 0; k < N; k++) {
+    const i = order[k];
+    const s = targets[k % Math.max(1, targets.length)];
+    if (k < targets.length || (targets.length && k < targets.length * 1.15)) {
+      pos[i * 3] = s.x; pos[i * 3 + 1] = s.y; pos[i * 3 + 2] = s.z + (k >= targets.length ? 0.4 : 0);
+      word[i] = s.w; wordT[i] = s.t;
+      delay[i] = Math.min(1, (s.x / TEXT_W + 0.5) * 0.75 + Math.random() * 0.25);
+    } else {
+      pos[i * 3] = ambient[i * 3]; pos[i * 3 + 1] = ambient[i * 3 + 1]; pos[i * 3 + 2] = ambient[i * 3 + 2];
+      word[i] = -1; wordT[i] = 0; delay[i] = Math.random();
+    }
+  }
+  for (const name of ["position", "aFrom", "aWord", "aWordT", "aDelay"]) tGeo.attributes[name].needsUpdate = true;
+  progress = 0;
+}
+
+/* ---------- album galaxy ---------- */
+const GAL = 96;
+const gGeo = new THREE.BufferGeometry();
+const gPos = [], gCol = [], gLum = [], gRnd = [];
+for (let y = 0; y < GAL; y++) for (let x = 0; x < GAL; x++) {
+  const u = x / (GAL - 1) - 0.5, v = y / (GAL - 1) - 0.5;
+  if (u * u + v * v > 0.25) continue;
+  gPos.push(u * 26, 0, v * 26);
+  gCol.push(1, 1, 1);
+  gLum.push(0.5);
+  gRnd.push(Math.random());
+}
+const GN = gPos.length / 3;
+gGeo.setAttribute("position", new THREE.Float32BufferAttribute(gPos, 3));
+gGeo.setAttribute("aColor", new THREE.Float32BufferAttribute(gCol, 3));
+gGeo.setAttribute("aLum", new THREE.Float32BufferAttribute(gLum, 1));
+gGeo.setAttribute("aRnd", new THREE.Float32BufferAttribute(gRnd, 1));
+const galMat = new THREE.ShaderMaterial({
+  uniforms: U,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  vertexShader: `
+    attribute vec3 aColor; attribute float aLum, aRnd;
+    uniform float uBeat, uExplode, uPR, uTime;
+    varying vec3 vC;
+    void main() {
+      vec3 p = position;
+      p.y += aLum * uBeat * 1.1 + sin(uTime * 0.8 + aRnd * 6.28) * 0.06;
+      vec3 dir = normalize(p + vec3(0.0, 0.01, 0.0));
+      p += (dir * 14.0 + vec3(0.0, 9.0 * aRnd, 0.0)) * uExplode * (0.5 + aRnd);
+      vC = aColor;
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_Position = projectionMatrix * mv;
+      gl_PointSize = (1.2 + aLum * 1.6) * uPR * (24.0 / -mv.z) * (1.0 - uExplode * 0.5);
+    }`,
+  fragmentShader: `
+    uniform float uSat, uExplode; varying vec3 vC;
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      if (d > 0.5) discard;
+      float a = smoothstep(0.5, 0.1, d) * 0.8 * (1.0 - uExplode * 0.7);
+      float l = dot(vC, vec3(0.299, 0.587, 0.114));
+      gl_FragColor = vec4(mix(vec3(l), vC, uSat) * a, a);
+    }`,
+});
+const galaxy = new THREE.Points(gGeo, galMat);
+galaxy.frustumCulled = false;
+const galGroup = new THREE.Group();
+galGroup.add(galaxy);
+galGroup.position.set(0, -10.5, -8);
+galGroup.rotation.x = 0.42;
+scene.add(galGroup);
+function paintGalaxy(t) {
+  const c = document.createElement("canvas");
+  c.width = c.height = GAL;
+  const g = c.getContext("2d");
+  g.drawImage(HK.artCanvas(t, 512), 0, 0, GAL, GAL);
+  const d = g.getImageData(0, 0, GAL, GAL).data;
+  const col = gGeo.attributes.aColor.array, lum = gGeo.attributes.aLum.array;
+  const tmp = new THREE.Color();
+  let k = 0;
+  for (let y = 0; y < GAL; y++) for (let x = 0; x < GAL; x++) {
+    const u = x / (GAL - 1) - 0.5, v = y / (GAL - 1) - 0.5;
+    if (u * u + v * v > 0.25) continue;
+    const o = (y * GAL + x) * 4;
+    tmp.setRGB(d[o] / 255, d[o + 1] / 255, d[o + 2] / 255, THREE.SRGBColorSpace);
+    col[k * 3] = tmp.r; col[k * 3 + 1] = tmp.g; col[k * 3 + 2] = tmp.b;
+    lum[k] = (d[o] * 0.299 + d[o + 1] * 0.587 + d[o + 2] * 0.114) / 255;
+    k++;
+  }
+  gGeo.attributes.aColor.needsUpdate = true;
+  gGeo.attributes.aLum.needsUpdate = true;
+}
+
+/* ---------- background stars ---------- */
+const sPos = [];
+for (let i = 0; i < 1600; i++) {
+  const v = new THREE.Vector3().randomDirection().multiplyScalar(70 + Math.random() * 60);
+  if (v.z > 10) v.z = -v.z;
+  sPos.push(v.x, v.y, v.z);
+}
+const sGeo = new THREE.BufferGeometry();
+sGeo.setAttribute("position", new THREE.Float32BufferAttribute(sPos, 3));
+const stars = new THREE.Points(sGeo, new THREE.PointsMaterial({ color: 0x8890b0, size: 0.35, sizeAttenuation: true, transparent: true, opacity: 0.7, depthWrite: false }));
+scene.add(stars);
+
+/* ---------- lyric flow ---------- */
+let shown = -99, wanted = -1, morphing = false;
+const fontReady = (text) => Promise.race([document.fonts.load(FONT(100), text), new Promise((r) => setTimeout(r, 900))]);
+function wordsFor(i) {
+  const t = HK.track();
+  if (i < 0) return [t.title];
+  const l = t.lines[i];
+  return l.instrumental ? ["♪"] : l.words.map((w) => w.text);
+}
+async function showLine(i, fast) {
+  wanted = i;
+  if (morphing) return;
+  morphing = true;
+  const words = wordsFor(i);
+  await fontReady(words.join(""));
+  if (wanted !== i) { morphing = false; return showLine(wanted, fast); }
+  morphDur = fast ? 650 : 1500;
+  morphTo(sample(words));
+  shown = i;
+  morphing = false;
+  updateSub(i);
+  if (wanted !== i) showLine(wanted, fast);
+}
+function updateSub(i) {
+  const t = HK.track();
+  const l = t.lines[i];
+  const sub = $("sub");
+  sub.classList.add("swap");
+  setTimeout(() => {
+    $("tr").textContent = i < 0 ? `${t.artist} — ${t.album}` : l.tr || "";
+    const nx = t.lines[i + 1];
+    $("next-line").innerHTML = nx ? `<b>NEXT</b>${nx.instrumental ? "♪" : nx.text.replace(/[&<>]/g, "")}` : "";
+    sub.classList.remove("swap");
+  }, 220);
+}
+
+/* ---------- interaction ---------- */
+const mouseNdc = new THREE.Vector2(9, 9);
+const look = { x: new HK.Spring(0, 30, 10), y: new HK.Spring(0, 30, 10) };
+function worldAt(cx, cy) {
+  const v = new THREE.Vector3((cx / innerWidth) * 2 - 1, -(cy / innerHeight) * 2 + 1, 0.5).unproject(camera);
+  const dir = v.sub(camera.position).normalize();
+  const tt = -camera.position.z / dir.z;
+  return camera.position.clone().add(dir.multiplyScalar(tt));
+}
+window.addEventListener("pointermove", (e) => {
+  mouseNdc.set(e.clientX, e.clientY);
+  look.x.target = (e.clientX / innerWidth - 0.5) * 2;
+  look.y.target = (e.clientY / innerHeight - 0.5) * 2;
+});
+document.addEventListener("pointerleave", () => mouseNdc.set(9, 9));
+function shock(cx, cy, sound = true) {
+  U.uShock.value.copy(worldAt(cx, cy));
+  U.uShockT.value = 0;
+  if (sound) HK.sfx("pop");
+}
+canvas.addEventListener("pointerdown", (e) => shock(e.clientX, e.clientY));
+function ping(el) {
+  el.classList.remove("ping");
+  void el.offsetWidth;
+  el.classList.add("ping");
+  const r = el.getBoundingClientRect();
+  shock(r.left + r.width / 2, r.top + r.height / 2, false);
+}
+$("play").addEventListener("click", (e) => { ping(e.currentTarget); HK.toggle(); });
+$("prev").addEventListener("click", (e) => { ping(e.currentTarget); HK.sfx("click"); HK.prev(); });
+$("next").addEventListener("click", (e) => { ping(e.currentTarget); HK.sfx("click"); HK.next(); });
+$("source").addEventListener("click", (e) => { ping(e.currentTarget); HK.cycleSource(); HK.sfx("snap"); });
+$("follow").addEventListener("click", (e) => { ping(e.currentTarget); HK.setFollow(!HK.state.follow); });
+$("reload").addEventListener("click", (e) => { ping(e.currentTarget); HK.refreshLyrics(); });
+$("w-search").addEventListener("click", (e) => { ping(e.currentTarget); HK.sfx("pop"); toast("FIND LYRICS — NOT IN THIS PROTOTYPE"); });
+$("w-settings").addEventListener("click", (e) => { ping(e.currentTarget); HK.sfx("pop"); toast("SETTINGS — NOT IN THIS PROTOTYPE"); });
+$("w-refresh").addEventListener("click", (e) => { ping(e.currentTarget); HK.sfx("click"); toast("PLAYBACK REFRESHED"); });
+$("w-compact").addEventListener("click", (e) => { ping(e.currentTarget); HK.setCompact(!HK.state.compact); });
+$("w-pin").addEventListener("click", (e) => { ping(e.currentTarget); HK.setPinned(!HK.state.pinned); });
+document.querySelectorAll(".w-chrome").forEach((b) => b.addEventListener("click", (e) => { ping(e.currentTarget); HK.sfx("click"); toast("WINDOW CONTROL — PROTOTYPE"); }));
+document.querySelectorAll("button").forEach((b) => b.addEventListener("pointerenter", () => HK.sfx("tick")));
+
+function slider(el, set) {
+  let drag = false;
+  const from = (e) => { const r = el.getBoundingClientRect(); set(HK.clamp((e.clientX - r.left) / r.width, 0, 1)); };
+  el.addEventListener("pointerdown", (e) => { drag = true; el.classList.add("drag"); el.setPointerCapture(e.pointerId); HK.sfx("click"); from(e); });
+  el.addEventListener("pointermove", (e) => { if (drag) from(e); });
+  const end = () => { if (drag) { drag = false; el.classList.remove("drag"); HK.sfx("snap"); } };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+  return () => drag;
+}
+let scrubLine = null;
+const scrubbing = slider($("scrub"), (f) => {
+  const ms = f * HK.track().duration;
+  const li = HK.lineAt(ms);
+  if (li !== scrubLine) { scrubLine = li; HK.sfx("tick"); }
+  HK.seek(ms);
+});
+slider($("vol"), (f) => HK.setVolume(f * 100));
+window.addEventListener("wheel", (e) => HK.setVolume(HK.state.volume - Math.sign(e.deltaY) * 3), { passive: true });
+let lastBlip = 0;
+HK.on("volume", (v) => {
+  $("vol").style.setProperty("--v", v + "%");
+  $("vol-num").textContent = v;
+  const now = performance.now();
+  if (now - lastBlip > 30) { lastBlip = now; HK.sfx("blip", v); }
+});
+
+/* ---------- state wiring ---------- */
+let spin = new HK.Spring(0.12, 8, 5);
+let timeScale = 1;
+HK.on("state", (playing) => {
+  document.body.classList.toggle("is-playing", playing);
+  spin.target = playing ? 0.12 : 0;
+  HK.sfx(playing ? "pop" : "drop");
+  if (playing) shock(innerWidth / 2, innerHeight * 0.42, false);
+});
+HK.on("source", (s) => { $("source").textContent = `${s.toUpperCase()} ▾`; });
+HK.on("follow", (on) => { $("follow").setAttribute("aria-pressed", on); HK.sfx("snap"); toast(on ? "FOLLOWING THE SONG" : "HOLDING THIS LINE"); if (on) showLine(HK.lineAt(HK.position())); });
+HK.on("pin", (on) => { $("w-pin").setAttribute("aria-pressed", on); HK.sfx("snap"); toast(on ? "PINNED ON TOP" : "UNPINNED"); });
+HK.on("compact", (on) => { $("w-compact").setAttribute("aria-pressed", on); HK.sfx("whoosh"); setTimeout(resize, 30); });
+HK.on("refresh", () => {
+  morphTo([]);
+  morphDur = 700;
+  HK.sfx("whoosh");
+  setTimeout(() => showLine(HK.lineAt(HK.position())), 650);
+  toast(`REFORMED FROM ${HK.state.source.toUpperCase()}`);
+});
+let explode = { t: 1, swapped: true, track: null };
+function applyTrack(t, animate) {
+  t.palette.forEach((c, i) => root.style.setProperty(`--c${i + 1}`, c));
+  U.uColLit.value.set(t.palette[0]);
+  U.uColHot.value.set(t.palette[3]);
+  U.uColDim.value.set(t.id === "signal" ? "#a9b4ff" : "#9fe8ff");
+  $("art").src = HK.artURL(t, 128);
+  $("title").textContent = t.title;
+  $("artist").textContent = `${t.artist} — ${t.album}`.toUpperCase();
+  $("t-total").textContent = HK.fmt(t.duration);
+  $("cues").innerHTML = t.lines.map((l) => `<i style="left:${(l.t / t.duration) * 100}%"></i>`).join("");
+  if (animate) { explode = { t: 0, swapped: false, track: t }; }
+  else paintGalaxy(t);
+  shown = -99;
+  showLine(-1);
+}
+HK.on("track", (t) => { HK.sfx("whoosh"); shock(innerWidth / 2, innerHeight / 2, false); applyTrack(t, true); });
+HK.on("line", (i) => { if (HK.state.follow) showLine(i, scrubbing()); });
+let beat = 0;
+HK.on("beat", (n, down) => { beat = down ? 1 : 0.45; });
+
+/* ---------- frame ---------- */
+let time = 0;
+HK.on("frame", (p, dt) => {
+  timeScale += ((HK.state.playing ? 1 : 0.15) - timeScale) * Math.min(1, dt / 400);
+  time += (dt / 1000) * timeScale;
+  U.uTime.value = time;
+  if (progress < 1) progress = Math.min(1, progress + dt / morphDur);
+  U.uProgress.value = progress;
+  const line = HK.track().lines[shown];
+  U.uSung.value = line && !line.instrumental ? HK.sungWords(line, p) : shown < 0 ? 99 : 0;
+  beat *= Math.pow(0.9, dt / 16);
+  U.uBeat.value = beat;
+  U.uShockT.value += dt / 1000;
+  U.uSat.value += ((HK.state.playing ? 1 : 0.2) - U.uSat.value) * Math.min(1, dt / 500);
+  bloom.strength = 0.3 + (HK.state.volume / 100) * 0.6 + beat * 0.12;
+
+  look.x.step(dt);
+  look.y.step(dt);
+  camera.position.set(look.x.value * 2.2, 1.2 - look.y.value * 1.4, camDist);
+  camera.lookAt(0, 0.4, 0);
+  if (mouseNdc.x < 9) U.uMouse.value.copy(worldAt(mouseNdc.x, mouseNdc.y));
+  else U.uMouse.value.set(999, 999, 0);
+
+  spin.step(dt);
+  galaxy.rotation.y += spin.value * dt / 1000;
+  if (explode.t < 1) {
+    explode.t = Math.min(1, explode.t + dt / 1400);
+    const e = explode.t;
+    U.uExplode.value = e < 0.5 ? Math.pow(e * 2, 2) : Math.pow((1 - e) * 2, 2);
+    if (e >= 0.5 && !explode.swapped) { explode.swapped = true; paintGalaxy(explode.track); }
+  } else U.uExplode.value = 0;
+  stars.rotation.y += dt * 0.000004;
+
+  composer.render();
+  $("scrub").style.setProperty("--pp", ((p / HK.track().duration) * 100).toFixed(3) + "%");
+  $("t-cur").textContent = HK.fmt(p);
+});
+
+window.addEventListener("resize", resize);
+resize();
+applyTrack(HK.track(), false);
+HK.emit("source", HK.state.source);
+HK.emit("volume", HK.state.volume);
+document.fonts.ready.then(() => setTimeout(() => $("loading").classList.add("gone"), 300));
+</script>
+</body>
+</html>

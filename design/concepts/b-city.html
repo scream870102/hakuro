@@ -1,0 +1,883 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hakuro · Lyric City</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=IBM+Plex+Mono:wght@500;600&family=Noto+Sans+JP:wght@500;700;900&display=swap" rel="stylesheet">
+<style>
+/* Concept B — Lyric City.
+   An isometric city drawn like a technical illustration. Every lyric line is a
+   lot on the avenue; while it is sung its building rises one floor per word.
+   Sung lines leave a dark skyline behind; the camera travels up the avenue.
+   Palette: concrete greys, ink black, paper white, one acid yellow. */
+:root {
+  --paper: #d7d7d2;
+  --paper-2: #cbcbc5;
+  --white: #f6f6f1;
+  --ink: #141414;
+  --ink-2: #4a4a47;
+  --ink-3: #8b8b86;
+  --acid: #e4f71c;
+  --display: "Archivo", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+  --jp: "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
+  --tc: "Microsoft JhengHei UI", "Noto Sans TC", "Noto Sans JP", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { overflow: hidden; background: var(--paper); color: var(--ink); font-family: var(--jp); -webkit-font-smoothing: antialiased; user-select: none; font-synthesis: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+#city { position: fixed; inset: 0; display: block; cursor: crosshair; }
+.grain { position: fixed; inset: 0; pointer-events: none; opacity: .22; mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .5 0 0 0 0 .5 0 0 0 0 .5 0 0 0 .6 0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E"); }
+
+/* ---------- title block (window chrome) ---------- */
+.tb-row { position: fixed; left: 0; right: 0; top: 0; height: 46px; display: flex; background: var(--white); border-bottom: 1.5px solid var(--ink); z-index: 5; }
+.tb { display: flex; flex-direction: column; justify-content: center; gap: 3px; padding: 0 14px; border-right: 1px solid var(--ink); min-width: 0; }
+.tb small { font: 600 8.5px var(--mono); letter-spacing: .16em; color: var(--ink-3); }
+.tb span { font: 700 13px/1.1 var(--display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tb--brand { flex-direction: row; align-items: center; gap: 10px; padding-left: 12px; }
+.brand-mark { width: 26px; height: 26px; }
+.tb--brand b { font: 800 15px/1 var(--display); font-stretch: 70%; letter-spacing: .14em; }
+.tb--brand em { display: block; font: 600 8.5px var(--mono); font-style: normal; letter-spacing: .14em; color: var(--ink-3); margin-top: 3px; }
+.tb--art { padding: 0 8px; }
+.tb--art img { width: 30px; height: 30px; display: block; filter: grayscale(1) contrast(1.25); border: 1px solid var(--ink); }
+.tb--btn { text-align: left; transition: background .12s; }
+.tb--btn:hover { background: var(--acid); }
+.tb--btn:active span { transform: translateY(1px); }
+.tb--grow { flex: 1; border-right: 1px solid var(--ink); }
+.win { display: flex; }
+.win button { width: 40px; display: grid; place-items: center; border-left: 1px solid transparent; transition: background .12s; }
+.win button + button { border-left-color: #d0d0cb; }
+.win button svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.3; }
+.win button:hover { background: var(--acid); }
+.win button:active svg { transform: scale(.8); }
+.win button[aria-pressed="true"] { background: var(--ink); color: var(--acid); }
+.win .close:hover { background: var(--ink); color: var(--white); }
+
+/* ---------- active-line callout ---------- */
+.callout { position: fixed; left: 34px; top: 74px; width: min(54vw, 560px); z-index: 3; pointer-events: none; }
+.callout__meta { display: flex; gap: 12px; align-items: baseline; font: 600 10px var(--mono); letter-spacing: .14em; color: var(--ink-2); margin-bottom: 8px; }
+.callout__meta b { background: var(--ink); color: var(--acid); padding: 2px 6px; font-weight: 600; }
+.callout__prev { font: 700 14px/1.4 var(--display); color: var(--ink-3); text-decoration: line-through; text-decoration-thickness: 1px; margin-bottom: 6px; min-height: 1.4em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.callout__text { font: 900 clamp(26px, 4.2vw, 46px)/1.16 var(--display); font-stretch: 78%; letter-spacing: -.005em; min-height: 1.16em; }
+.callout__tr { font: 500 14px/1.5 var(--tc); color: var(--ink-2); margin-top: 8px; letter-spacing: .05em; min-height: 1.5em; }
+.callout__next { margin-top: 12px; font: 700 17px/1.35 var(--display); font-stretch: 85%; color: #6d6d69; display: flex; gap: 10px; align-items: baseline; }
+.callout__next small { font: 600 9px var(--mono); letter-spacing: .14em; color: var(--ink-3); border: 1px solid var(--ink-3); padding: 1px 4px; }
+.w { display: inline-block; white-space: pre; color: #a3a39e; transition: color .2s; }
+.w.sung { color: var(--ink); }
+.w.now { color: var(--ink); background: linear-gradient(transparent 62%, var(--acid) 62%) no-repeat 0 0 / var(--p, 0%) 100%; }
+.callout.enter .w { animation: build .55s cubic-bezier(.2, 1.5, .4, 1) both; animation-delay: calc(var(--i) * 45ms); }
+.callout.enter .callout__tr { animation: fadeup .5s .15s both; }
+.inst-mark { display: inline-flex; gap: 5px; align-items: flex-end; height: .7em; }
+.inst-mark i { width: .14em; background: var(--ink); height: calc(25% + var(--beat, 0) * 75%); transition: height .08s; }
+.inst-mark i:nth-child(2) { height: calc(55% + var(--beat, 0) * 45%); }
+.inst-mark i:nth-child(3) { height: calc(35% + var(--beat, 0) * 60%); }
+
+/* labels that float above upcoming lots */
+.tag { position: fixed; left: 0; top: 0; z-index: 2; pointer-events: none; transform: translate(-50%, -100%); white-space: nowrap; opacity: 0; transition: opacity .35s; }
+.tag.show { opacity: 1; }
+.tag div { background: var(--white); border: 1px solid var(--ink); padding: 3px 7px 4px; font: 700 12px/1.2 var(--display); font-stretch: 85%; box-shadow: 3px 3px 0 var(--ink); }
+.tag div small { font: 600 8.5px var(--mono); letter-spacing: .12em; color: var(--ink-3); margin-right: 6px; }
+.tag::after { content: ""; display: block; width: 1px; height: 22px; margin: 0 auto; background: var(--ink); }
+
+/* ---------- plaza: iso keys + volume tower ---------- */
+.plaza { position: fixed; left: 20px; bottom: 64px; z-index: 4; display: flex; align-items: flex-end; gap: 4px; padding: 12px 64px 24px 14px; background: var(--white); border: 1.5px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); }
+.key { position: relative; display: block; line-height: 0; }
+.key svg, .vol svg { filter: drop-shadow(4px 4px 0 rgb(20 20 20 / .18)); }
+.key path { stroke: var(--ink); stroke-width: 1.3; stroke-linejoin: round; transition: fill .15s; }
+.key .k-t { fill: var(--white); }
+.key .k-l { fill: #c2c2bd; }
+.key .k-r { fill: #9c9c97; }
+.key .k-i path { stroke: none; fill: var(--ink); }
+.key:hover .k-t { fill: #fff; }
+.key--main .k-t { fill: var(--acid); }
+.key--main:hover .k-t { fill: #efff4d; }
+.key--main .k-l { fill: #222; }
+.key--main .k-r { fill: #0b0b0b; }
+.key-label { position: absolute; left: 50%; bottom: -16px; transform: translateX(-50%); font: 600 8.5px var(--mono); letter-spacing: .16em; color: var(--ink-2); line-height: 1; }
+.icon-pause { display: none; }
+body.is-playing .icon-play { display: none; }
+body.is-playing .icon-pause { display: inline; }
+.vol { position: relative; margin-left: 18px; cursor: ns-resize; touch-action: none; line-height: 0; }
+.vol path { stroke: var(--ink); stroke-width: 1.1; stroke-linejoin: round; }
+.vol-read { position: absolute; left: 100%; bottom: 8px; margin-left: 6px; font: 600 9px/1.4 var(--mono); letter-spacing: .12em; color: var(--ink-2); white-space: nowrap; }
+.vol-read b { display: block; font: 900 22px/1 var(--display); font-stretch: 70%; color: var(--ink); letter-spacing: 0; }
+
+/* ---------- legend ---------- */
+.legend { position: fixed; right: 18px; bottom: 66px; z-index: 3; background: var(--white); border: 1px solid var(--ink); font: 600 8.5px var(--mono); letter-spacing: .12em; color: var(--ink-2); }
+.legend div { display: flex; align-items: center; gap: 7px; padding: 4px 8px; }
+.legend div + div { border-top: 1px solid #d3d3ce; }
+.legend i { width: 10px; height: 10px; border: 1px solid var(--ink); }
+
+/* ---------- ruler (seek) ---------- */
+.ruler-row { position: fixed; left: 0; right: 0; bottom: 0; height: 50px; display: flex; align-items: stretch; background: var(--white); border-top: 1.5px solid var(--ink); z-index: 5; }
+.ruler-row > button { padding: 0 14px; display: flex; align-items: center; gap: 7px; border-right: 1px solid var(--ink); font: 600 9.5px var(--mono); letter-spacing: .14em; transition: background .12s; }
+.ruler-row > button:hover { background: var(--acid); }
+.ruler-row > button i { width: 9px; height: 9px; border: 1.5px solid var(--ink); }
+.ruler-row > button[aria-pressed="true"] i { background: var(--ink); }
+.ruler-row > button:active { transform: translateY(1px); }
+.ruler { position: relative; flex: 1; margin: 0 18px; cursor: ew-resize; touch-action: none; }
+.ruler canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.thumb { position: absolute; top: 0; left: 0; width: 28px; height: 30px; line-height: 0; pointer-events: none; transform-origin: 50% 100%; }
+.thumb path { stroke: var(--ink); stroke-width: 1.1; stroke-linejoin: round; }
+.ruler-time { display: flex; align-items: center; padding: 0 14px; border-left: 1px solid var(--ink); font: 600 11px var(--mono); letter-spacing: .06em; min-width: 104px; justify-content: center; }
+.ruler-row > button.rebuild { border-right: 0; border-left: 1px solid var(--ink); }
+
+.toast { position: fixed; left: 50%; top: 58px; z-index: 9; pointer-events: none; background: var(--ink); color: var(--acid); font: 600 10.5px var(--mono); letter-spacing: .12em; padding: 7px 12px; transform: translate(-50%, -12px); opacity: 0; transition: .3s cubic-bezier(.2, 1.6, .4, 1); box-shadow: 4px 4px 0 var(--acid); }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- compact ---------- */
+body.is-compact .tb-row { height: 32px; }
+body.is-compact .tb--hide, body.is-compact .tb--brand em, body.is-compact .win .wide,
+body.is-compact .plaza, body.is-compact .legend, body.is-compact .callout__meta, body.is-compact .tag,
+body.is-compact .ruler-row > button, body.is-compact .callout__tr { display: none; }
+body.is-compact .callout { top: 42px; left: 16px; width: 62vw; }
+body.is-compact .callout__prev { font-size: 11px; margin-bottom: 2px; }
+body.is-compact .callout__text { font-size: 22px; }
+body.is-compact .callout__next { font-size: 12px; margin-top: 4px; }
+body.is-compact .callout__next small { display: none; }
+body.is-compact .ruler-row { height: 34px; }
+body.is-compact .ruler-time { min-width: 80px; font-size: 9.5px; }
+
+@keyframes build { 0% { transform: translateY(-26px) scaleY(.4); opacity: 0; } 100% { transform: none; opacity: 1; } }
+@keyframes fadeup { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body class="is-playing">
+<canvas id="city"></canvas>
+<div class="grain" aria-hidden="true"></div>
+
+<header class="tb-row" data-tauri-drag-region>
+  <div class="tb tb--brand">
+    <svg class="brand-mark" viewBox="-14 -16 28 30"><path d="M0-8L12-2L0 4L-12-2Z" fill="#e4f71c" stroke="#141414" stroke-width="1.3"/><path d="M-12-2L0 4V12L-12 6Z" fill="#2a2a28" stroke="#141414" stroke-width="1.3"/><path d="M12-2L0 4V12L12 6Z" fill="#0d0d0d" stroke="#141414" stroke-width="1.3"/></svg>
+    <div><b>HAKURO</b><em>LYRIC CITY · SHEET 01</em></div>
+  </div>
+  <div class="tb tb--art tb--hide"><img id="art" alt=""></div>
+  <div class="tb" style="max-width:220px"><small>TRACK</small><span id="title">—</span></div>
+  <div class="tb tb--hide" style="max-width:180px"><small>ARTIST</small><span id="artist">—</span></div>
+  <button class="tb tb--btn tb--hide" id="source"><small>SOURCE ▾</small><span id="source-name">—</span></button>
+  <div class="tb--grow" data-tauri-drag-region></div>
+  <nav class="win">
+    <button class="wide" id="w-search" title="Find lyrics"><svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="3"/><path d="m7.3 7.3 3 3"/></svg></button>
+    <button class="wide" id="w-settings" title="Settings"><svg viewBox="0 0 12 12"><path d="M1.8 4h8.4M1.8 8h8.4"/><circle cx="4.2" cy="4" r="1.5"/><circle cx="7.8" cy="8" r="1.5"/></svg></button>
+    <button class="wide" id="w-refresh" title="Refresh playback"><svg viewBox="0 0 12 12"><path d="M9.9 5.2A4 4 0 1 0 9.4 8M10 1.9v3.3H6.7"/></svg></button>
+    <button id="w-compact" title="Compact mode" aria-pressed="false"><svg viewBox="0 0 12 12"><path d="M6 1.4v3.1M4.4 3l1.6 1.5L7.6 3M6 10.6V7.5M4.4 9l1.6-1.5L7.6 9"/></svg></button>
+    <button id="w-pin" title="Keep on top" aria-pressed="false"><svg viewBox="0 0 12 12"><path d="M3.6 1.4h4.8M5 1.4v2.8L3.4 6h5.2L7 4.2V1.4M6 6v3.2"/></svg></button>
+    <button class="w-chrome" title="Minimize"><svg viewBox="0 0 12 12"><path d="M2.5 6h7"/></svg></button>
+    <button class="w-chrome wide" title="Maximize"><svg viewBox="0 0 12 12"><path d="M2.5 2.5h7v7h-7z"/></svg></button>
+    <button class="w-chrome close" title="Close"><svg viewBox="0 0 12 12"><path d="M2.6 2.6l6.8 6.8M9.4 2.6l-6.8 6.8"/></svg></button>
+  </nav>
+</header>
+
+<section class="callout" id="callout" aria-live="polite">
+  <div class="callout__meta"><b id="c-no">L--</b><span id="c-of">/ 16</span><span id="c-time">00:00.0</span></div>
+  <div class="callout__prev" id="c-prev"></div>
+  <div class="callout__text" id="c-text"></div>
+  <div class="callout__tr" id="c-tr"></div>
+  <div class="callout__next" id="c-next-row"><small>NEXT</small><span id="c-next"></span></div>
+</section>
+<div class="tag" id="tag0"><div></div></div>
+<div class="tag" id="tag1"><div></div></div>
+<div class="tag" id="tag2"><div></div></div>
+
+<div class="plaza" id="plaza">
+  <button class="key" id="k-prev" aria-label="Previous track"></button>
+  <button class="key key--main" id="k-play" aria-label="Play or pause"></button>
+  <button class="key" id="k-next" aria-label="Next track"></button>
+  <div class="vol" id="vol" role="slider" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" tabindex="0"></div>
+</div>
+
+<div class="legend" aria-hidden="true">
+  <div><i style="background:#e4f71c"></i>SINGING</div>
+  <div><i style="background:#2a2a28"></i>SUNG</div>
+  <div><i style="background:#f6f6f1;border-style:dashed"></i>PLANNED</div>
+</div>
+
+<footer class="ruler-row">
+  <button id="follow" aria-pressed="true"><i></i>FOLLOW</button>
+  <div class="ruler" id="ruler" role="slider" aria-label="Seek" tabindex="0"><canvas id="ruler-cv"></canvas><div class="thumb" id="thumb"></div></div>
+  <span class="ruler-time" id="time">0:00 / 0:00</span>
+  <button class="rebuild" id="reload">↻ REBUILD</button>
+</footer>
+<div class="toast" id="toast"></div>
+
+<script src="hk-mock.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  HK.bindKeys();
+
+  const AV = 4;            // avenue spacing between lyric lots (grid units)
+  const FLOOR = 0.78;      // one floor per sung word
+  const BASE = 0.45;
+  const ZK = 1.2247;       // vertical scale that matches CSS rotateX(60) rotateZ(45)
+  const C = {
+    paper: "#d7d7d2", grid: "rgba(20,20,20,.07)", ink: "#141414", white: "#f6f6f1", acid: "#e4f71c",
+    road: "#c3c3be", lot: "#ecece7",
+  };
+
+  let toastTimer;
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.remove("show");
+    void t.offsetWidth;
+    t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
+  }
+
+  /* ---------- canvas + projection ---------- */
+  const cv = $("city");
+  const ctx = cv.getContext("2d");
+  let W = 0, H = 0;
+  const view = { A: 22, ax: 0, ay: 0, ox: 0, oy: 0 };
+  function resize() {
+    const dpr = devicePixelRatio || 1;
+    W = innerWidth;
+    H = innerHeight;
+    cv.width = W * dpr;
+    cv.height = H * dpr;
+    cv.style.width = W + "px";
+    cv.style.height = H + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const compact = HK.state.compact;
+    view.A = compact ? 11 : HK.clamp(Math.min(W, H) / 34, 14, 26);
+    view.ax = W * (compact ? 0.8 : 0.67);
+    view.ay = H * (compact ? 0.86 : 0.74);
+    sizeRuler();
+  }
+  const proj = (gx, gy, gz = 0) => [(gx - gy) * view.A + view.ox, (gx + gy) * view.A * 0.5 - gz * view.A * ZK + view.oy];
+  function unproj(sx, sy) {
+    const a = (sx - view.ox) / view.A;
+    const b = (sy - view.oy) / (view.A * 0.5);
+    return [(a + b) / 2, (b - a) / 2];
+  }
+
+  function poly(pts, fill, stroke = C.ink, lw = 1) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+    if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+  }
+  function box(x, y, w, d, z0, h, col, dashed) {
+    if (h <= 0.001) return;
+    const z1 = z0 + h;
+    if (dashed) ctx.setLineDash([3, 3]);
+    poly([proj(x, y + d, z0), proj(x + w, y + d, z0), proj(x + w, y + d, z1), proj(x, y + d, z1)], col[1]);
+    poly([proj(x + w, y + d, z0), proj(x + w, y, z0), proj(x + w, y, z1), proj(x + w, y + d, z1)], col[2]);
+    poly([proj(x, y, z1), proj(x + w, y, z1), proj(x + w, y + d, z1), proj(x, y + d, z1)], col[0]);
+    if (dashed) ctx.setLineDash([]);
+  }
+  function floorBands(x, y, w, d, z0, floors, litCount, litCol, offCol) {
+    for (let k = 0; k < floors; k++) {
+      const za = z0 + k * FLOOR + FLOOR * 0.2;
+      const zb = z0 + (k + 1) * FLOOR - FLOOR * 0.2;
+      const lit = HK.clamp(litCount - k, 0, 1);
+      const col = lit >= 1 ? litCol : lit > 0 ? litCol : offCol;
+      ctx.globalAlpha = lit > 0 && lit < 1 ? 0.35 + lit * 0.65 : 1;
+      poly([proj(x + 0.22, y + d, za), proj(x + w - 0.22, y + d, za), proj(x + w - 0.22, y + d, zb), proj(x + 0.22, y + d, zb)], col, null);
+      poly([proj(x + w, y + d - 0.22, za), proj(x + w, y + 0.22, za), proj(x + w, y + 0.22, zb), proj(x + w, y + d - 0.22, zb)], col, null);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  /* ---------- world ---------- */
+  function mulberry(seed) {
+    return () => {
+      seed |= 0; seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const STYLES = {
+    concrete: ["#efefea", "#c6c6c1", "#a3a39e"],
+    pale: ["#f8f8f3", "#d9d9d4", "#bbbbb6"],
+    dark: ["#5a5a57", "#3a3a38", "#262624"],
+    acid: ["#e4f71c", "#3a3a38", "#262624"],
+    lotFuture: ["#f8f8f3", "#e2e2dd", "#cfcfca"],
+    past: ["#3e3e3c", "#2b2b29", "#1c1c1b"],
+    active: ["#e4f71c", "#232322", "#0c0c0c"],
+    car: ["#f6f6f1", "#bdbdb8", "#9a9a95"],
+    carDark: ["#3a3a38", "#222", "#111"],
+  };
+  let world = null;
+  let artGray = null;
+  function grayArt(t) {
+    const src = HK.artCanvas(t, 256);
+    const c = document.createElement("canvas");
+    c.width = c.height = 256;
+    const g = c.getContext("2d");
+    g.filter = "grayscale(1) contrast(1.35) brightness(1.05)";
+    g.drawImage(src, 0, 0);
+    return c;
+  }
+  function buildWorld(t) {
+    const rnd = mulberry(t.id === "signal" ? 11 : 29);
+    const n = t.lines.length;
+    const yMin = -n * AV - 16, yMax = 14;
+    const objs = [];
+    const lyric = t.lines.map((l, i) => {
+      const o = { kind: "lyric", i, x: 0, y: -i * AV - 2, w: 2, d: 2, words: l.words.length, inst: l.instrumental, h: new HK.Spring(0.3, 80, 10) };
+      objs.push(o);
+      return o;
+    });
+    objs.push({ kind: "tower", x: -0.5, y: 2.4, w: 3, d: 2, hFull: 4.7 });
+    for (let gy = yMin; gy < yMax; gy++) {
+      for (let gx = -12; gx <= 14; gx++) {
+        if (gx >= -1 && gx <= 5) continue;
+        if (((gy % 5) + 5) % 5 === 0 || ((gx % 5) + 5) % 5 === 0) continue;
+        if (rnd() > 0.74) continue;
+        const r = rnd();
+        const style = r < 0.006 ? "acid" : r < 0.09 ? "dark" : r < 0.4 ? "pale" : "concrete";
+        const near = Math.abs(gx - 2) < 7 ? 1 : 0.6;
+        objs.push({
+          kind: "block", x: gx + 0.08, y: gy + 0.08, w: 0.84, d: 0.84,
+          hFull: (0.3 + Math.pow(rnd(), 1.8) * 3.6) * near, style,
+          roof: rnd() < 0.24 ? [rnd() * 0.4 + 0.08, rnd() * 0.4 + 0.08] : null,
+          antenna: rnd() < 0.07, bounce: rnd(),
+        });
+      }
+    }
+    for (const o of objs) o.key = o.x + o.y + (o.w + o.d) / 2;
+    const cars = [];
+    for (let i = 0; i < 9; i++) cars.push({ kind: "car", lane: i % 2, y: yMin + rnd() * (yMax - yMin), v: (1.6 + rnd() * 1.4) * (i % 2 ? -1 : 1), dark: rnd() < 0.4 });
+    artGray = grayArt(t);
+    return { objs, lyric, cars, yMin, yMax, builtAt: performance.now() };
+  }
+
+  /* ---------- camera + effects ---------- */
+  const focus = new HK.Spring(-0.8, 28, 10.5);
+  const par = { x: new HK.Spring(0, 40, 12), y: new HK.Spring(0, 40, 12) };
+  let shocks = [];
+  let beatLevel = 0;
+  let active = -1;
+  window.addEventListener("pointermove", (e) => {
+    par.x.target = (e.clientX / W - 0.5) * -24;
+    par.y.target = (e.clientY / H - 0.5) * -16;
+  });
+  function shockAt(gx, gy, amp = 1) {
+    shocks.push({ x: gx, y: gy, t0: performance.now(), amp });
+  }
+  function shockAtScreen(sx, sy, amp) {
+    const [gx, gy] = unproj(sx, sy);
+    shockAt(gx, gy, amp);
+  }
+  function waveLift(cx, cy, now) {
+    let z = 0;
+    for (const s of shocks) {
+      const t = (now - s.t0) / 1000;
+      const dist = Math.hypot(cx - s.x, cy - s.y);
+      const front = t * 13;
+      z += s.amp * 0.9 * Math.exp(-((dist - front) ** 2) / 1.6) * Math.exp(-t * 1.6);
+    }
+    return z;
+  }
+  const easeBack = (t) => { const c = 1.9; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+
+  /* ---------- drawing ---------- */
+  function drawGround(now) {
+    ctx.fillStyle = C.paper;
+    ctx.fillRect(0, 0, W, H);
+    const [g0x, g0y] = unproj(0, 0), [g1x, g1y] = unproj(W, 0), [g2x, g2y] = unproj(0, H), [g3x, g3y] = unproj(W, H);
+    const gxMin = Math.floor(Math.min(g0x, g1x, g2x, g3x)), gxMax = Math.ceil(Math.max(g0x, g1x, g2x, g3x));
+    const gyMin = Math.floor(Math.min(g0y, g1y, g2y, g3y)), gyMax = Math.ceil(Math.max(g0y, g1y, g2y, g3y));
+    ctx.strokeStyle = C.grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let gx = gxMin; gx <= gxMax; gx++) { const a = proj(gx, gyMin), b = proj(gx, gyMax); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+    for (let gy = gyMin; gy <= gyMax; gy++) { const a = proj(gxMin, gy), b = proj(gxMax, gy); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+    ctx.stroke();
+    // the road beside the avenue
+    poly([proj(2.6, world.yMin), proj(4.4, world.yMin), proj(4.4, world.yMax), proj(2.6, world.yMax)], C.road, "rgba(20,20,20,.5)");
+    ctx.setLineDash([6, 8]);
+    ctx.strokeStyle = C.white;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    const r0 = proj(3.5, world.yMin), r1 = proj(3.5, world.yMax);
+    ctx.moveTo(r0[0], r0[1]);
+    ctx.lineTo(r1[0], r1[1]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // shock rings on the ground
+    for (const s of shocks) {
+      const t = (now - s.t0) / 1000;
+      const r = t * 13;
+      const a = Math.max(0, 1 - t / 1.4);
+      if (a <= 0) continue;
+      ctx.beginPath();
+      for (let k = 0; k <= 40; k++) {
+        const th = (k / 40) * Math.PI * 2;
+        const p = proj(s.x + Math.cos(th) * r, s.y + Math.sin(th) * r);
+        k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]);
+      }
+      ctx.strokeStyle = `rgba(20,20,20,${a * 0.6})`;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  function onScreen(o, zTop) {
+    const a = proj(o.x, o.y + o.d), b = proj(o.x + o.w, o.y), top = proj(o.x, o.y, zTop), bot = proj(o.x + o.w, o.y + o.d);
+    return b[0] > -40 && a[0] < W + 40 && top[1] < H + 40 && bot[1] > -60 - zTop * view.A;
+  }
+
+  function drawWorld(now, pos) {
+    const t = HK.track();
+    const built = now - world.builtAt;
+    const fx = 1, fy = -focus.value * AV - 1;
+    const list = [];
+    for (const o of world.objs) list.push(o);
+    for (const c of world.cars) { c.x = c.lane ? 3.75 : 2.85; c.w = 0.42; c.d = 0.8; c.key = c.x + c.y + 0.6; list.push(c); }
+    list.sort((a, b) => a.key - b.key);
+    let roofActive = null;
+    const roofs = {};
+    for (const o of list) {
+      const cx = o.x + o.w / 2, cy = o.y + o.d / 2;
+      const dist = Math.hypot(cx - fx, cy - fy);
+      const rise = HK.clamp((built - dist * 22) / 520, 0, 1);
+      if (rise <= 0) continue;
+      const s = easeBack(rise);
+      const lift = waveLift(cx, cy, now) + (dist < 12 && o.kind === "block" ? beatLevel * 0.16 * o.bounce * (1 - dist / 12) : 0);
+      if (o.kind === "block") {
+        const h = o.hFull * s;
+        if (!onScreen(o, h + lift)) continue;
+        box(o.x, o.y, o.w, o.d, lift, h, STYLES[o.style]);
+        if (o.roof && s > 0.95) box(o.x + o.roof[0], o.y + o.roof[1], 0.3, 0.3, lift + h, 0.22, STYLES.pale);
+        if (o.antenna && s > 0.95) {
+          const a = proj(o.x + 0.42, o.y + 0.42, lift + h), b = proj(o.x + 0.42, o.y + 0.42, lift + h + 1.1);
+          ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.strokeStyle = C.ink; ctx.lineWidth = 1; ctx.stroke();
+          ctx.fillStyle = C.ink; ctx.fillRect(b[0] - 2, b[1] - 2 - beatLevel * 2, 4, 4);
+        }
+      } else if (o.kind === "car") {
+        box(o.x, o.y, o.w, o.d, lift, 0.32, o.dark ? STYLES.carDark : STYLES.car);
+      } else if (o.kind === "tower") {
+        const h = o.hFull * s;
+        if (!onScreen(o, h + lift)) continue;
+        box(o.x, o.y, o.w, o.d, lift, h, STYLES.concrete);
+        if (s > 0.6 && artGray) {
+          // album art printed on the tower's left face, 3x3 units
+          const z0 = lift + h - 3.05, z1 = lift + h - 0.05;
+          const tl = proj(o.x + 0.02, o.y + o.d, z1), tr = proj(o.x + o.w - 0.02, o.y + o.d, z1), bl = proj(o.x + 0.02, o.y + o.d, z0);
+          ctx.save();
+          ctx.transform(tr[0] - tl[0], tr[1] - tl[1], bl[0] - tl[0], bl[1] - tl[1], tl[0], tl[1]);
+          ctx.globalAlpha = Math.min(1, (s - 0.6) * 3);
+          ctx.drawImage(artGray, 0, 0, 1, 1);
+          ctx.restore();
+          ctx.globalAlpha = 1;
+          poly([tl, tr, proj(o.x + o.w - 0.02, o.y + o.d, z0), bl], null, C.ink, 1.2);
+          // acid stripe on the right face
+          poly([proj(o.x + o.w, o.y + o.d, z0 + 0.4), proj(o.x + o.w, o.y, z0 + 0.4), proj(o.x + o.w, o.y, z0 + 0.9), proj(o.x + o.w, o.y + o.d, z0 + 0.9)], C.acid);
+        }
+      } else if (o.kind === "lyric") {
+        const line = t.lines[o.i];
+        const full = o.inst ? 0.25 : BASE + o.words * FLOOR;
+        const sung = o.i === active ? HK.sungWords(line, pos) : 0;
+        o.h.target = o.i < active ? full : o.i === active ? (o.inst ? 0.25 + beatLevel * 0.35 : BASE + sung * FLOOR) : 0.3;
+        const h = Math.max(0.05, o.h.value) * s;
+        if (!onScreen(o, h + lift)) continue;
+        // lot outline
+        ctx.setLineDash([3, 3]);
+        poly([proj(o.x - 0.15, o.y - 0.15), proj(o.x + o.w + 0.15, o.y - 0.15), proj(o.x + o.w + 0.15, o.y + o.d + 0.15), proj(o.x - 0.15, o.y + o.d + 0.15)], C.lot, "rgba(20,20,20,.55)");
+        ctx.setLineDash([]);
+        const style = o.i === active ? STYLES.active : o.i < active ? STYLES.past : STYLES.lotFuture;
+        box(o.x, o.y, o.w, o.d, lift, h, style, o.i > active);
+        if (!o.inst && o.i <= active) {
+          const floors = Math.min(o.words, Math.floor((h - BASE) / FLOOR + 0.001));
+          if (o.i === active) floorBands(o.x, o.y, o.w, o.d, lift + BASE, Math.ceil((h - BASE) / FLOOR - 0.15), sung, C.acid, "#3a3a38");
+          else floorBands(o.x, o.y, o.w, o.d, lift + BASE, floors, 0, C.acid, "#4a4a47");
+        }
+        if (o.inst && o.i === active) {
+          const p = proj(o.x + 1, o.y + 1, lift + h);
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], 6 + beatLevel * 14, 0, Math.PI * 2);
+          ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5; ctx.stroke();
+        }
+        const roof = proj(o.x + 1, o.y + 1, lift + h);
+        roofs[o.i] = roof;
+        if (o.i === active) roofActive = roof;
+      }
+    }
+    return { roofActive, roofs };
+  }
+
+  // Paper haze behind the callout keeps the lyric legible over the busy city.
+  function drawFog() {
+    if (HK.state.compact) {
+      const g = ctx.createLinearGradient(0, 0, W * 0.75, 0);
+      g.addColorStop(0, "rgba(215,215,210,.96)"); g.addColorStop(0.6, "rgba(215,215,210,.8)"); g.addColorStop(1, "rgba(215,215,210,0)");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      return;
+    }
+    const g = ctx.createRadialGradient(W * 0.2, H * 0.2, 0, W * 0.2, H * 0.2, Math.max(W, H) * 0.55);
+    g.addColorStop(0, "rgba(215,215,210,.94)"); g.addColorStop(0.55, "rgba(215,215,210,.7)"); g.addColorStop(1, "rgba(215,215,210,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  function drawLeader(roof) {
+    if (!roof || HK.state.compact) return;
+    const r = $("c-text").getBoundingClientRect();
+    if (!r.width) return;
+    const y = r.bottom + 6;
+    const xEnd = Math.min(r.right + 24, roof[0] - 30);
+    ctx.beginPath();
+    ctx.moveTo(r.left, y);
+    ctx.lineTo(xEnd, y);
+    ctx.lineTo(roof[0], roof[1] - 6);
+    ctx.strokeStyle = C.ink;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.fillStyle = C.acid;
+    ctx.fillRect(roof[0] - 5, roof[1] - 11, 10, 10);
+    ctx.strokeRect(roof[0] - 5, roof[1] - 11, 10, 10);
+    ctx.beginPath();
+    ctx.arc(r.left, y, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = C.ink;
+    ctx.fill();
+  }
+
+  /* ---------- callout ---------- */
+  const callout = $("callout");
+  let wordEls = [];
+  function lineHTML(l) {
+    if (l.instrumental) return '<span class="inst-mark"><i></i><i></i><i></i></span> <span style="font-size:.5em;letter-spacing:.2em">INSTRUMENTAL</span>';
+    return l.words.map((w, j) => `<span class="w" style="--i:${j}">${esc(w.text)}</span>`).join("");
+  }
+  function setActive(i) {
+    active = i;
+    const t = HK.track();
+    const line = t.lines[i];
+    $("c-no").textContent = i >= 0 ? `L${String(i + 1).padStart(2, "0")}` : "L--";
+    $("c-of").textContent = `/ ${t.lines.length}`;
+    $("c-prev").textContent = i > 0 ? t.lines[i - 1].text : "";
+    $("c-text").innerHTML = line ? lineHTML(line) : `<span class="w sung" style="--i:0">${esc(t.title)}</span>`;
+    $("c-tr").textContent = line ? line.tr : t.artist;
+    const nx = t.lines[i + 1];
+    $("c-next").textContent = nx ? (nx.instrumental ? "— instrumental —" : nx.text) : "";
+    $("c-next-row").style.visibility = nx ? "visible" : "hidden";
+    wordEls = [...$("c-text").querySelectorAll(".w")];
+    callout.classList.remove("enter");
+    void callout.offsetWidth;
+    callout.classList.add("enter");
+    for (let k = 0; k < 3; k++) {
+      const l = t.lines[i + 2 + k];
+      const tag = $("tag" + k);
+      tag.dataset.i = i + 2 + k;
+      tag.firstElementChild.innerHTML = l ? `<small>L${String(i + 3 + k).padStart(2, "0")}</small>${esc(l.instrumental ? "♪" : l.text)}` : "";
+      tag.classList.toggle("show", Boolean(l));
+    }
+  }
+
+  /* ---------- iso keys (SVG, same projection as the city) ---------- */
+  const kp = (x, y, z, a) => [(x - y) * a, (x + y) * a * 0.5 - z * a * ZK];
+  const ICONS = {
+    prev: '<path d="M-.5-.42h.16v.84h-.16zM.46-.4v.8L-.24 0z"/>',
+    next: '<path d="M.34-.42h.16v.84H.34zM-.46-.4v.8L.24 0z"/>',
+    play: '<path class="icon-play" d="M-.32-.44L.46 0L-.32.44z"/><path class="icon-pause" d="M-.36-.4h.24v.8h-.24zM.12-.4h.24v.8H.12z"/>',
+  };
+  function makeKey(el, w, d, h, a, icon, label) {
+    const zMax = h * 1.25;
+    const pts = [[0, 0, 0], [w, 0, 0], [w, d, 0], [0, d, 0], [0, 0, zMax], [w, 0, zMax], [w, d, zMax], [0, d, zMax]].map(([x, y, z]) => kp(x, y, z, a));
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const minX = Math.min(...xs) - 2, minY = Math.min(...ys) - 2, vw = Math.max(...xs) + 2 - minX, vh = Math.max(...ys) + 2 - minY;
+    el.innerHTML = `<svg viewBox="${minX} ${minY} ${vw} ${vh}" width="${vw}" height="${vh}"><path class="k-l"/><path class="k-r"/><path class="k-t"/><g class="k-i"><g transform="translate(${w / 2} ${d / 2}) matrix(.7071 -.7071 .7071 .7071 0 0) scale(${Math.min(w, d) * 0.62})">${icon}</g></g></svg><span class="key-label">${label}</span>`;
+    const k = { el, w, d, h, a, spring: new HK.Spring(h, 520, 16), l: el.querySelector(".k-l"), r: el.querySelector(".k-r"), t: el.querySelector(".k-t"), i: el.querySelector(".k-i") };
+    const press = () => { k.spring.target = h * 0.28; HK.sfx("click"); };
+    const release = () => { k.spring.target = el.matches(":hover") ? h * 1.12 : h; };
+    el.addEventListener("pointerdown", press);
+    el.addEventListener("pointerup", release);
+    el.addEventListener("pointerleave", () => { k.spring.target = h; });
+    el.addEventListener("pointerenter", () => { k.spring.target = h * 1.12; HK.sfx("tick"); });
+    keys.push(k);
+    updateKey(k);
+    return k;
+  }
+  function updateKey(k) {
+    const h = Math.max(0.04, k.spring.value);
+    const P = (x, y, z) => kp(x, y, z, k.a).map((v) => v.toFixed(2)).join(",");
+    k.l.setAttribute("d", `M${P(0, k.d, 0)}L${P(k.w, k.d, 0)}L${P(k.w, k.d, h)}L${P(0, k.d, h)}Z`);
+    k.r.setAttribute("d", `M${P(k.w, k.d, 0)}L${P(k.w, 0, 0)}L${P(k.w, 0, h)}L${P(k.w, k.d, h)}Z`);
+    k.t.setAttribute("d", `M${P(0, 0, h)}L${P(k.w, 0, h)}L${P(k.w, k.d, h)}L${P(0, k.d, h)}Z`);
+    k.i.setAttribute("transform", `matrix(${k.a} ${k.a / 2} ${-k.a} ${k.a / 2} 0 ${(-h * k.a * ZK).toFixed(2)})`);
+  }
+  const keys = [];
+  makeKey($("k-prev"), 1.6, 1.6, 0.55, 15, ICONS.prev, "PREV");
+  makeKey($("k-play"), 2.2, 2.2, 0.8, 15, ICONS.play, "PLAY");
+  makeKey($("k-next"), 1.6, 1.6, 0.55, 15, ICONS.next, "NEXT");
+  function keyShock(el, amp) {
+    const r = el.getBoundingClientRect();
+    shockAtScreen(r.left + r.width / 2, r.top + r.height / 2, amp);
+  }
+  $("k-play").addEventListener("click", (e) => { keyShock(e.currentTarget, 1.4); HK.toggle(); });
+  $("k-prev").addEventListener("click", (e) => { keyShock(e.currentTarget, 1); HK.prev(); });
+  $("k-next").addEventListener("click", (e) => { keyShock(e.currentTarget, 1); HK.next(); });
+
+  /* ---------- volume tower ---------- */
+  const volEl = $("vol");
+  const SLABS = 10, SA = 11, SH = 0.3, SG = 0.12;
+  const volTop = new HK.Spring(0, 400, 14);
+  (function buildVol() {
+    const zMax = SLABS * (SH + SG) + 0.6;
+    const pts = [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, zMax], [1, 1, zMax]].map(([x, y, z]) => kp(x, y, z, SA));
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const minX = Math.min(...xs) - 2, minY = Math.min(...ys) - 2, vw = Math.max(...xs) + 2 - minX, vh = Math.max(...ys) + 2 - minY;
+    let paths = "";
+    for (let k = 0; k < SLABS; k++) paths += `<g data-k="${k}"><path/><path/><path/></g>`;
+    volEl.innerHTML = `<svg viewBox="${minX} ${minY} ${vw} ${vh}" width="${vw * 1.4}" height="${vh * 1.4}">${paths}</svg><div class="vol-read"><b id="vol-num">64</b>VOLUME</div>`;
+  })();
+  function drawVol() {
+    const v = HK.state.volume;
+    const P = (x, y, z) => kp(x, y, z, SA).map((n) => n.toFixed(2)).join(",");
+    volEl.querySelectorAll("g[data-k]").forEach((g) => {
+      const k = +g.dataset.k;
+      const lit = HK.clamp(v / 10 - k, 0, 1);
+      const isTop = k === Math.min(SLABS - 1, Math.floor(v / 10 - 0.001));
+      const z0 = k * (SH + SG) + (isTop ? Math.max(0, volTop.value) : 0) * 0.5;
+      const z1 = z0 + SH;
+      const [l, r, t] = g.children;
+      l.setAttribute("d", `M${P(0, 1, z0)}L${P(1, 1, z0)}L${P(1, 1, z1)}L${P(0, 1, z1)}Z`);
+      r.setAttribute("d", `M${P(1, 1, z0)}L${P(1, 0, z0)}L${P(1, 0, z1)}L${P(1, 1, z1)}Z`);
+      t.setAttribute("d", `M${P(0, 0, z1)}L${P(1, 0, z1)}L${P(1, 1, z1)}L${P(0, 1, z1)}Z`);
+      t.setAttribute("fill", lit >= 0.5 ? C.acid : C.white);
+      l.setAttribute("fill", lit >= 0.5 ? "#232322" : "#d4d4cf");
+      r.setAttribute("fill", lit >= 0.5 ? "#0c0c0c" : "#b4b4af");
+      g.style.opacity = lit > 0 && lit < 0.5 ? 0.7 : 1;
+    });
+    $("vol-num").textContent = v;
+    volEl.setAttribute("aria-valuenow", v);
+  }
+  let volDrag = false;
+  function volFromEvent(e) {
+    const r = volEl.querySelector("svg").getBoundingClientRect();
+    HK.setVolume(((r.bottom - 6 - e.clientY) / (r.height - 16)) * 100);
+  }
+  volEl.addEventListener("pointerdown", (e) => { volDrag = true; volEl.setPointerCapture(e.pointerId); volFromEvent(e); HK.sfx("click"); });
+  volEl.addEventListener("pointermove", (e) => { if (volDrag) volFromEvent(e); });
+  volEl.addEventListener("pointerup", () => { volDrag = false; HK.sfx("snap"); });
+  volEl.addEventListener("wheel", (e) => { e.preventDefault(); HK.setVolume(HK.state.volume - Math.sign(e.deltaY) * 3); }, { passive: false });
+  let lastBlip = 0;
+  let lastTen = Math.floor(HK.state.volume / 10);
+  HK.on("volume", (v) => {
+    const now = performance.now();
+    if (now - lastBlip > 30) { lastBlip = now; HK.sfx("blip", v); }
+    const ten = Math.floor(v / 10);
+    if (ten !== lastTen) {
+      volTop.kick(ten > lastTen ? 9 : -6);
+      if (ten > lastTen) keyShock(volEl, 0.35);
+      lastTen = ten;
+    }
+    drawVol();
+  });
+
+  /* ---------- ruler ---------- */
+  const rulerEl = $("ruler");
+  const rcv = $("ruler-cv");
+  const rctx = rcv.getContext("2d");
+  let RW = 0, RH = 0;
+  const thumbTilt = new HK.Spring(0, 220, 12);
+  let lastThumbX = 0;
+  function sizeRuler() {
+    const r = rulerEl.getBoundingClientRect();
+    const dpr = devicePixelRatio || 1;
+    RW = r.width; RH = r.height;
+    rcv.width = RW * dpr; rcv.height = RH * dpr;
+    rctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  (function buildThumb() {
+    const a = 8;
+    const P = (x, y, z) => kp(x, y, z, a).map((n) => n.toFixed(2)).join(",");
+    $("thumb").innerHTML = `<svg viewBox="-16 -22 32 30" width="28" height="30"><path fill="#232322" d="M${P(0, 1, 0)}L${P(1, 1, 0)}L${P(1, 1, 1)}L${P(0, 1, 1)}Z"/><path fill="#0c0c0c" d="M${P(1, 1, 0)}L${P(1, 0, 0)}L${P(1, 0, 1)}L${P(1, 1, 1)}Z"/><path fill="#e4f71c" d="M${P(0, 0, 1)}L${P(1, 0, 1)}L${P(1, 1, 1)}L${P(0, 1, 1)}Z"/></svg>`;
+  })();
+  function drawRuler(pos) {
+    const t = HK.track();
+    const dur = t.duration;
+    const base = RH * 0.68;
+    rctx.clearRect(0, 0, RW, RH);
+    rctx.fillStyle = "#141414";
+    rctx.font = "600 8.5px 'IBM Plex Mono', monospace";
+    for (let s = 0; s * 1000 <= dur; s++) {
+      const x = (s * 1000 / dur) * RW;
+      const len = s % 10 === 0 ? 9 : s % 5 === 0 ? 6 : 3;
+      rctx.fillRect(Math.round(x), base, 1, len);
+      if (s % 10 === 0 && !HK.state.compact) rctx.fillText(HK.fmt(s * 1000), x + 3, base + 12);
+    }
+    rctx.fillRect(0, base - 0.5, RW, 1);
+    const px = (pos / dur) * RW;
+    rctx.fillRect(0, base - 2, px, 4);
+    t.lines.forEach((l, i) => {
+      const x = (l.t / dur) * RW;
+      rctx.beginPath();
+      rctx.moveTo(x, base - 3);
+      rctx.lineTo(x - 4, base - 11);
+      rctx.lineTo(x + 4, base - 11);
+      rctx.closePath();
+      rctx.fillStyle = i <= active ? "#e4f71c" : "#f6f6f1";
+      rctx.fill();
+      rctx.strokeStyle = "#141414";
+      rctx.lineWidth = 1;
+      rctx.stroke();
+    });
+    thumbTilt.target = HK.clamp((px - lastThumbX) * 2.5, -35, 35);
+    lastThumbX = px;
+    const th = $("thumb");
+    th.style.transform = `translate(${(px - 14).toFixed(1)}px, ${(base - 27).toFixed(1)}px) rotate(${thumbTilt.value.toFixed(1)}deg)`;
+  }
+  let scrubbing = null;
+  function scrubTo(e) {
+    const r = rulerEl.getBoundingClientRect();
+    const ms = HK.clamp((e.clientX - r.left) / r.width, 0, 1) * HK.track().duration;
+    const li = HK.lineAt(ms);
+    if (li !== scrubbing.li) { scrubbing.li = li; HK.sfx("tick"); }
+    HK.seek(ms);
+  }
+  rulerEl.addEventListener("pointerdown", (e) => { scrubbing = { li: active }; rulerEl.setPointerCapture(e.pointerId); HK.sfx("click"); scrubTo(e); });
+  rulerEl.addEventListener("pointermove", (e) => { if (scrubbing) scrubTo(e); });
+  const endScrub = () => { if (scrubbing) { scrubbing = null; HK.sfx("snap"); thumbTilt.kick(-200); } };
+  rulerEl.addEventListener("pointerup", endScrub);
+  rulerEl.addEventListener("pointercancel", endScrub);
+
+  /* ---------- city clicks ---------- */
+  let lastRoofs = {};
+  cv.addEventListener("pointerdown", (e) => {
+    // a lyric building under the pointer seeks there; empty city just ripples
+    let hit = -1;
+    for (const [i, roof] of Object.entries(lastRoofs)) {
+      const o = world.lyric[i];
+      const base = proj(o.x + 1, o.y + 1, 0);
+      if (Math.abs(e.clientX - roof[0]) < view.A * 1.5 && e.clientY > roof[1] - 8 && e.clientY < base[1] + view.A) hit = +i;
+    }
+    shockAtScreen(e.clientX, e.clientY, hit >= 0 ? 1.2 : 0.9);
+    if (hit >= 0) { HK.seek(HK.track().lines[hit].t + 1); HK.sfx("snap"); }
+    else HK.sfx("thunk");
+  });
+
+  /* ---------- chrome + toggles ---------- */
+  $("w-search").addEventListener("click", () => { HK.sfx("pop"); toast("FIND LYRICS — DIALOG NOT IN THIS PROTOTYPE"); });
+  $("w-settings").addEventListener("click", () => { HK.sfx("pop"); toast("SETTINGS — DIALOG NOT IN THIS PROTOTYPE"); });
+  $("w-refresh").addEventListener("click", () => { HK.sfx("click"); toast("PLAYBACK REFRESHED"); shockAt(1, -focus.value * AV - 1, 1); });
+  $("w-compact").addEventListener("click", () => HK.setCompact(!HK.state.compact));
+  $("w-pin").addEventListener("click", () => HK.setPinned(!HK.state.pinned));
+  document.querySelectorAll(".w-chrome").forEach((b) => b.addEventListener("click", () => { HK.sfx("click"); toast("WINDOW CONTROL — PROTOTYPE"); }));
+  $("source").addEventListener("click", () => { HK.cycleSource(); HK.sfx("snap"); });
+  $("follow").addEventListener("click", () => HK.setFollow(!HK.state.follow));
+  $("reload").addEventListener("click", () => HK.refreshLyrics());
+
+  HK.on("source", (s) => { $("source-name").textContent = s.toUpperCase(); });
+  HK.on("follow", (on) => {
+    $("follow").setAttribute("aria-pressed", on);
+    HK.sfx("snap");
+    toast(on ? "CAMERA FOLLOWS THE SONG" : "CAMERA FREE — DRAG THE RULER TO EXPLORE");
+  });
+  HK.on("pin", (on) => { $("w-pin").setAttribute("aria-pressed", on); HK.sfx("snap"); toast(on ? "PINNED ON TOP" : "UNPINNED"); });
+  HK.on("compact", (on) => {
+    $("w-compact").setAttribute("aria-pressed", on);
+    HK.sfx("whoosh");
+    requestAnimationFrame(() => { resize(); world.builtAt = performance.now(); });
+  });
+  HK.on("refresh", () => {
+    world.builtAt = performance.now();
+    setActive(HK.lineAt(HK.position()));
+    HK.sfx("drop");
+    toast(`LYRICS REBUILT FROM ${HK.state.source.toUpperCase()}`);
+  });
+  HK.on("state", (playing) => {
+    document.body.classList.toggle("is-playing", playing);
+    HK.sfx("thunk");
+  });
+  function applyTrack(t) {
+    world = buildWorld(t);
+    focus.snap(-0.8);
+    $("art").src = HK.artURL(t, 128);
+    $("title").textContent = t.title;
+    $("artist").textContent = t.artist;
+    active = -2;
+    setActive(-1);
+  }
+  HK.on("track", (t) => {
+    HK.sfx("whoosh");
+    applyTrack(t);
+    shockAt(1, 0, 1.6);
+  });
+  HK.on("line", (i, prev) => {
+    setActive(i);
+    if (i >= 0 && !scrubbing) {
+      const o = world.lyric[i];
+      shockAt(o.x + 1, o.y + 1, 0.55);
+      if (i === prev + 1) HK.sfx("tick");
+    }
+  });
+  HK.on("beat", (n, down) => { beatLevel = down ? 1 : 0.55; });
+
+  /* ---------- frame ---------- */
+  HK.on("frame", (pos, dt, now) => {
+    if (HK.state.follow || scrubbing) focus.target = Math.max(active, -0.8);
+    focus.step(dt);
+    par.x.step(dt);
+    par.y.step(dt);
+    for (const o of world.lyric) o.h.step(dt);
+    for (const c of world.cars) {
+      if (!HK.state.playing) continue;
+      c.y += c.v * dt / 1000;
+      if (c.y > world.yMax) c.y = world.yMin;
+      if (c.y < world.yMin) c.y = world.yMax;
+    }
+    const fx = 1, fy = -focus.value * AV - 1;
+    view.ox = view.ax + par.x.value - (fx - fy) * view.A;
+    view.oy = view.ay + par.y.value - (fx + fy) * view.A * 0.5;
+    shocks = shocks.filter((s) => now - s.t0 < 2600);
+    beatLevel *= Math.pow(0.88, dt / 16);
+    document.body.style.setProperty("--beat", beatLevel.toFixed(3));
+
+    drawGround(now);
+    const { roofActive, roofs } = drawWorld(now, pos);
+    lastRoofs = roofs;
+    drawFog();
+    drawLeader(roofActive);
+
+    // upcoming-lot tags
+    for (let k = 0; k < 3; k++) {
+      const tag = $("tag" + k);
+      const roof = roofs[tag.dataset.i];
+      if (roof && tag.classList.contains("show")) tag.style.transform = `translate(${roof[0].toFixed(1)}px, ${(roof[1] - 4).toFixed(1)}px) translate(-50%, -100%)`;
+      else if (!roof) tag.style.transform = "translate(-999px,-999px)";
+    }
+
+    if (active >= 0) {
+      const line = HK.track().lines[active];
+      wordEls.forEach((el, j) => {
+        const w = line.words[j];
+        if (!w) return;
+        const p = HK.wordProgress(w, pos);
+        el.classList.toggle("sung", p >= 1);
+        el.classList.toggle("now", p > 0 && p < 1);
+        if (p > 0 && p < 1) el.style.setProperty("--p", (p * 100).toFixed(1) + "%");
+      });
+    }
+    const s = Math.floor(pos / 100) / 10;
+    $("c-time").textContent = `${String(Math.floor(s / 60)).padStart(2, "0")}:${(s % 60).toFixed(1).padStart(4, "0")}`;
+    $("time").textContent = `${HK.fmt(pos)} / ${HK.fmt(HK.track().duration)}`;
+
+    for (const k of keys) { k.spring.step(dt); updateKey(k); }
+    volTop.step(dt);
+    if (Math.abs(volTop.value) > 0.002 || Math.abs(volTop.velocity) > 0.01) drawVol();
+    thumbTilt.step(dt);
+    drawRuler(pos);
+  });
+
+  window.addEventListener("resize", resize);
+  resize();
+  applyTrack(HK.track());
+  HK.emit("source", HK.state.source);
+  drawVol();
+})();
+</script>
+</body>
+</html>

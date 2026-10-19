@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hakuro 介面提案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0e0e10; --panel: #16161a; --line: #26262c; --ink: #ececea; --dim: #9a9a9f; --faint: #66666c; --hot: #e6ff1f;
+  --sans: "Noto Sans TC", "Microsoft JhengHei UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--sans); -webkit-font-smoothing: antialiased; display: grid; grid-template-columns: 300px minmax(0, 1fr); overflow: hidden; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--hot); outline-offset: 2px; }
+
+aside { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
+.head { padding: 22px 22px 16px; border-bottom: 1px solid var(--line); }
+.head small { font: 700 10px var(--mono); letter-spacing: .2em; color: var(--faint); }
+.head h1 { margin: 8px 0 6px; font-size: 21px; font-weight: 700; letter-spacing: .02em; }
+.head p { margin: 0; font-size: 12.5px; line-height: 1.7; color: var(--dim); }
+.list { flex: 1; overflow: auto; padding: 10px; }
+.group { font: 700 10px var(--mono); letter-spacing: .18em; color: var(--faint); padding: 14px 12px 8px; }
+.item { width: 100%; text-align: left; display: grid; grid-template-columns: 28px 1fr; gap: 12px; align-items: start; padding: 12px; border-radius: 10px; border: 1px solid transparent; transition: background .15s, border-color .15s; }
+.item:hover { background: #1d1d22; }
+.item[aria-current="true"] { background: #1f1f25; border-color: #34343c; }
+.letter { width: 28px; height: 28px; border-radius: 7px; display: grid; place-items: center; font: 700 13px var(--mono); background: #26262c; color: var(--dim); }
+.item[aria-current="true"] .letter { background: var(--hot); color: #000; }
+.item b { display: block; font-size: 14px; font-weight: 700; }
+.item span { display: block; margin-top: 3px; font-size: 11.5px; color: var(--dim); line-height: 1.5; }
+.swatch { display: flex; gap: 3px; margin-top: 8px; }
+.swatch i { width: 16px; height: 6px; border-radius: 2px; }
+.foot { border-top: 1px solid var(--line); padding: 14px 22px 18px; font-size: 11px; line-height: 1.8; color: var(--faint); }
+.foot kbd { font: 700 10px var(--mono); color: var(--dim); background: #222228; border-radius: 4px; padding: 1px 5px; }
+
+main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
+.bar { display: flex; align-items: center; gap: 12px; padding: 14px 22px; border-bottom: 1px solid var(--line); }
+.bar h2 { margin: 0; font-size: 16px; font-weight: 700; }
+.bar .tag { font: 700 10px var(--mono); letter-spacing: .14em; color: #000; background: var(--hot); padding: 3px 7px; border-radius: 4px; }
+.bar .tag.free { background: #c9b8ff; }
+.grow { flex: 1; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { padding: 7px 12px; font-size: 12px; color: var(--dim); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: #000; font-weight: 700; }
+.ctl { padding: 7px 12px; font-size: 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--dim); text-decoration: none; transition: border-color .15s, color .15s; }
+.ctl:hover { border-color: var(--dim); color: var(--ink); }
+.stage { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden;
+  background: radial-gradient(circle at 50% 40%, #1a1a20, #0b0b0d 70%); }
+.stage::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(#ffffff06 1px, transparent 1px), linear-gradient(90deg, #ffffff06 1px, transparent 1px); background-size: 32px 32px; pointer-events: none; }
+.frame { position: absolute; left: 50%; top: 50%; transform-origin: 50% 50%; box-shadow: 0 0 0 1px #2c2c33, 0 40px 90px rgb(0 0 0 / .6); border-radius: 10px; overflow: hidden; transition: width .5s cubic-bezier(.2, 1, .3, 1), height .5s cubic-bezier(.2, 1, .3, 1); background: #000; }
+.frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; }
+.size { position: absolute; right: 16px; bottom: 12px; font: 500 10px var(--mono); color: var(--faint); letter-spacing: .1em; }
+.notes { border-top: 1px solid var(--line); padding: 14px 22px 16px; display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 26px; max-height: 210px; overflow: auto; }
+.notes h3 { margin: 0 0 6px; font: 700 10px var(--mono); letter-spacing: .18em; color: var(--faint); }
+.notes p, .notes li { font-size: 12.5px; line-height: 1.75; color: #c8c8c8; margin: 0; }
+.notes ul { margin: 0; padding-left: 16px; }
+@media (max-width: 1100px) { .notes { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<aside>
+  <div class="head">
+    <small>HAKURO · UI EXPLORATION</small>
+    <h1>介面提案 · 五個方向</h1>
+    <p>A–C 依需求：動態與強烈操作回饋、3D（等角／透視／可互動物件）、少色配色。D–E 不受上述限制，以視覺驚艷為優先。</p>
+  </div>
+  <nav class="list" id="list"></nav>
+  <div class="foot">
+    每個方案都是可操作的原型，歌曲與歌詞為原創假資料。<br>
+    <kbd>Space</kbd> 播放 · <kbd>← →</kbd> 快轉 5 秒 · <kbd>↑ ↓</kbd> 音量 · <kbd>N</kbd>/<kbd>P</kbd> 切歌 · <kbd>C</kbd> 精簡 · <kbd>M</kbd> 靜音（先點一下畫面讓焦點進入原型）
+  </div>
+</aside>
+<main>
+  <div class="bar">
+    <h2 id="name">—</h2>
+    <span class="tag" id="tag">依需求</span>
+    <div class="grow"></div>
+    <div class="seg" role="group" aria-label="Window size">
+      <button id="size-full" aria-pressed="true">完整視窗 940×760</button>
+      <button id="size-compact" aria-pressed="false">精簡模式</button>
+    </div>
+    <button class="ctl" id="sound" aria-pressed="true">音效：開</button>
+    <a class="ctl" id="open" href="a-cube.html" target="_blank" rel="noopener">新分頁開啟 ↗</a>
+  </div>
+  <div class="stage" id="stage">
+    <div class="frame" id="frame"><iframe id="view" title="Concept preview" src="a-cube.html"></iframe></div>
+    <span class="size" id="size-label"></span>
+  </div>
+  <section class="notes">
+    <div><h3>概念</h3><p id="n-idea"></p></div>
+    <div><h3>可以試試</h3><ul id="n-try"></ul></div>
+    <div><h3>技術與移植</h3><p id="n-tech"></p></div>
+  </section>
+</main>
+
+<script>
+const CONCEPTS = [
+  {
+    id: "a", file: "a-cube.html", name: "A · 方塊主機 Cube Deck", group: "req", short: "控制項長在一顆可以抓著轉的黑色方塊上",
+    swatch: ["#101010", "#62625e", "#f1f1ec", "#e6ff1f"],
+    idea: "介面本身就是一個實體物件：正面是發光的播放鍵、側面是音量旋鈕、頂部是一張轉動的唱片、背面是歌詞工具、左側是視窗設定。歌詞用海報式粗體排版，正在唱的字被螢光黃色塊逐字刷過，換行時「砸」進畫面並噴出三角碎片。",
+    try: ["拖曳方塊空白處旋轉，每 90° 有段落感並會吸附", "點唱片播放／暫停；拖唱片「刷碟」快轉或倒轉", "轉側面的音量旋鈕（滑鼠滾輪也可以），到 0 或 100 會撞一下", "拖進度條：每經過一行歌詞會有刻度回饋", "按切歌：整顆方塊轉一圈、標題亂碼重組"],
+    tech: "CSS 3D transform 組出真實立體方塊，並依旋轉角度即時計算每一面的光照；沒有用 WebGL。全部是 DOM，可沿用現有元素 id 與逐字高亮機制改寫，移植難度低到中等。",
+  },
+  {
+    id: "b", file: "b-city.html", name: "B · 歌詞城市 Lyric City", group: "req", short: "每一行歌詞是一棟邊唱邊蓋起來的大樓",
+    swatch: ["#d7d7d2", "#8b8b86", "#141414", "#e4f71c"],
+    idea: "等角視角、技術插畫風格的灰色城市。每一行歌詞是大道上的一塊地，唱到時大樓一個字蓋一層、樓層逐一亮燈；唱過的留下深色天際線，鏡頭沿著大道往前走。目前的歌詞以建築圖說的引線標註在大樓上，後面幾行以標籤浮在預定地上。",
+    try: ["點城市空地：衝擊波會讓整片樓房跳起來", "點某棟歌詞大樓，直接跳到那一行", "按等角按鍵（真的會被壓下去並回彈）", "上下拖曳音量塔", "拖底部尺規，鏡頭會飛越城市；REBUILD 重建整座城"],
+    tech: "Canvas 2D 自寫等角投影與畫家演算法，按鍵與音量塔用同一套投影畫成 SVG，因此風格一致。城市是獨立的 canvas 模組，已做畫面外剔除。移植難度中等。",
+  },
+  {
+    id: "c", file: "c-dive.html", name: "C · 墨水俯衝 Ink Dive", group: "req", short: "漫畫風豎井，換行時鏡頭俯衝而下",
+    swatch: ["#0b0b0b", "#9a9a96", "#f2f2ee", "#e8ff00"],
+    idea: "從兩棟大樓之間往下看的漫畫墨線豎井，底部有一道螢光。下一句歌詞在更深處等著；換行時鏡頭俯衝，上一句從鏡頭前呼嘯而過，集中線同時爆開。每次點擊都會潑出螢光墨水並跳出狀聲詞，強調手感。",
+    try: ["點畫面任何地方潑墨", "按播放／切歌：狀聲詞 + 畫面震動", "點深處的歌詞，直接衝過去", "拖進度條，連續穿越好幾行", "移動滑鼠改變消失點；音量拉到 100"],
+    tech: "CSS 3D perspective：四面牆與歌詞平面分佈在 Z 軸上，牆面是程式產生的墨線 SVG 貼圖；集中線與墨水用 Canvas。回饋很強烈，正式版建議在設定加上強度開關。移植難度中等。",
+  },
+  {
+    id: "d", file: "d-liquid.html", name: "D · 液態 Liquid", group: "free", short: "整個視窗是一池用專輯顏色攪動的墨水",
+    swatch: ["#2b1055", "#ff2e88", "#ff8a00", "#ffe14d"],
+    idea: "整個視窗是一池在 GPU 上即時模擬的墨水，顏色取自專輯封面。滑鼠攪動它，按鍵像水滴落下，每一句新歌詞從左到右掃過水面，節拍讓它持續流動，音量決定流動多激烈；暫停時水面沉靜並褪色。介面是浮在上面的毛玻璃。",
+    try: ["在畫面上移動、點擊", "點專輯封面：播放／暫停 + 一大顆水滴", "把音量拉低再拉高，比較水流強度", "暫停，看它沉澱褪色", "切歌，看新顏色沖刷掉舊顏色"],
+    tech: "WebGL2 stable-fluids（advection、vorticity、pressure projection）。毛玻璃使用 backdrop-filter。流體是自包含模組；正式版需要省電模式（降低模擬解析度，或改用靜態漸層）。移植難度中等。",
+  },
+  {
+    id: "e", file: "e-stardust.html", name: "E · 星塵 Stardust", group: "free", short: "歌詞由上萬顆粒子寫成，換行時解體重組",
+    swatch: ["#040408", "#a9b4ff", "#ff2e88", "#ffe14d"],
+    idea: "每一句歌詞由約一萬四千顆粒子寫成。換行時粒子掙脫、旋轉，再重組成下一句；唱過的字以專輯主色點亮，正在唱的字發出熱光。專輯封面化為歌詞下方緩緩自轉的星系圓盤。",
+    try: ["把滑鼠移到字上，粒子會被撥開", "點擊任何地方送出衝擊波", "切歌：星系爆散後以新封面重組", "暫停：時間變慢、褪色、星系停轉", "滾輪或音量條：音量決定發光強度"],
+    tech: "three.js r160 自訂 shader 粒子加 Unreal Bloom；歌詞先畫到 canvas 再取樣成粒子目標點。正式版需要把 three.js 打包進 app，CJK 字型也要放進本地，離線才能取樣。移植難度中到高。",
+  },
+];
+
+const $ = (id) => document.getElementById(id);
+const state = { current: CONCEPTS[0], compact: false, muted: false };
+try { state.muted = localStorage.getItem("hk-concepts-muted") === "1"; } catch (_) {}
+
+function renderList() {
+  const groups = { req: "依需求 · A–C", free: "自由發想 · D–E" };
+  let html = "";
+  for (const g of Object.keys(groups)) {
+    html += `<div class="group">${groups[g]}</div>`;
+    for (const c of CONCEPTS.filter((c) => c.group === g)) {
+      html += `<button class="item" data-id="${c.id}" aria-current="${c === state.current}"><span class="letter">${c.id.toUpperCase()}</span><span><b>${c.name.split(" · ")[1]}</b><span>${c.short}</span><span class="swatch">${c.swatch.map((s) => `<i style="background:${s}"></i>`).join("")}</span></span></button>`;
+    }
+  }
+  $("list").innerHTML = html;
+}
+$("list").addEventListener("click", (e) => {
+  const b = e.target.closest(".item");
+  if (b) select(CONCEPTS.find((c) => c.id === b.dataset.id));
+});
+
+function select(c) {
+  state.current = c;
+  renderList();
+  $("name").textContent = c.name;
+  $("tag").textContent = c.group === "req" ? "依需求" : "自由發想";
+  $("tag").classList.toggle("free", c.group === "free");
+  $("open").href = c.file;
+  $("n-idea").textContent = c.idea;
+  $("n-try").innerHTML = c.try.map((t) => `<li>${t}</li>`).join("");
+  $("n-tech").textContent = c.tech;
+  $("view").src = c.file;
+  try { history.replaceState(null, "", "#" + c.id); } catch (_) {}
+}
+
+function fit() {
+  const w = state.compact ? 560 : 940, h = state.compact ? 250 : 760;
+  const stage = $("stage").getBoundingClientRect();
+  const s = Math.min(1, (stage.width - 48) / w, (stage.height - 40) / h);
+  const f = $("frame");
+  f.style.width = w + "px";
+  f.style.height = h + "px";
+  f.style.transform = `translate(-50%, -50%) scale(${s})`;
+  $("size-label").textContent = `${w}×${h} · ${Math.round(s * 100)}%`;
+}
+function post(msg) { try { $("view").contentWindow.postMessage(msg, "*"); } catch (_) {} }
+function setCompact(v, fromChild) {
+  state.compact = v;
+  $("size-full").setAttribute("aria-pressed", !v);
+  $("size-compact").setAttribute("aria-pressed", v);
+  fit();
+  if (!fromChild) post({ hk: "compact", value: v });
+}
+function setMuted(v, fromChild) {
+  state.muted = v;
+  $("sound").textContent = v ? "音效：關" : "音效：開";
+  $("sound").setAttribute("aria-pressed", !v);
+  if (!fromChild) post({ hk: "mute", value: v });
+}
+$("size-full").addEventListener("click", () => setCompact(false));
+$("size-compact").addEventListener("click", () => setCompact(true));
+$("sound").addEventListener("click", () => setMuted(!state.muted));
+$("view").addEventListener("load", () => {
+  post({ hk: "mute", value: state.muted });
+  if (state.compact) post({ hk: "compact", value: true });
+});
+window.addEventListener("message", (e) => {
+  const m = e.data;
+  if (!m || typeof m.hk !== "string") return;
+  if (m.hk === "compact") setCompact(Boolean(m.value), true);
+  if (m.hk === "mute") setMuted(Boolean(m.value), true);
+});
+window.addEventListener("resize", fit);
+
+const fromHash = CONCEPTS.find((c) => "#" + c.id === location.hash);
+setMuted(state.muted, true);
+select(fromHash || CONCEPTS[0]);
+fit();
+</script>
+</body>
+</html>
