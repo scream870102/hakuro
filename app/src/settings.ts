@@ -189,9 +189,17 @@ function renderSourceOrder() {
   });
 }
 
-/** Only Spotify has anything to configure, so the rest of the panel is hidden. */
+/** Each player shows only its own setup; the media session has none. */
 function showPlayerSettings(player: PlayerKind) {
   element("spotify-settings").hidden = player !== "spotify";
+  element("ytmd-settings").hidden = player !== "ytmdesktop2";
+}
+
+/** The typed port, or undefined when ytmdesktop2 would not accept it. */
+function ytmdPort(): number | undefined {
+  const text = element<HTMLInputElement>("ytmd-port").value.trim();
+  const port = Number(text);
+  return /^\d+$/.test(text) && port >= 9999 && port <= 39999 ? port : undefined;
 }
 
 element<HTMLSelectElement>("settings-player").addEventListener("change", (event) => {
@@ -207,6 +215,7 @@ function fill(value: Config) {
   element<HTMLSelectElement>("settings-player").value = draft.player;
   showPlayerSettings(draft.player);
   element<HTMLInputElement>("client-id").value = draft.clientId;
+  element<HTMLInputElement>("ytmd-port").value = String(draft.ytmdPort ?? 13091);
   element<HTMLInputElement>("color-accent").value = draft.theme.accent;
   element<HTMLInputElement>("color-active").value = draft.theme.activeLine;
   element<HTMLInputElement>("color-past").value = draft.theme.pastLine;
@@ -233,10 +242,18 @@ element("settings-form").addEventListener("submit", async (event) => {
   if (recording) { settingsError.textContent = "Finish or cancel shortcut recording before saving."; return; }
   const conflict = shortcutConflict(draft.shortcuts);
   if (conflict) { settingsError.textContent = conflict; return; }
+  const player = element<HTMLSelectElement>("settings-player").value as PlayerKind;
+  const port = ytmdPort();
+  // A port typed for a player not in use is not worth refusing the save over.
+  if (player === "ytmdesktop2" && port === undefined) {
+    settingsError.textContent = "Enter the API port ytmdesktop2 shows, from 9999 to 39999.";
+    return;
+  }
   button.disabled = true;
   settingsError.textContent = "";
-  draft.player = element<HTMLSelectElement>("settings-player").value as PlayerKind;
+  draft.player = player;
   draft.clientId = element<HTMLInputElement>("client-id").value.trim();
+  if (port !== undefined) draft.ytmdPort = port;
   draft.theme = {
     accent: element<HTMLInputElement>("color-accent").value,
     activeLine: element<HTMLInputElement>("color-active").value,

@@ -18,6 +18,7 @@ const initial = () => ({
   settings: {
     player: "spotify",
     clientId: "a".repeat(32),
+    ytmdPort: 13091,
     sources: [{ id: "lrclib", enabled: true }, { id: "musixmatch", enabled: true }],
     theme: { accent: "#123456", activeLine: "#ffffff", pastLine: "#666666" },
     followLyrics: true,
@@ -79,6 +80,7 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
   expect(bridge.invoke).toHaveBeenCalledWith("save_settings", { incoming: {
     player: "spotify",
     clientId: "b".repeat(32),
+    ytmdPort: 13091,
     sources: [{ id: "musixmatch", enabled: true }, { id: "lrclib", enabled: false }],
     theme: { accent: "#abcdef", activeLine: "#fedcba", pastLine: "#112233" },
     followLyrics: false,
@@ -108,6 +110,45 @@ it("hides the Spotify setup when the player is switched to YouTube Music, and sa
   await flush();
   const saved = bridge.invoke.mock.calls.find(([command]) => command === "save_settings")!;
   expect((saved[1] as { incoming: { player: string } }).incoming.player).toBe("ytmusic");
+});
+
+it("asks ytmdesktop2 for its port only, and saves the player with the port", async () => {
+  expect(el("ytmd-settings").hidden).toBe(true);
+  expect(el<HTMLInputElement>("ytmd-port").value).toBe("13091");
+  const player = el<HTMLSelectElement>("settings-player");
+  player.value = "ytmdesktop2";
+  player.dispatchEvent(new Event("change"));
+  expect(el("ytmd-settings").hidden).toBe(false);
+  expect(el("spotify-settings").hidden).toBe(true);
+
+  el<HTMLInputElement>("ytmd-port").value = " 20000 ";
+  submit();
+  await flush();
+  const saved = bridge.invoke.mock.calls.find(([command]) => command === "save_settings")!;
+  const incoming = (saved[1] as { incoming: { player: string; ytmdPort: number } }).incoming;
+  expect(incoming.player).toBe("ytmdesktop2");
+  expect(incoming.ytmdPort).toBe(20000);
+});
+
+it("refuses a port ytmdesktop2 would not accept, but only while it is the player", async () => {
+  const player = el<HTMLSelectElement>("settings-player");
+  const port = el<HTMLInputElement>("ytmd-port");
+  player.value = "ytmdesktop2";
+  for (const wrong of ["80", "40000", "13091x", ""]) {
+    port.value = wrong;
+    submit();
+    await flush();
+    expect(el("settings-error").textContent).toContain("9999 to 39999");
+  }
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "save_settings")).toBe(false);
+
+  // Spotify does not use the port, so a stray value there must not block saving;
+  // the stored port is kept instead.
+  player.value = "spotify";
+  submit();
+  await flush();
+  const saved = bridge.invoke.mock.calls.find(([command]) => command === "save_settings")!;
+  expect((saved[1] as { incoming: { ytmdPort: number } }).incoming.ytmdPort).toBe(13091);
 });
 
 it("previews the opacity and size dials on the main window as they move", async () => {

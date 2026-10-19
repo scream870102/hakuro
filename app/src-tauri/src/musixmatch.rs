@@ -388,6 +388,7 @@ mod tests {
             album: "Album".into(),
             duration_ms: 180_000,
             spotify_id: None,
+            video_ids: Vec::new(),
         };
         assert!(!identity_matches(&macro_calls, &query));
         // With no identity block the query we sent is trusted.
@@ -406,6 +407,7 @@ mod tests {
             album: "Album".into(),
             duration_ms: 316_080,
             spotify_id: Some("PLAYING".into()),
+            video_ids: Vec::new(),
         };
         assert!(identity_matches(&macro_calls, &query));
         // Without the id, the romanized names alone are still rejected.

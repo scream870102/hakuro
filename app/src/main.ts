@@ -378,7 +378,7 @@ function renderVolume() {
   ui.volumeValue.textContent = value === null ? "—" : `${value}%`;
   ui.volume.setAttribute("aria-valuetext", value === null ? "Unavailable" : `${value}%`);
   ui.volumeControl.title = volumeSupported
-    ? "Spotify active device volume"
+    ? config?.settings.player === "ytmdesktop2" ? "ytmdesktop2 player volume" : "Spotify active device volume"
     : config?.settings.player === "ytmusic"
       ? "YouTube Music does not expose volume control through Windows media sessions"
       : "Volume control is unavailable for this player or device";

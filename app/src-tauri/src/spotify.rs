@@ -375,6 +375,7 @@ impl Spotify {
                 .unwrap_or_default()
                 .to_string(),
             album_art,
+            video_ids: Vec::new(),
             duration_ms: item.get("duration_ms").and_then(Value::as_i64).unwrap_or(0),
             progress_ms: data.get("progress_ms").and_then(Value::as_i64),
             is_playing: data

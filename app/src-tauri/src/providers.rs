@@ -89,6 +89,9 @@ pub struct TrackQuery {
     pub duration_ms: i64,
     /// The strongest matching key Musixmatch accepts; the other providers ignore it.
     pub spotify_id: Option<String>,
+    /// YouTube video ids of this exact recording, from a player that knows them.
+    /// YouTube Music reads its lyrics by these before searching.
+    pub video_ids: Vec<String>,
 }
 
 /// An explicit manual choice. Only a native provider id is accepted, never a URL.
@@ -825,6 +828,66 @@ fn base64_decode(value: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD.decode(value).ok()
 }
 
+/// YouTube Music's own lyrics: by the exact video when the player named it,
+/// otherwise by search. A video id from the player is the playing recording
+/// itself, so it needs none of the title and artist matching a search result
+/// does. Only timed lyrics end the lookup early; a plain answer is kept while
+/// the next id, then the search, try for timing.
+async fn youtube_music(client: &reqwest::Client, query: &TrackQuery) -> ProviderResult {
+    // The same bound one search gets, shared by every id.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+    let mut plain = None;
+    for id in query
+        .video_ids
+        .iter()
+        .filter(|id| crate::youtube_music::valid_video_id(id))
+    {
+        let candidate = LyricCandidate {
+            source: "youtube_music".into(),
+            id: id.clone(),
+            title: query.track.clone(),
+            artists: query.artists.clone(),
+            album: query.album.clone(),
+            duration_ms: query.duration_ms,
+        };
+        let own = match tokio::time::timeout_at(deadline, fetch_candidate(client, &candidate)).await
+        {
+            Ok(outcome) => outcome,
+            Err(_) => break,
+        };
+        match own {
+            Ok(result) if !result.cues.is_empty() => return Ok(result),
+            Ok(result) => {
+                if !result.is_empty() {
+                    plain.get_or_insert(result);
+                }
+                // A music video's words are often plain or missing while its
+                // catalog song, same artists and length, is timed. ytmdesktop2
+                // names that song only sometimes, and the video's credit may be
+                // localized past matching by name, so look for it the way a
+                // found video would: by the native artist id.
+                if let Ok(Ok(song)) = tokio::time::timeout_at(
+                    deadline,
+                    crate::youtube_music::localized_song_lyrics(client, query, &candidate),
+                )
+                .await
+                {
+                    if !song.cues.is_empty() {
+                        return Ok(song);
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    let searched = automatic_search(client, query, "youtube_music").await;
+    match plain {
+        // The playing video's own words beat a search that found no timing either.
+        Some(plain) if !searched.as_ref().is_ok_and(|found| !found.cues.is_empty()) => Ok(plain),
+        _ => searched,
+    }
+}
+
 /// Run one provider by its settings id.
 ///
 /// The id space is owned by `settings::PROVIDERS`, so an id that reaches here
@@ -842,7 +905,7 @@ pub async fn fetch_one(
         "musixmatch" => crate::musixmatch::fetch(client, musixmatch_session, query).await,
         "netease" => netease(client, query).await,
         "qqmusic" => qqmusic(client, query).await,
-        "youtube_music" => automatic_search(client, query, "youtube_music").await,
+        "youtube_music" => youtube_music(client, query).await,
         _ => Ok(LyricsResult::empty("")),
     }
 }
@@ -994,6 +1057,7 @@ mod tests {
             album: "スターズ・オブ・リラ+".into(),
             duration_ms: 258_640,
             spotify_id: Some("0XEwwNeNDbk5KaBJcg0389".into()),
+            video_ids: Vec::new(),
         }
     }
 
@@ -1122,6 +1186,7 @@ mod tests {
             album: "Lemon".into(),
             duration_ms: 255_000,
             spotify_id: None,
+            video_ids: Vec::new(),
         };
 
         // Each provider is probed on its own so one refusal does not hide the rest.
@@ -1169,6 +1234,7 @@ mod tests {
             album: "Album".into(),
             duration_ms: 180_000,
             spotify_id: None,
+            video_ids: Vec::new(),
         }
     }
 
@@ -1212,6 +1278,7 @@ mod tests {
             album: "Album".into(),
             duration_ms: 180_000,
             spotify_id: None,
+            video_ids: Vec::new(),
         };
         assert_eq!(query.search_phrase(), "Title First");
         assert_eq!(query.primary_artist(), "First");
@@ -1412,6 +1479,7 @@ mod tests {
             album: String::new(),
             duration_ms: 199_000,
             spotify_id: None,
+            video_ids: Vec::new(),
         };
         let result = fetch_lyrics(
             &client().unwrap(),
@@ -1449,6 +1517,7 @@ mod tests {
             album: "Something Just Like This".into(),
             duration_ms: 247_641,
             spotify_id: None,
+            video_ids: Vec::new(),
         };
         let result = fetch_lyrics(
             &client().unwrap(),

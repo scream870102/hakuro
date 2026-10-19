@@ -1,4 +1,6 @@
-//! Current-Windows-user DPAPI storage for a Spotify refresh token only.
+//! Current-Windows-user DPAPI storage for the two secrets a player hands out:
+//! Spotify's refresh token and ytmdesktop2's API token. Each lives in its own
+//! file, so forgetting one never costs the reader the other.
 //!
 //! Ported from the Python `token_store`. Windows API signatures and ownership:
 //! https://learn.microsoft.com/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata
@@ -16,11 +18,16 @@ use windows::Win32::Security::Cryptography::{
 };
 
 pub const SESSION_FILE: &str = "session.bin";
+pub const YTMD_SESSION_FILE: &str = "ytmd-session.bin";
+/// ytmdesktop2 has no client id; its token is bound to this name instead.
+const YTMD_BINDING: &str = "ytmdesktop2";
 
 /// An encrypted blob far larger than this is not something this app wrote.
 const MAX_ENCRYPTED_BYTES: usize = 131_072;
 const MAX_PAYLOAD_BYTES: usize = 65_536;
 
+/// The field names predate ytmdesktop2 and are kept so existing Spotify
+/// sessions still load; for ytmdesktop2 `client_id` holds its fixed binding.
 #[derive(Serialize, Deserialize)]
 struct Session {
     client_id: String,
@@ -29,8 +36,8 @@ struct Session {
 
 /// Beside the executable, with the settings and the lyrics database, so a
 /// portable copy carries its own sign-in and leaves nothing in the profile.
-fn cache_path() -> Result<PathBuf, String> {
-    crate::settings::data_path(SESSION_FILE)
+fn cache_path(file: &str) -> Result<PathBuf, String> {
+    crate::settings::data_path(file)
 }
 
 /// The stored blob is bound to both the Windows user and the client id, so a
@@ -118,30 +125,57 @@ fn protect(data: &mut [u8], client_id: &str, decrypt: bool) -> Result<Vec<u8>, S
 /// client id, or written by a different Windows user — never an error, because
 /// every one of those simply means "authorize again".
 pub fn load_refresh_token(client_id: &str) -> Option<String> {
-    let path = cache_path().ok()?;
+    load(SESSION_FILE, client_id)
+}
+
+pub fn save_refresh_token(client_id: &str, token: &str) -> Result<(), String> {
+    save(SESSION_FILE, client_id, token)
+}
+
+/// Drop the cached session, e.g. after Spotify rejects the refresh token.
+pub fn clear_refresh_token() {
+    clear(SESSION_FILE);
+}
+
+/// ytmdesktop2's API token, or `None` for the same reasons as above.
+pub fn load_ytmd_token() -> Option<String> {
+    load(YTMD_SESSION_FILE, YTMD_BINDING)
+}
+
+pub fn save_ytmd_token(token: &str) -> Result<(), String> {
+    save(YTMD_SESSION_FILE, YTMD_BINDING, token)
+}
+
+/// Drop the token, e.g. after ytmdesktop2 revokes it.
+pub fn clear_ytmd_token() {
+    clear(YTMD_SESSION_FILE);
+}
+
+fn load(file: &str, binding: &str) -> Option<String> {
+    let path = cache_path(file).ok()?;
     let mut encrypted = fs::read(path).ok()?;
     if encrypted.is_empty() || encrypted.len() > MAX_ENCRYPTED_BYTES {
         return None;
     }
 
-    let mut decrypted = protect(&mut encrypted, client_id, true).ok()?;
+    let mut decrypted = protect(&mut encrypted, binding, true).ok()?;
     let session: Result<Session, _> = serde_json::from_slice(&decrypted);
     wipe(&mut decrypted);
 
     let session = session.ok()?;
-    if session.client_id != client_id || session.refresh_token.is_empty() {
+    if session.client_id != binding || session.refresh_token.is_empty() {
         return None;
     }
     Some(session.refresh_token)
 }
 
-pub fn save_refresh_token(client_id: &str, token: &str) -> Result<(), String> {
-    if client_id.is_empty() || token.is_empty() {
-        return Err("Client ID and refresh token are required".to_string());
+fn save(file: &str, binding: &str, token: &str) -> Result<(), String> {
+    if binding.is_empty() || token.is_empty() {
+        return Err("Client ID and token are required".to_string());
     }
 
     let mut payload = serde_json::to_vec(&Session {
-        client_id: client_id.to_string(),
+        client_id: binding.to_string(),
         refresh_token: token.to_string(),
     })
     .map_err(|_| "Session data could not be encoded".to_string())?;
@@ -150,8 +184,8 @@ pub fn save_refresh_token(client_id: &str, token: &str) -> Result<(), String> {
         return Err("Session data is too large".to_string());
     }
 
-    let encrypted = protect(&mut payload, client_id, false)?;
-    let path = cache_path()?;
+    let encrypted = protect(&mut payload, binding, false)?;
+    let path = cache_path(file)?;
     let parent = path
         .parent()
         .ok_or_else(|| "Local application storage is unavailable".to_string())?;
@@ -159,7 +193,7 @@ pub fn save_refresh_token(client_id: &str, token: &str) -> Result<(), String> {
 
     // Write beside the target and rename, so an interrupted save never leaves a
     // half-written blob that would cost the user a re-authorization.
-    let temporary = parent.join(format!("session-{}.tmp", std::process::id()));
+    let temporary = parent.join(format!("{file}-{}.tmp", std::process::id()));
     let write = (|| -> std::io::Result<()> {
         let mut file = fs::File::create(&temporary)?;
         file.write_all(&encrypted)?;
@@ -176,9 +210,8 @@ pub fn save_refresh_token(client_id: &str, token: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Drop the cached session, e.g. after Spotify rejects the refresh token.
-pub fn clear_refresh_token() {
-    if let Ok(path) = cache_path() {
+fn clear(file: &str) {
+    if let Ok(path) = cache_path(file) {
         let _ = fs::remove_file(path);
     }
 }
@@ -211,8 +244,27 @@ mod tests {
     }
 
     #[test]
+    fn the_two_players_keep_their_tokens_apart() {
+        with_temp_data_dir(|_| {
+            save_refresh_token("client-one", "spotify-token").unwrap();
+            save_ytmd_token("ytmd-token").unwrap();
+            assert_eq!(load_ytmd_token().as_deref(), Some("ytmd-token"));
+
+            // Forgetting one player's token must not sign the reader out of the other.
+            clear_ytmd_token();
+            assert!(load_ytmd_token().is_none());
+            assert_eq!(
+                load_refresh_token("client-one").as_deref(),
+                Some("spotify-token")
+            );
+            clear_refresh_token();
+        });
+    }
+
+    #[test]
     fn rejects_empty_input() {
         assert!(save_refresh_token("", "token").is_err());
         assert!(save_refresh_token("client", "").is_err());
+        assert!(save_ytmd_token("").is_err());
     }
 }

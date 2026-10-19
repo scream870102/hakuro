@@ -50,7 +50,7 @@ pub fn provider_label(id: &str) -> Option<&'static str> {
 
 pub fn available_providers(player: PlayerKind) -> Vec<(&'static str, &'static str)> {
     let mut providers = PROVIDERS.to_vec();
-    if player == PlayerKind::Ytmusic {
+    if player.plays_youtube_music() {
         providers.insert(0, ("youtube_music", "YouTube Music"));
     }
     providers
@@ -132,6 +132,8 @@ pub struct Settings {
     /// Spotify Client ID. Empty until the reader fills it in, and only asked for
     /// when the player above is Spotify.
     pub client_id: String,
+    /// Where ytmdesktop2 serves its API; only read when that is the player.
+    pub ytmd_port: u16,
     pub sources: Vec<SourcePreference>,
     pub theme: Theme,
     /// Auto-scroll the lyrics to the current line.
@@ -174,6 +176,7 @@ impl Default for Settings {
             shortcuts: crate::shortcuts::defaults(),
             player: PlayerKind::default(),
             client_id: String::new(),
+            ytmd_port: crate::ytmdesktop::DEFAULT_PORT,
             sources: PROVIDERS
                 .iter()
                 .map(|(id, _)| SourcePreference {
@@ -218,6 +221,9 @@ impl Settings {
             }
         }
         self.client_id = self.client_id.trim().to_string();
+        if !crate::ytmdesktop::PORTS.contains(&self.ytmd_port) {
+            self.ytmd_port = crate::ytmdesktop::DEFAULT_PORT;
+        }
         self.opacity = self.opacity.clamp(MIN_OPACITY, 100);
         self.compact_opacity = self.compact_opacity.clamp(MIN_OPACITY, 100);
         self.lyric_size = self.lyric_size.clamp(MIN_LYRIC_SIZE, MAX_LYRIC_SIZE);
@@ -253,7 +259,7 @@ impl Settings {
     pub fn lyric_order(&self, player: PlayerKind) -> Vec<String> {
         let mut order = self.lookup_order();
         order.retain(|id| id != "youtube_music");
-        if player == PlayerKind::Ytmusic {
+        if player.plays_youtube_music() {
             order.insert(0, "youtube_music".into());
         }
         order
@@ -524,6 +530,29 @@ pub(crate) mod tests {
             available_providers(PlayerKind::Ytmusic)[0].0,
             "youtube_music"
         );
+        assert_eq!(settings.lyric_order(PlayerKind::Ytmdesktop2), youtube);
+        assert_eq!(
+            available_providers(PlayerKind::Ytmdesktop2)[0].0,
+            "youtube_music"
+        );
+    }
+
+    #[test]
+    fn a_ytmdesktop2_port_outside_its_own_range_falls_back_to_the_default() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.ytmd_port, 13091);
+        settings.ytmd_port = 20000;
+        settings.normalize();
+        assert_eq!(settings.ytmd_port, 20000);
+        for wrong in [80, 9998, 39_999 + 1] {
+            settings.ytmd_port = wrong;
+            settings.normalize();
+            assert_eq!(settings.ytmd_port, 13091, "port {wrong}");
+        }
+        // Files written before the option existed still load, with the default.
+        let older: Settings = serde_json::from_str(r#"{"player":"ytmdesktop2"}"#).unwrap();
+        assert_eq!(older.player, PlayerKind::Ytmdesktop2);
+        assert_eq!(older.ytmd_port, 13091);
     }
 
     /// Disabling everything must not mean "never fetch lyrics again".

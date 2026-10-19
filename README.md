@@ -1,6 +1,6 @@
 # Hakuro
 
-Windows 桌面歌詞播放器：跟隨 Spotify 或 YouTube Music 正在播放的歌曲，搜尋原文歌詞、同步高亮，並把下載過的歌詞存入 SQLite。介面使用英文，以 Tauri 2、Rust 與 TypeScript 實作。
+Windows 桌面歌詞播放器：跟隨 Spotify 或 YouTube Music（Windows 媒體工作階段或 ytmdesktop2）正在播放的歌曲，搜尋原文歌詞、同步高亮，並把下載過的歌詞存入 SQLite。介面使用英文，以 Tauri 2、Rust 與 TypeScript 實作。
 
 ## 開始使用
 
@@ -15,7 +15,7 @@ Windows 桌面歌詞播放器：跟隨 Spotify 或 YouTube Music 正在播放的
 
 App 使用 PKCE 授權。Redirect URI 必須完全一致，請勿改成 `localhost`；詳見 [Spotify Redirect URI 規則](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri)。
 
-### YouTube Music
+### YouTube Music (media session)
 
 3. 選好之後直接儲存，不需要 Client ID、不需要授權、不需要另外安裝程式。
 4. 在瀏覽器或桌面版播放 YouTube Music，Hakuro 就會跟上。
@@ -25,6 +25,18 @@ YouTube Music 沒有「目前播放」的 API，所以 Hakuro 讀的是 Windows 
 - 瀏覽器不會在播放過程中更新播放位置，Hakuro 依系統回報的時間戳推算。暫停、續播、拖動進度、切歌都會重新校準。
 - 瀏覽器的所有分頁共用同一個媒體工作階段識別，所以另一個分頁在播影片時可能被誤認。這點尚未處理。
 - 轉存控制（播放、暫停、上下一首、拖動）依播放器實際開放的項目啟用，播放器不支援時按鈕會停用。
+
+### YouTube Music (ytmdesktop2)
+
+3. 安裝並開啟 [ytmdesktop2](https://github.com/Venipa/ytmdesktop2)（第三方開源 YouTube Music 桌面版，與 Hakuro 無關），在它的 Settings → API & Integrations → API 開啟 API。預設埠為 `13091`。
+4. Hakuro 的 **Player** 選 **YouTube Music (ytmdesktop2)**；埠號不同時填入 **ytmdesktop2 API port**（9999–39999），然後儲存。
+5. 若 ytmdesktop2 開啟了 Require authorization，Hakuro 連線時狀態列會顯示配對碼；請在 30 秒內到 ytmdesktop2 的 Settings → API & Integrations → Authentication 核准 Hakuro。核准後的 token 以 Windows DPAPI 加密存在 `ytmd-session.bin`，之後不必再配對；在 ytmdesktop2 撤銷後，按 Reconnect 重新配對。
+
+ytmdesktop2 會告訴 Hakuro 目前歌曲的 YouTube 影片 ID，所以不必靠曲名猜歌：
+
+- YouTube Music 原生歌詞直接依影片 ID 讀取。MV 本身沒有同步歌詞時（MV 常只有純文字或沒有歌詞），會改讀它在歌曲目錄中的對應版本：ytmdesktop2 有提供就直接用，否則以同一原生藝人、相同標題與相近時長確認。都沒有同步歌詞才改用搜尋，最後才依設定順序查其他來源。MV 的演出者名稱可能被翻成介面語言（例如「酷玩樂團」），這套確認方式不依賴名稱。
+- 播放位置、暫停狀態、上下一首、拖動與音量環都直接透過 ytmdesktop2 的本機 API。
+- ytmdesktop2 的 YouTube Music 頁面還沒載入完成時，播放控制與音量讀取不會有回應，Hakuro 會顯示提示並繼續等待。
 
 ## 介面
 
@@ -45,16 +57,16 @@ YouTube Music 沒有「目前播放」的 API，所以 Hakuro 讀的是 Windows 
 
 ## 歌詞與設定
 
-- **音量環**控制 Spotify 目前播放裝置的音量（0–100%），放開、停止捲動或以鍵盤提交時才送出調整，沿用既有授權。裝置不支援時會停用；YouTube Music 的 Windows 媒體介面沒有提供音量控制，請在播放器內調整。Spotify 音量 API 的帳戶要求依 [官方文件](https://developer.spotify.com/documentation/web-api/reference/set-volume-for-users-playback) 為準。
+- **音量環**控制 Spotify 目前播放裝置或 ytmdesktop2 播放器的音量（0–100%），放開、停止捲動或以鍵盤提交時才送出調整，沿用既有授權。裝置不支援時會停用；YouTube Music (media session) 的 Windows 媒體介面沒有提供音量控制，請在播放器內調整。Spotify 音量 API 的帳戶要求依 [官方文件](https://developer.spotify.com/documentation/web-api/reference/set-volume-for-users-playback) 為準。
 - 點目前顯示的**歌詞來源按鈕**，可選擇這首歌偏好的來源，或回到自動搜尋。每首歌的選擇會保存在 SQLite。
-- **Find lyrics** 可在已啟用的 LRCLIB、NetEase、QQ Music 搜尋其他曲名／歌手；Settings 的 **Player** 選擇 **YouTube Music** 時，會另外提供原生 YouTube Music 搜尋，不需額外啟用來源。查看候選與歌詞預覽後，以 **Use these lyrics** 綁定目前這首歌。手動匹配會跨重啟保存；**Restore automatic** 可取消綁定，恢復自動搜尋。切換這首歌的來源也會取代手動匹配。
+- **Find lyrics** 可在已啟用的 LRCLIB、NetEase、QQ Music 搜尋其他曲名／歌手；Settings 的 **Player** 選擇任一 YouTube Music 播放器時，會另外提供原生 YouTube Music 搜尋，不需額外啟用來源。查看候選與歌詞預覽後，以 **Use these lyrics** 綁定目前這首歌。手動匹配會跨重啟保存；**Restore automatic** 可取消綁定，恢復自動搜尋。切換這首歌的來源也會取代手動匹配。
 - **RELOAD** 會略過快取、重新向來源取得目前歌曲的歌詞；來源選擇控制搜尋對象，兩者可同時使用。
 - 有手動匹配時，重新整理會取得所選候選的歌詞；清除下載快取仍會保留手動匹配。
 - **Settings** 可調整 LRCLIB、PetitLyrics、Musixmatch、NetEase、QQ Music 的全域歌詞來源順序與啟用狀態。
-- Settings 的 **Player** 選擇 **YouTube Music** 時，自動搜尋會先嘗試 YouTube Music 原生同步歌詞；只有純文字、取不到或請求失敗時，會依設定順序繼續尋找其他來源的同步歌詞，仍找不到才保留純文字。原生歌詞不占用全域來源列表，也不需另外勾選。此時單曲來源選擇與 **Find lyrics** 也會提供 YouTube Music；選擇 Spotify 播放器時不提供此來源。單曲指定來源或手動匹配仍依使用者選擇。
-- YouTube Music 原生歌詞以歌名、歌手與時長尋找對應歌曲；歌曲搜尋沒有可用結果時，會再搜尋 MV，處理 Windows 提供英文曲名、YouTube 顯示雙語標題的情況，仍要求歌手與時長符合。取得對應歌曲後讀取逐行或純文字歌詞；不需登入 Google，播放控制仍走 SMTC。其內部介面可能變動，逐字與雙語資料不保證提供。
-- MV 只有純文字時，可透過原生藝人 ID、雙語標題的原文與已知時長，確認歌曲目錄中的對應版本並讀取其同步歌詞。不會憑文字順序猜時間，也不會只因歌名相似就套用其他版本；無法確認時保留純文字或繼續查其他來源。
-- 歌詞快取依播放來源分開存放，Spotify 與 YouTube Music 不會互相讀到對方的結果。
+- Settings 的 **Player** 選擇任一 YouTube Music 播放器時，自動搜尋會先嘗試 YouTube Music 原生同步歌詞；只有純文字、取不到或請求失敗時，會依設定順序繼續尋找其他來源的同步歌詞，仍找不到才保留純文字。原生歌詞不占用全域來源列表，也不需另外勾選。此時單曲來源選擇與 **Find lyrics** 也會提供 YouTube Music；選擇 Spotify 播放器時不提供此來源。單曲指定來源或手動匹配仍依使用者選擇。
+- 透過媒體工作階段時，YouTube Music 原生歌詞以歌名、歌手與時長尋找對應歌曲（ytmdesktop2 則先依影片 ID 直接讀取）；歌曲搜尋沒有可用結果時，會再搜尋 MV，處理 Windows 提供英文曲名、YouTube 顯示雙語標題的情況，仍要求歌手與時長符合。取得對應歌曲後讀取逐行或純文字歌詞；不需登入 Google，播放控制仍走所選播放器。其內部介面可能變動，逐字與雙語資料不保證提供。
+- MV 只有純文字時，可透過原生藝人 ID、標題（雙語標題取原文）與已知時長，確認歌曲目錄中的對應版本並讀取其同步歌詞。不會憑文字順序猜時間，也不會只因歌名相似就套用其他版本；無法確認時保留純文字或繼續查其他來源。
+- 歌詞快取依播放來源分開存放，Spotify、YouTube Music (media session) 與 ytmdesktop2 不會互相讀到對方的結果。
 - **Settings** 可設定強調色（方塊光暈、進度列、背景色帶，預設螢光黃 `#e6ff1f`）、目前歌詞的高亮色、已唱過歌詞的顏色。
 - **Follow lyrics** 控制是否自動捲動至目前歌詞；有時間軸時會隨播放位置高亮，純文字歌詞不會猜測時間。
 - 來源提供逐字時間時，會跟隨播放位置突出目前的字詞；沒有逐字資料就維持逐行高亮。PetitLyrics 與 NetEase 可提供逐字資料，實際覆蓋依歌曲而異。
@@ -68,14 +80,15 @@ SQLite 保留成功下載的歌詞，重新開啟 App 仍可使用。來源可�
 
 | 檔案 | 內容 |
 | --- | --- |
-| `settings.json` | 播放器選擇、Client ID、全域來源偏好、配色、跟隨歌詞與快捷鍵設定 |
+| `settings.json` | 播放器選擇、Client ID、ytmdesktop2 API 埠號、全域來源偏好、配色、跟隨歌詞與快捷鍵設定 |
 | `lyrics.db` | 已下載歌詞、逐字時間與翻譯，以及每首歌的來源偏好和手動匹配 |
 | `lyrics.db-wal`、`lyrics.db-shm` | SQLite 執行期間可能產生的輔助檔 |
 | `session.bin` | 經 Windows DPAPI 加密的 Spotify refresh token；只跟隨 YouTube Music 時不會產生 |
+| `ytmd-session.bin` | 經 Windows DPAPI 加密的 ytmdesktop2 配對 token；ytmdesktop2 不要求授權時不會產生 |
 
-請使用可寫入的資料夾，例如自己的文件資料夾；不要把可攜版放進唯讀目錄或 `Program Files`。備份或搬移前先關閉 App，再複製整個資料夾。`session.bin` 綁定 Windows 使用者與 Client ID，不能當成跨帳號／跨電腦登入憑證；搬到其他環境後請重新授權。
+請使用可寫入的資料夾，例如自己的文件資料夾；不要把可攜版放進唯讀目錄或 `Program Files`。備份或搬移前先關閉 App，再複製整個資料夾。`session.bin` 與 `ytmd-session.bin` 綁定 Windows 使用者，不能當成跨帳號／跨電腦登入憑證；搬到其他環境後請重新授權或配對。
 
-分享程式時只分享乾淨的執行檔或安裝程式，不要附上個人設定、資料庫或 `session.bin`。
+分享程式時只分享乾淨的執行檔或安裝程式，不要附上個人設定、資料庫、`session.bin` 或 `ytmd-session.bin`。
 
 ## 開發環境
 
@@ -143,7 +156,7 @@ npm run tauri -- icon icon.png
 ## 專案結構
 
 - `app/src/`：TypeScript 介面、歌詞同步與樣式。
-- `app/src-tauri/src/`：播放來源（`spotify.rs` 授權／播放、`smtc.rs` 系統媒體工作階段、`player.rs` 兩者的共同介面）、歌詞來源、SQLite 與個人設定。
+- `app/src-tauri/src/`：播放來源（`spotify.rs` 授權／播放、`smtc.rs` 系統媒體工作階段、`ytmdesktop.rs` ytmdesktop2 本機 API 與配對、`player.rs` 三者的共同介面）、歌詞來源、SQLite 與個人設定。
 - `app/src-tauri/tauri.conf.json`：視窗、App 名稱、圖示與 NSIS 打包設定。
 
 ### 發佈新版本

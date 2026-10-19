@@ -23,6 +23,7 @@ mod smtc;
 mod spotify;
 mod token_store;
 mod youtube_music;
+mod ytmdesktop;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -41,6 +42,7 @@ use providers::{LyricCandidate, LyricsResult, TrackQuery};
 use settings::Settings;
 use smtc::Smtc;
 use spotify::Spotify;
+use ytmdesktop::Ytmdesktop;
 
 /// The system media session is local and free to ask, so it is polled briskly.
 const LOCAL_POLL_INTERVAL: Duration = Duration::from_millis(1500);
@@ -252,9 +254,11 @@ async fn save_settings(
     // Either half of the identity invalidates the open connection: a new Client
     // ID cannot reuse the cached refresh token, and a new player is a different
     // source altogether. A Client ID edited while following YouTube Music
-    // changes nothing that is running, so it does not reconnect.
+    // changes nothing that is running, so it does not reconnect. ytmdesktop2's
+    // port is where the open connection points, so moving it does.
     let identity_changed = incoming.player != previous.player
-        || (incoming.player.needs_client_id() && incoming.client_id != previous.client_id);
+        || (incoming.player.needs_client_id() && incoming.client_id != previous.client_id)
+        || (incoming.player == PlayerKind::Ytmdesktop2 && incoming.ytmd_port != previous.ytmd_port);
     let mut active = state.shortcuts.read().unwrap().clone();
     let outcome = shortcuts::replace(
         &mut active,
@@ -341,6 +345,9 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
 
     if settings.player == PlayerKind::Ytmusic {
         return connect_ytmusic(&app, &state).await;
+    }
+    if settings.player == PlayerKind::Ytmdesktop2 {
+        return connect_ytmdesktop2(&app, &state, settings.ytmd_port).await;
     }
 
     let stored = settings.client_id.clone();
@@ -430,6 +437,48 @@ async fn connect_ytmusic(app: &AppHandle, state: &State<'_, AppState>) -> Result
     Ok(())
 }
 
+/// ytmdesktop2 answers on a local port, and pairs once when its Settings ask
+/// for authorization: the reader approves the code shown here in ytmdesktop2.
+async fn connect_ytmdesktop2(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    port: u16,
+) -> Result<(), String> {
+    let client = Ytmdesktop::connect(port, |code| {
+        emit_status(
+            app,
+            "authorizing",
+            format!("Approve Hakuro in ytmdesktop2 · code {code}"),
+            "In ytmdesktop2, open Settings → API & Integrations → Authentication and approve Hakuro within 30 seconds.",
+        )
+    })
+    .await;
+    let client = match client {
+        Ok(client) => Arc::new(client),
+        Err(error) => {
+            emit_status(app, "error", "Connection failed", error.to_string());
+            return Err(error.to_string());
+        }
+    };
+    // The reader may have switched player or port while this waited.
+    let settings = state.settings.read().await.clone();
+    if settings.player != PlayerKind::Ytmdesktop2 || settings.ytmd_port != port {
+        return Err("The player changed while connecting. Connect again.".into());
+    }
+    let notice = [
+        client.cache_warning(),
+        state.db.warning().unwrap_or_default(),
+    ]
+    .into_iter()
+    .filter(|warning| !warning.is_empty())
+    .collect::<Vec<_>>()
+    .join(" ");
+    *state.session.player.write().await = Some(Player::ytmdesktop2(client));
+    emit_status(app, "connected", "Connected", notice);
+    start_polling(app, state).await;
+    Ok(())
+}
+
 async fn start_polling(app: &AppHandle, state: &State<'_, AppState>) {
     {
         let mut polling = state.session.polling.write().await;
@@ -450,6 +499,8 @@ async fn start_polling(app: &AppHandle, state: &State<'_, AppState>) {
 async fn poll_loop(app: AppHandle) {
     // When Spotify was last seen not playing, or None while it plays.
     let mut stopped_since: Option<Instant> = None;
+    // Whether the last sample failed, so the next good one can say it recovered.
+    let mut faulted = false;
     loop {
         let client = {
             let state = app.state::<AppState>();
@@ -499,6 +550,9 @@ async fn poll_loop(app: AppHandle) {
         }
         match result {
             Ok(playback) => {
+                if std::mem::take(&mut faulted) {
+                    emit_status(&app, "connected", "Connected", "");
+                }
                 delay = poll_delay(&playback);
                 if playback.source == PlayerKind::Spotify && !playback.is_playing {
                     stopped_since.get_or_insert_with(Instant::now);
@@ -511,16 +565,24 @@ async fn poll_loop(app: AppHandle) {
                 let state = app.state::<AppState>();
                 *state.session.player.write().await = None;
                 *state.session.polling.write().await = false;
-                emit_status(&app, "needs-auth", "Spotify sign-in expired", "");
+                let message = match client.kind() {
+                    PlayerKind::Ytmdesktop2 => {
+                        "ytmdesktop2 access revoked; reconnect to pair again"
+                    }
+                    _ => "Spotify sign-in expired",
+                };
+                emit_status(&app, "needs-auth", message, "");
                 break;
             }
             Err(PlayerError::RateLimited { retry_after }) => {
                 delay = Duration::from_secs(retry_after.max(2));
                 // A refresh now would only be refused again.
                 interruptible = false;
+                faulted = true;
                 emit_status(&app, "waiting", "Rate limited; waiting before retry", "");
             }
             Err(error) => {
+                faulted = true;
                 emit_status(&app, "waiting", error.to_string(), "");
             }
         }
@@ -595,7 +657,11 @@ fn lyric_query(playback: &Playback) -> TrackQuery {
             .collect(),
         album: playback.album.clone(),
         duration_ms: playback.duration_ms,
-        spotify_id: (!playback.track_id.is_empty()).then(|| playback.track_id.clone()),
+        // ytmdesktop2's track id is a YouTube video id, which Musixmatch would
+        // take for a Spotify one.
+        spotify_id: (playback.source == PlayerKind::Spotify && !playback.track_id.is_empty())
+            .then(|| playback.track_id.clone()),
+        video_ids: playback.video_ids.clone(),
     }
 }
 
@@ -650,7 +716,7 @@ async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
     }
     let request = state.session.lookup_request.fetch_add(1, Ordering::SeqCst) + 1;
     if let Some(selection) = state.db.manual_match(&key).filter(|selection| {
-        selection.candidate.source != "youtube_music" || playback.source == PlayerKind::Ytmusic
+        selection.candidate.source != "youtube_music" || playback.source.plays_youtube_music()
     }) {
         emit_lyrics(app, generation, &key, "", selection.lyrics, true);
         return;
@@ -658,7 +724,7 @@ async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
     let requested = state
         .db
         .preferred_source(&key)
-        .filter(|id| id != "youtube_music" || playback.source == PlayerKind::Ytmusic)
+        .filter(|id| id != "youtube_music" || playback.source.plays_youtube_music())
         .unwrap_or_else(|| db::AUTO.to_string());
 
     let order = state.settings.read().await.lyric_order(playback.source);
@@ -760,7 +826,7 @@ async fn reload_lyrics(app: AppHandle, state: State<'_, AppState>) -> Result<(),
         let request = state.session.lookup_request.fetch_add(1, Ordering::SeqCst) + 1;
         let player = state.settings.read().await.player;
         let selection = state.db.manual_match(&key).filter(|selection| {
-            selection.candidate.source != "youtube_music" || player == PlayerKind::Ytmusic
+            selection.candidate.source != "youtube_music" || player.plays_youtube_music()
         });
         if selection.is_none() {
             state.db.forget(&key);
@@ -1056,6 +1122,26 @@ mod tests {
     }
 
     #[test]
+    fn ytmdesktop2_hands_the_lyric_lookup_its_videos_not_a_spotify_id() {
+        let playing = Playback {
+            name: "Title".into(),
+            artists: vec!["Artist".into()],
+            track_id: "dQw4w9WgXcQ".into(),
+            video_ids: vec!["dQw4w9WgXcQ".into(), "lYBUbBu4W08".into()],
+            has_track: true,
+            source: PlayerKind::Ytmdesktop2,
+            ..Playback::default()
+        };
+        let query = lyric_query(&playing);
+        assert_eq!(query.spotify_id, None);
+        assert_eq!(query.video_ids, ["dQw4w9WgXcQ", "lYBUbBu4W08"]);
+        assert_eq!(track_key(&playing), "ytmd2:dQw4w9WgXcQ");
+        // The interface never sees the ids; they are a backend matter.
+        let event = serde_json::to_value(&playing).unwrap();
+        assert!(event.get("videoIds").is_none() && event.get("video_ids").is_none());
+    }
+
+    #[test]
     fn synced_policy_refreshes_only_native_ytm_cache_keys() {
         let order = vec!["youtube_music".into(), "lrclib".into()];
         assert_eq!(
@@ -1095,6 +1181,7 @@ mod tests {
             artists: vec!["Artist".into()],
             album: "Album".into(),
             album_art: Some("https://example.test/art.jpg".into()),
+            video_ids: Vec::new(),
             duration_ms: 180_000,
             progress_ms: Some(1000),
             is_playing: true,
@@ -1265,7 +1352,7 @@ mod tests {
         ] {
             assert!(object.contains_key(key), "missing key: {key}");
         }
-        for key in ["clientId", "sources", "theme", "followLyrics"] {
+        for key in ["clientId", "ytmdPort", "sources", "theme", "followLyrics"] {
             assert!(
                 object["settings"].get(key).is_some(),
                 "missing settings key: {key}"
@@ -1314,6 +1401,57 @@ mod tests {
         ytmusic.source = PlayerKind::Ytmusic;
         assert_eq!(track_key(&ytmusic), "ytm:Title|180000");
         assert_ne!(track_key(&spotify), track_key(&ytmusic));
+    }
+
+    /// Read-only: needs ytmdesktop2 running with its API on the default port
+    /// and a song loaded. Nothing is played, paused or changed.
+    #[tokio::test]
+    #[ignore = "local ytmdesktop2 with a song loaded"]
+    async fn live_ytmdesktop2_lyrics_follow_the_playing_video() {
+        let client = Ytmdesktop::connect(ytmdesktop::DEFAULT_PORT, |code| {
+            panic!("pairing needed (code {code}); turn off authorization for this test")
+        })
+        .await
+        .unwrap();
+        let playing = client.playback().await.unwrap();
+        println!(
+            "{:?} | {:?} | {:?} | {} ms at {:?} playing={} volume={:?} art={:?} ids={:?}",
+            playing.name,
+            playing.artists,
+            playing.album,
+            playing.duration_ms,
+            playing.progress_ms,
+            playing.is_playing,
+            playing.volume_percent,
+            playing.album_art,
+            playing.video_ids,
+        );
+        assert!(playing.has_track, "load a song in ytmdesktop2 first");
+        assert_eq!(track_key(&playing), format!("ytmd2:{}", playing.track_id));
+        tokio::time::sleep(LOCAL_POLL_INTERVAL).await;
+        let next = client.playback().await.unwrap();
+        println!(
+            "next sample: playing={} at {:?}",
+            next.is_playing, next.progress_ms
+        );
+
+        let started = Instant::now();
+        let lyrics = providers::fetch_lyrics(
+            &providers::client().unwrap(),
+            &musixmatch::Session::new(),
+            &lyric_query(&playing),
+            &settings::Settings::default().lyric_order(PlayerKind::Ytmdesktop2),
+        )
+        .await;
+        println!(
+            "{} in {:?}: {} cues, {} chars plain, errors {:?}",
+            lyrics.source,
+            started.elapsed(),
+            lyrics.cues.len(),
+            lyrics.text.len(),
+            lyrics.errors
+        );
+        assert!(!lyrics.cues.is_empty() || !lyrics.text.is_empty());
     }
 }
 

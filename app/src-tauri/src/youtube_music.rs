@@ -146,6 +146,12 @@ fn bilingual_title(title: &str) -> Option<(&str, &str)> {
     Some((original, translation))
 }
 
+/// The title a catalog song would carry: the original half of a bilingual video
+/// title, otherwise the title itself.
+fn catalog_title(title: &str) -> &str {
+    bilingual_title(title).map_or(title, |(original, _)| original)
+}
+
 /// A video's lyrics can be plain while its native catalog recording has timing.
 /// Bridge localized names only through the same native artist id, exact original
 /// title and known durations; this fetches the catalog entry's own lyric timeline.
@@ -158,9 +164,7 @@ pub async fn localized_song_lyrics(
     if video.source != "youtube_music" || !matches_track(query, video) {
         return Err(ProviderError::Rejected);
     }
-    let Some((original, _)) = bilingual_title(&video.title) else {
-        return Ok(LyricsResult::empty(SOURCE));
-    };
+    let original = catalog_title(&video.title);
     // The caller shares its original provider deadline across video + song requests.
     let watch = request(client, "next", json!({"videoId": video.id}), false).await?;
     let songs = request(
@@ -203,7 +207,7 @@ fn localized_song(
     watch: &Value,
     search: &Value,
 ) -> Option<LyricCandidate> {
-    let (original, _) = bilingual_title(&video.title)?;
+    let original = catalog_title(&video.title);
     let mut rows = Vec::new();
     renderers(watch, "playlistPanelVideoRenderer", &mut rows);
     let selected = rows
@@ -558,6 +562,7 @@ mod tests {
             album: String::new(),
             duration_ms: 199_000,
             spotify_id: None,
+            video_ids: Vec::new(),
         };
         let video = LyricCandidate {
             source: "youtube_music".into(),
@@ -614,6 +619,69 @@ mod tests {
         }
     }
 
+    /// Measured 2026-10-20: ytmdesktop2 playing the official video FM7MFYoylVs
+    /// gives no counterpart, and the video's own lyrics are plain; the catalog
+    /// song owTWCbq_nSk, same title and artists, is timed.
+    #[test]
+    fn a_music_video_with_a_plain_title_finds_its_catalog_song_by_the_same_evidence() {
+        let query = TrackQuery {
+            track: "Something Just Like This".into(),
+            artists: vec!["Duo".into()],
+            album: String::new(),
+            duration_ms: 248_000,
+            spotify_id: None,
+            video_ids: vec!["FM7MFYoylVs".into()],
+        };
+        let video = LyricCandidate {
+            source: "youtube_music".into(),
+            id: "FM7MFYoylVs".into(),
+            title: query.track.clone(),
+            artists: query.artists.clone(),
+            album: String::new(),
+            duration_ms: 248_000,
+        };
+        let artist = json!({"text": "Duo", "navigationEndpoint": {"browseEndpoint": {
+            "browseId": "UCnativeDuoArtist",
+            "browseEndpointContextSupportedConfigs": {"browseEndpointContextMusicConfig": {"pageType": "MUSIC_PAGE_TYPE_ARTIST"}}
+        }}});
+        let watch = json!({"playlistPanelVideoRenderer": {"videoId": video.id, "selected": true,
+            "title": {"simpleText": "Something Just Like This"}, "lengthText": {"simpleText": "4:08"},
+            "longBylineText": {"runs": [artist.clone()]}}});
+        let song = |id: &str, title: &str, length: &str| {
+            json!({"musicResponsiveListItemRenderer": {
+                "playlistItemData": {"videoId": id},
+                "flexColumns": [
+                    {"musicResponsiveListItemFlexColumnRenderer": {"text": {"simpleText": title}}},
+                    {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [artist.clone(), {"text": length}]}}}
+                ]
+            }})
+        };
+        let found = localized_song(
+            &query,
+            &video,
+            &watch,
+            &json!([
+                song("FM7MFYoylVs", "Something Just Like This", "4:08"),
+                song("owTWCbq_nSk", "Something Just Like This", "4:07")
+            ]),
+        );
+        assert_eq!(
+            found.unwrap().id,
+            "owTWCbq_nSk",
+            "the video itself is never its own song"
+        );
+        for (title, length) in [
+            ("Something Just Like This (Live)", "4:07"),
+            ("Something Just Like This", "4:30"),
+        ] {
+            assert!(
+                localized_song(&query, &video, &watch, &song("owTWCbq_nSk", title, length))
+                    .is_none(),
+                "accepted {title} {length}"
+            );
+        }
+    }
+
     #[test]
     fn bilingual_video_alias_preserves_recording_guards() {
         let query = TrackQuery {
@@ -622,6 +690,7 @@ mod tests {
             album: String::new(),
             duration_ms: 199_000,
             spotify_id: None,
+            video_ids: Vec::new(),
         };
         let mut candidate = LyricCandidate {
             source: "youtube_music".into(),
@@ -775,6 +844,7 @@ mod tests {
             album: String::new(),
             duration_ms: 199_000,
             spotify_id: None,
+            video_ids: Vec::new(),
         };
         let videos = search_videos(&client, "Just a Sunny Day for You YORUSHIKA")
             .await

@@ -6,14 +6,20 @@
 import type { ShortcutBinding } from "./shortcuts";
 
 export type ClickThrough = "off" | "auto" | "always";
-/** Which player Hakuro follows. Exactly one is live at a time. */
-export type PlayerKind = "spotify" | "ytmusic";
+/**
+ * Which player Hakuro follows. Exactly one is live at a time. "ytmusic" is YouTube
+ * Music as the Windows media session reports it; "ytmdesktop2" is the ytmdesktop2
+ * app's local API, which names the exact song.
+ */
+export type PlayerKind = "spotify" | "ytmusic" | "ytmdesktop2";
 
 export interface Theme { accent: string; activeLine: string; pastLine: string }
 
 export interface Settings {
   player: PlayerKind;
   clientId: string;
+  /** Where ytmdesktop2 serves its API, 9999–39999. */
+  ytmdPort: number;
   sources: { id: string; enabled: boolean }[];
   theme: Theme;
   followLyrics: boolean;

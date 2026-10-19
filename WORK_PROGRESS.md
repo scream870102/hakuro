@@ -1,5 +1,47 @@
 # hakuro session recovery
 
+## Completed task — 2026-10-20 ytmdesktop2 player option, v1.4.0
+
+Goal: add "YouTube Music (ytmdesktop2)" as a third player (keep Spotify and browser SMTC), reading the exact videoId from ytmdesktop2's local API.
+Acceptance:
+- [x] `PlayerKind::Ytmdesktop2` (serde "ytmdesktop2", prefix "ytmd2"); settings `ytmdPort` default 13091, out of 9999–39999 → default; port change reconnects.
+- [x] connect: GET / identifies the API; unreachable/wrong service gives an actionable error; authRequired → stored DPAPI token (own file `ytmd-session.bin`) or pairing (code in status "authorizing", 30 s window); stale token cleared and re-paired; 401 while polling → needs-auth (ytmdesktop2 wording).
+- [x] playback: /track/state + /track each poll (both answered from ytmd2 memory); volume POST {} only when a track is loaded, 1 s timeout; seconds → ms; art meta.thumbnail; " - Topic" stripped.
+- [x] controls: play/pause/next/prev; seek {time: ms, type:"seek"}; volume {volume}.
+- [x] lyrics: Playback.video_ids (serde skip) → TrackQuery.video_ids (playing id, counterpartVideoId); providers::youtube_music fetches ids first (12 s shared), search fallback; spotify_id only for Spotify; YTM native source for both YTM players (`plays_youtube_music`).
+- [x] frontend: option + port field (validated only when selected) + help text; volume title; tests.
+- [x] cargo test 125 passed / 10 ignored, tsc, vitest 92 pass; sonnet review: no blocker/major (its one minor, volume stalling the sample, fixed); README updated.
+- [x] live test against the user's ytmdesktop2 (v1.8.3, API 13091, authRequired false; user: "接下來你自己嘗試控制ytmusicdesktop2 把剩下的工作完成", "做完就把音樂暫停"):
+  - ATV YhiQDARUJ7Y 甲乙丙丁Strangers: playback fields right, YTM 44 cues 0.53 s. owTWCbq_nSk: YTM 52 cues 0.48 s.
+  - controls via Rust client: pause/play ok; seek 30000 → 31021 ms (ms absolute confirmed); volume 100→90→100 restored; next/prev ok (prev restarts after 3 s).
+  - found: after /nav/watch to an MV, state.playing false for 15+ s while progress runs → `moving()` inference (second sample playing=true live).
+  - found: MV FM7MFYoylVs counterpartVideoId null, own lyrics plain → `localized_song` generalised to plain titles (catalog_title) and used for player ids → YTM 52 cues 1.7 s live. Anonymous YTM `next` has no counterpart (checked).
+  - found: MV author localized ("老菸槍雙人組和酷玩樂團") — only matters for search fallback.
+  - pre-existing YTM live tests (smtc joint credit, smtc MV, localized song timing, search+lyrics) pass after the change.
+  - found: MV gKM15TaKLUI (Coldplay "Ink", author 酷玩樂團) has no lyrics at all → bridge also tried when the video's own lyrics are empty → YTM 26 cues 1.2 s live.
+  - second sonnet review (post-live changes): one major — a real pause mid-interval read as playing for a sample → `moving` now needs both samples flagged paused (`Position.flagged_playing`) and elapsed 500..=5000 ms. Third fresh agent verified that fix and the bridge change: PASS. Accepted minors: worst case ~24 s inside the YTM provider when bridge + search both stall; volume None (dial disabled) while ytmd2's page hangs with a track loaded; bridge skipped when the player gives no artist.
+  - GUI: built release exe run portable with `{"player":"ytmdesktop2"}` in target/release (test files removed after): Connected, "YOUTUBE MUSIC · SYNCED" line highlight in sync on MV "Used To Love", volume 100% dial, pause in ytmd2 → play icon + grey art + frozen 2:30. Music left paused as the user asked.
+  - cargo test 127 passed / 11 ignored; vitest 92; tsc ok; fmt only pre-existing diffs (lib.rs ~1467, matching.rs).
+- [x] user: "如果做完沒有問題 就把說明更新 版號推進 1.4.0 然後推上去" — README updated; version 1.4.0 (six values, `cargo metadata --locked` ok); final NSIS app/src-tauri/target/release/bundle/nsis/Hakuro_1.4.0_x64-setup.exe 9,658,355 bytes SHA256 c98cf470...0f0bbb; commits feat + chore bump, push main, lightweight tag v1.4.0 (like v1.3.x) to start the Release workflow.
+Live finding 2026-10-20: with nothing loaded, ytmd2 answers GET /track and /track/state at once (`null`) but every page command (POST /track/volume, /nav/watch, GET /nav/queue) hangs with no answer (8 s timeouts). Hence the volume gating and the "did not answer — let YouTube Music finish loading" message for a connect-then-timeout.
+Also changed: poll loop re-emits "connected" after a failed sample recovers (all players).
+Knowns (verified against ytmdesktop2 v1.8.3 source, not only docs): progress/duration seconds; seek `time` is ms with `type:"seek"` absolute (docs say seconds — source wins, api-controls.cmds.ts:200-206); POST /track/volume without volume returns `{volume}` unchanged (cmds 228-233, router zod optional); auth code TTL 60 s, approval wait 30 s, appId /^[a-z0-9]{2,32}$/, appVersion semver (auth/manager.ts); GET / is public and returns authRequired; meta.counterpartVideoId present in v1.8.3.
+Decision: REST polling at the existing 1.5 s local interval, no WebSocket (no new dependency, same poll loop).
+Resolved: the user installed ytmdesktop2 and asked Claude to drive it for the live test (done above).
+
+## Completed — 2026-10-20 release 1.3.2, then research a non-SMTC YouTube Music source
+
+v1.3.2 Release run 39290974423 finished: success.
+
+Done: fix commit b08b2b1, version bump 053fb22 (six values: package.json, package-lock x2, tauri.conf.json, Cargo.toml, Cargo.lock hakuro; `cargo metadata --locked` ok), pushed main 20ddb04..053fb22, tag v1.3.2 pushed (lightweight, like v1.3.0/v1.3.1); Release run 39290974423 started. v1.3.1 run 39284433626 finished ok. (User asked for this commit/push explicitly.)
+Next (user): study ytmdesktop/ytmdesktop (development), Venipa/ytmdesktop2, sigma67/ytmusicapi for an exact "what is playing" source; dropping SMTC for YouTube Music is acceptable. Three sonnet research agents running; reports to scratchpad/ytm-research/{ytmdesktop,ytmdesktop2,ytmusicapi}.md.
+Research results (agents' evidence in those reports, unverified items marked there):
+- ytmdesktop2 (Venipa, CC0, v1.8.3 2026-10-18, very active): local API off by default (Settings > API & Integrations), 127.0.0.1:13091; plain WebSocket /socket pushes track:change (video.videoId, title, author, album, duration) and track:state (playing, progress s) ~250ms; REST controls; auth optional (pairing code + approval → Bearer). Its own lyrics: Better Lyrics by videoId, LRCLIB, captions; not YTM native timed.
+- ytmdesktop (official, GPL-3, v2.0.12 2026-09-08): Companion Server off by default, 0.0.0.0:9863, Socket.IO /api/v1/realtime state-update (video.id, title, author string, album, durationSeconds, player.videoProgress, trackState, queue); mandatory pairing (4-digit code, approval click, token stored by client); GET /state limited 1/5s; commands play/pause/next/prev/seekTo/setVolume... No lyrics. Rust Socket.IO client compatibility unverified.
+- ytmusicapi (MIT): lyrics flow same as Hakuro's (next → ANDROID_MUSIC browse, line timing only). Anonymous search with hl = browser UI language may align strings (unverified). get_history needs cookie auth, gives exact videoId but latency/session stability unverified, risky. OAuth impractical.
+- Not from the repos: own browser extension reading the player API (exact, keeps the browser; install step).
+User picked ytmdesktop2, as an added player option (keep browser SMTC). ytmd2 API verified from its docs (apps/docs/content/docs/api/routes.mdx) and server.ts:260-290: messages `{"event","data":[...]}`, literal "null" on connect with no track; REST GET /track, /track/state, POST /track/play|pause|toggle-play-state|next|prev|seek {time s}|volume {volume}; 401 {"error":"unauthorized"}; pairing POST /auth/requestcode {appId,appName,appVersion} → {code}, POST /auth/request {appId,code} blocks until approval → {token}; WS closes 1008 when unauthorized. User asked whether ytmd2 requires the desktop app (yes) vs web YTM — answered; pairing + real-test questions pending.
+
 ## Completed task — 2026-10-20 YTM credit joined in the reader's language
 
 Goal: user's YTM track owTWCbq_nSk (Something Just Like This) found no lyrics automatically; manual search had them. User also asked whether a YouTube API helps, or how Folia searches.

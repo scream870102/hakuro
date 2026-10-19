@@ -268,6 +268,27 @@ it("disables unsupported volume and discards pending replies when the player cha
   expect(el("notice").textContent).not.toContain("Old Spotify error");
 });
 
+it("connects to ytmdesktop2 without setup and lets its volume be set", async () => {
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, player: "ytmdesktop2", clientId: "", ytmdPort: 13091 } };
+  });
+  await import("./main");
+  await flush();
+  await flush();
+  // Unlike Spotify, an empty Client ID is no reason to stop and open Settings.
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "connect")).toBe(true);
+  expect(children.has("settings")).toBe(false);
+  playback("song-a", 1, 0, false, { volumePercent: 37, canSetVolume: true, deviceName: "ytmdesktop2" });
+  const volume = el<HTMLInputElement>("volume");
+  expect(volume.disabled).toBe(false);
+  expect(el("volume-value").textContent).toBe("37%");
+  expect(el("volume-control").title).toBe("ytmdesktop2 player volume");
+  volume.value = "60";
+  volume.dispatchEvent(new Event("change"));
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("set_volume", { volumePercent: 60 });
+});
+
 it("does not apply an old volume reply to a different device with the same name", async () => {
   await import("./main");
   await flush();

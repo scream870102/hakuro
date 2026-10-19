@@ -263,6 +263,7 @@ impl Watch {
             artists: split_artists(&sample.artist).into_iter().take(1).collect(),
             album: sample.album,
             album_art: sample.art,
+            video_ids: Vec::new(),
             duration_ms,
             progress_ms: Some(progress),
             is_playing: playing,
