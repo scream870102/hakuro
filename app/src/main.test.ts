@@ -49,12 +49,24 @@ const initial = () => ({
   dataDir: "C:/Hakuro", storedTracks: 2, storageWarning: "",
 });
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const candidate = { source: "lrclib", id: "123", title: "別名 <b>Song</b>", artists: ["Singer"], album: "Record", duration_ms: 123000 };
+const preview = { source: "LRCLIB", matched_title: candidate.title, text: "Original", cues: [
+  { time_ms: 1000, text: "Original", translation: "翻譯" },
+], errors: [] };
+function submitSearch(query = "別名") {
+  el<HTMLInputElement>("lyrics-query").value = query;
+  el("lyrics-search-form").dispatchEvent(new Event("submit", { cancelable: true }));
+}
+function runFrame() {
+  const callbacks = vi.mocked(requestAnimationFrame).mock.calls;
+  callbacks[callbacks.length - 1][0](performance.now());
+}
 const flush = async () => { await new Promise((resolve) => setTimeout(resolve, 0)); };
-function playback(trackId = "song-a", generation = 1) {
+function playback(trackId = "song-a", generation = 1, progressMs = 0, isPlaying = false, volume: { volumePercent?: number | null; canSetVolume?: boolean; deviceName?: string | null; deviceId?: string | null } = {}) {
   bridge.listeners.get("playback")!({ payload: {
     trackId, generation, name: trackId, artists: ["Artist"], album: "Album", albumArt: null,
-    durationMs: 100000, progressMs: 0, isPlaying: false, hasTrack: true,
-    canSkipNext: true, canSkipPrevious: true, canSeek: true, deviceName: null,
+    durationMs: 100000, progressMs, isPlaying, hasTrack: true,
+    canSkipNext: true, canSkipPrevious: true, canSeek: true, deviceName: null, ...volume,
   } });
 }
 function lyrics(generation: number, text: string, matchedTitle = "") {
@@ -81,10 +93,261 @@ beforeEach(async () => {
   vi.stubGlobal("requestAnimationFrame", vi.fn());
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   HTMLDialogElement.prototype.close = function () { this.open = false; };
+  HTMLElement.prototype.scrollTo = vi.fn();
   bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
     if (command === "get_config") return initial();
     if (command === "save_settings") return { ...initial(), settings: args!.incoming };
   });
+});
+
+it("searches enabled providers, safely previews metadata and saves the chosen match", async () => {
+  await import("./main");
+  await flush();
+  playback();
+  el("lyrics-search-open").click();
+  expect(document.activeElement).toBe(el("lyrics-query"));
+  expect(Array.from(el<HTMLSelectElement>("lyrics-search-source").options).map((option) => option.value)).toEqual(["lrclib"]);
+  bridge.invoke.mockResolvedValueOnce([candidate]);
+  submitSearch("  別名  ");
+  expect(el("lyrics-search-status").textContent).toBe("Searching…");
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("search_lyrics", { trackId: "song-a", query: "別名", source: "lrclib" });
+  expect(el("lyrics-candidates").textContent).toContain("Singer · Record · 02:03 · lrclib");
+  expect(el("lyrics-candidates").querySelector("b")).toBeNull();
+  bridge.invoke.mockResolvedValueOnce(preview);
+  el("lyrics-candidates").querySelector("button")!.click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("preview_lyric_candidate", { trackId: "song-a", candidate });
+  expect(el("lyrics-preview").textContent).toContain("00:01  Original\n    翻譯");
+  expect(el<HTMLButtonElement>("lyrics-match-apply").disabled).toBe(false);
+  el("lyrics-match-apply").click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("apply_lyric_match", { trackId: "song-a", candidate });
+  expect(el<HTMLDialogElement>("lyrics-search-dialog").open).toBe(false);
+  expect(document.activeElement).toBe(el("lyrics-search-open"));
+});
+
+it("ignores superseded searches, preview responses after editing, and results after a track change", async () => {
+  await import("./main");
+  await flush();
+  playback();
+  el("lyrics-search-open").click();
+  let oldSearch!: (value: unknown) => void;
+  bridge.invoke.mockImplementationOnce(() => new Promise((resolve) => { oldSearch = resolve; }));
+  submitSearch("first");
+  bridge.invoke.mockResolvedValueOnce([candidate]);
+  submitSearch("second");
+  await flush();
+  oldSearch([{ ...candidate, title: "Stale" }]);
+  await flush();
+  expect(el("lyrics-candidates").textContent).not.toContain("Stale");
+  let oldPreview!: (value: unknown) => void;
+  bridge.invoke.mockImplementationOnce(() => new Promise((resolve) => { oldPreview = resolve; }));
+  el("lyrics-candidates").querySelector("button")!.click();
+  el("lyrics-query").dispatchEvent(new Event("input"));
+  oldPreview(preview);
+  await flush();
+  expect(el("lyrics-preview-panel").hidden).toBe(true);
+  expect(el<HTMLButtonElement>("lyrics-match-apply").disabled).toBe(true);
+  bridge.invoke.mockImplementationOnce(() => new Promise((resolve) => { oldSearch = resolve; }));
+  submitSearch();
+  playback("song-b", 2);
+  oldSearch([candidate]);
+  await flush();
+  expect(el<HTMLDialogElement>("lyrics-search-dialog").open).toBe(false);
+  expect(el("lyrics-candidates").children).toHaveLength(0);
+  el("lyrics-match-apply").click();
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "apply_lyric_match")).toBe(false);
+});
+
+it("shows empty/error states, rejects empty previews and restores an existing manual match", async () => {
+  await import("./main");
+  await flush();
+  playback();
+  bridge.listeners.get("lyrics")!({ payload: { generation: 1, trackId: "song-a", source: "LRCLIB", synced: false, cues: [], text: "saved", partial: false, requested: "", manual: true } });
+  expect(el("source-badge").textContent).toContain("Manual");
+  el("lyrics-search-open").click();
+  expect(el<HTMLButtonElement>("lyrics-match-clear").disabled).toBe(false);
+  bridge.invoke.mockResolvedValueOnce([]);
+  submitSearch();
+  await flush();
+  expect(el("lyrics-search-status").textContent).toContain("No results");
+  bridge.invoke.mockRejectedValueOnce("Source unavailable");
+  submitSearch();
+  await flush();
+  expect(el("lyrics-search-status").textContent).toBe("Source unavailable");
+  bridge.invoke.mockResolvedValueOnce([candidate]);
+  submitSearch();
+  await flush();
+  bridge.invoke.mockResolvedValueOnce({ ...preview, cues: [], text: "" });
+  el("lyrics-candidates").querySelector("button")!.click();
+  await flush();
+  expect(el("lyrics-search-status").textContent).toContain("no lyrics");
+  expect(el<HTMLButtonElement>("lyrics-match-apply").disabled).toBe(true);
+  el("lyrics-match-clear").click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("clear_lyric_match", { trackId: "song-a" });
+});
+
+it("dismisses search with Escape and invalidates an in-flight preview", async () => {
+  await import("./main");
+  await flush();
+  playback();
+  el("lyrics-search-open").click();
+  bridge.invoke.mockResolvedValueOnce([candidate]);
+  submitSearch();
+  await flush();
+  let finish!: (value: unknown) => void;
+  bridge.invoke.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  el("lyrics-candidates").querySelector("button")!.click();
+  el("lyrics-search-dialog").dispatchEvent(new Event("cancel"));
+  finish(preview);
+  await flush();
+  expect(el<HTMLDialogElement>("lyrics-search-dialog").open).toBe(false);
+  expect(el<HTMLButtonElement>("lyrics-match-apply").disabled).toBe(true);
+});
+
+it("highlights words from the playback clock across pause and seeks, displays translations, and accepts old cues", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 1500);
+  bridge.listeners.get("lyrics")!({ payload: {
+    generation: 1, trackId: "song-a", source: "NetEase", synced: true, text: "", partial: false, requested: "",
+    cues: [
+      { time_ms: 1000, text: "Hello world", translation: "你好世界", words: [
+        { start_ms: 1000, end_ms: 2000, text: "Hello " }, { start_ms: 2000, end_ms: 3000, text: "world" },
+      ] },
+      { time_ms: 4000, text: "Old cue" },
+    ],
+  } });
+  runFrame();
+  const spans = el("lyrics-list").querySelectorAll(".lyric-word");
+  expect(spans[0].classList.contains("is-singing")).toBe(true);
+  expect(spans[1].classList.contains("is-singing")).toBe(false);
+  expect(el("lyrics-list").querySelector(".lyric-translation")?.textContent).toBe("你好世界");
+  expect(document.body.classList.contains("has-translations")).toBe(true);
+  runFrame(); // paused playback keeps the same word
+  expect(spans[0].classList.contains("is-singing")).toBe(true);
+  playback("song-a", 1, 2500);
+  runFrame();
+  expect(spans[0].classList.contains("is-sung")).toBe(true);
+  expect(spans[1].classList.contains("is-singing")).toBe(true);
+  playback("song-a", 1, 5000);
+  runFrame();
+  expect(spans[1].classList.contains("is-singing")).toBe(false);
+  expect(el("lyrics-list").children[1].classList.contains("is-active")).toBe(true);
+  playback("song-a", 1, 1500);
+  runFrame();
+  expect(spans[0].classList.contains("is-singing")).toBe(true);
+  expect(spans[1].classList.contains("is-sung")).toBe(false);
+  el<HTMLInputElement>("show-translations").checked = false;
+  el("show-translations").dispatchEvent(new Event("change"));
+  expect(document.body.classList.contains("hide-translations")).toBe(true);
+  expect(document.body.classList.contains("has-translations")).toBe(false);
+  lyrics(1, "Old plain text");
+  expect(el("lyrics-list").textContent).toBe("Old plain text");
+  expect(el("source-badge").textContent).not.toContain("Manual");
+});
+
+it("commits volume only on change, accepts keyboard changes and the 0/100 endpoints", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, false, { volumePercent: 50, canSetVolume: true });
+  const volume = el<HTMLInputElement>("volume");
+  expect(volume.disabled).toBe(false);
+  expect(el("volume-value").textContent).toBe("50%");
+  expect(volume.min).toBe("0");
+  expect(volume.max).toBe("100");
+  volume.focus();
+  volume.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+  // jsdom does not implement native range key handling; simulate its resulting
+  // value/input/change sequence, which is the same sequence in a browser.
+  volume.value = "51";
+  volume.dispatchEvent(new Event("input"));
+  expect(el("volume-value").textContent).toBe("51%");
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "set_volume")).toBe(false);
+  volume.dispatchEvent(new Event("change"));
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("set_volume", { volumePercent: 51 });
+  for (const value of [0, 100]) {
+    volume.value = String(value);
+    volume.dispatchEvent(new Event("input"));
+    volume.dispatchEvent(new Event("change"));
+    await flush();
+    expect(bridge.invoke).toHaveBeenCalledWith("set_volume", { volumePercent: value });
+    expect(el("volume-value").textContent).toBe(`${value}%`);
+  }
+});
+
+it("keeps a volume drag stable across polls and restores the latest confirmed volume on failure", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, false, { volumePercent: 30, canSetVolume: true });
+  const volume = el<HTMLInputElement>("volume");
+  volume.dispatchEvent(new Event("pointerdown"));
+  volume.value = "70";
+  volume.dispatchEvent(new Event("input"));
+  playback("song-a", 1, 0, false, { volumePercent: 35, canSetVolume: true });
+  expect(volume.value).toBe("70");
+  expect(el("volume-value").textContent).toBe("70%");
+  let reject!: (reason: string) => void;
+  bridge.invoke.mockImplementationOnce(() => new Promise((_, rejectPromise) => { reject = rejectPromise; }));
+  volume.dispatchEvent(new Event("change"));
+  expect(volume.disabled).toBe(true);
+  playback("song-a", 1, 0, false, { volumePercent: 40, canSetVolume: true });
+  expect(volume.value).toBe("70");
+  volume.dispatchEvent(new Event("change"));
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "set_volume")).toHaveLength(1);
+  reject("Volume refused");
+  await flush();
+  expect(volume.disabled).toBe(false);
+  expect(volume.value).toBe("40");
+  expect(el("volume-value").textContent).toBe("40%");
+  expect(el("notice").textContent).toBe("Volume refused");
+});
+
+it("disables unsupported volume and discards pending replies when the player changes", async () => {
+  await import("./main");
+  await flush();
+  const volume = el<HTMLInputElement>("volume");
+  playback(); // Older playback events have no volume capability.
+  expect(volume.disabled).toBe(true);
+  volume.dispatchEvent(new Event("change"));
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "set_volume")).toBe(false);
+  playback("song-a", 1, 0, false, { volumePercent: 25, canSetVolume: true });
+  let reject!: (reason: string) => void;
+  bridge.invoke.mockImplementationOnce(() => new Promise((_, rejectPromise) => { reject = rejectPromise; }));
+  volume.value = "80";
+  volume.dispatchEvent(new Event("change"));
+  el("settings-open").click();
+  await flush();
+  el<HTMLSelectElement>("settings-player").value = "ytmusic";
+  el("settings-form").dispatchEvent(new Event("submit", { cancelable: true }));
+  await flush();
+  playback("ytmusic:song-b", 2, 0, false, { volumePercent: null, canSetVolume: false });
+  reject("Old Spotify error");
+  await flush();
+  expect(volume.disabled).toBe(true);
+  expect(el("volume-value").textContent).toBe("—");
+  expect(el("volume-control").title).toContain("YouTube Music");
+  expect(el("notice").textContent).not.toContain("Old Spotify error");
+});
+
+it("does not apply an old volume reply to a different device with the same name", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, false, { volumePercent: 25, canSetVolume: true, deviceName: "Speaker", deviceId: "first" });
+  const volume = el<HTMLInputElement>("volume");
+  let finish!: () => void;
+  bridge.invoke.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+  volume.value = "80";
+  volume.dispatchEvent(new Event("change"));
+  playback("song-a", 1, 0, false, { volumePercent: 10, canSetVolume: true, deviceName: "Speaker", deviceId: "second" });
+  finish();
+  await flush();
+  expect(volume.disabled).toBe(false);
+  expect(volume.value).toBe("10");
+  expect(el("volume-value").textContent).toBe("10%");
 });
 
 it("opens settings instead of connecting on first run", async () => {
@@ -516,10 +779,23 @@ it("never lets compact be dragged below three lines of lyrics", async () => {
 
   // Three lines of (30px * 1.32 line-height + 18px padding), plus the header.
   const lines = Math.ceil(3 * (30 * 1.32 + 18));
-  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: lines + 80 });
+  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: lines + 108 });
   // Nothing remembers the window size between launches, so a stored compact
   // mode has to shrink the window itself or it reopens at full size.
-  expect(lastSize(appWindow.setSize)).toEqual({ width: 460, height: lines + 80 });
+  expect(lastSize(appWindow.setSize)).toEqual({ width: 460, height: lines + 108 });
+  playback("song-a", 1, 1500);
+  bridge.listeners.get("lyrics")!({ payload: {
+    generation: 1, trackId: "song-a", source: "NetEase", synced: true,
+    text: "Original", partial: false, requested: "",
+    cues: [{ time_ms: 1000, text: "Original", translation: "譯文" }],
+  } });
+  await flush();
+  // Reserve the translated line-height AND its 4px top margin for each row.
+  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: Math.ceil(3 * (30 * (1.32 + 0.65 * 1.4) + 18 + 4)) + 108 });
+  el<HTMLInputElement>("show-translations").checked = false;
+  el("show-translations").dispatchEvent(new Event("change"));
+  await flush();
+  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: lines + 108 });
 });
 
 it("gives the roomy size back when compact is switched off", async () => {

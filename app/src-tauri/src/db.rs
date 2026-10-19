@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::lrc::Cue;
-use crate::providers::LyricsResult;
+use crate::providers::{LyricCandidate, LyricsResult};
 use crate::settings;
 
 pub const DATABASE_FILE: &str = "lyrics.db";
@@ -36,6 +36,13 @@ pub struct Db {
 pub struct TrackInfo<'a> {
     pub name: &'a str,
     pub artist: &'a str,
+}
+
+/// A deliberate match is kept independently of the expiring download cache.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct ManualMatch {
+    pub candidate: LyricCandidate,
+    pub lyrics: LyricsResult,
 }
 
 impl Db {
@@ -79,6 +86,10 @@ impl Db {
                  CREATE TABLE IF NOT EXISTS track_source (
                      track_key TEXT PRIMARY KEY,
                      source    TEXT NOT NULL
+                 );
+                 CREATE TABLE IF NOT EXISTS lyric_match (
+                     track_key TEXT PRIMARY KEY,
+                     selection TEXT NOT NULL
                  );",
             )
             .map_err(|error| error.to_string())?;
@@ -222,6 +233,68 @@ impl Db {
         track_key: &str,
         source: Option<&str>,
     ) -> Result<(), String> {
+        let mut connection = self
+            .connection
+            .as_ref()
+            .ok_or_else(|| {
+                self.warning
+                    .clone()
+                    .unwrap_or_else(|| "Lyrics storage is unavailable".into())
+            })?
+            .lock()
+            .map_err(|error| error.to_string())?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        match source {
+            Some(source) => transaction.execute(
+                "INSERT INTO track_source (track_key, source) VALUES (?1, ?2)
+                         ON CONFLICT(track_key) DO UPDATE SET source = excluded.source",
+                params![track_key, source],
+            ),
+            None => transaction.execute(
+                "DELETE FROM track_source WHERE track_key = ?1",
+                params![track_key],
+            ),
+        }
+        .map_err(|error| error.to_string())?;
+        // Choosing a source is an explicit replacement of a manual candidate.
+        transaction
+            .execute(
+                "DELETE FROM lyric_match WHERE track_key = ?1",
+                params![track_key],
+            )
+            .map_err(|error| error.to_string())?;
+        transaction.commit().map_err(|error| error.to_string())
+    }
+
+    pub fn manual_match(&self, track_key: &str) -> Option<ManualMatch> {
+        let json: String = self.with(|connection| {
+            connection
+                .query_row(
+                    "SELECT selection FROM lyric_match WHERE track_key = ?1",
+                    params![track_key],
+                    |row| row.get(0),
+                )
+                .optional()
+        })??;
+        serde_json::from_str(&json).ok()
+    }
+
+    /// Unlike opportunistic caching, a user choice must report a failed save.
+    pub fn save_manual_match(
+        &self,
+        track_key: &str,
+        selection: &ManualMatch,
+    ) -> Result<(), String> {
+        if track_key.is_empty() || selection.lyrics.is_empty() {
+            return Err("Choose a result with lyrics before saving.".into());
+        }
+        crate::providers::validate_candidate(&selection.candidate)
+            .map_err(|error| error.to_string())?;
+        let mut stored = selection.clone();
+        stored.lyrics.errors.clear();
+        let json = serde_json::to_string(&stored).map_err(|error| error.to_string())?;
         let connection = self
             .connection
             .as_ref()
@@ -232,26 +305,21 @@ impl Db {
             })?
             .lock()
             .map_err(|error| error.to_string())?;
-        match source {
-            Some(source) => connection.execute(
-                "INSERT INTO track_source (track_key, source) VALUES (?1, ?2)
-                         ON CONFLICT(track_key) DO UPDATE SET source = excluded.source",
-                params![track_key, source],
-            ),
-            None => connection.execute(
-                "DELETE FROM track_source WHERE track_key = ?1",
-                params![track_key],
-            ),
-        }
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+        connection
+            .execute(
+                "INSERT INTO lyric_match (track_key, selection) VALUES (?1, ?2)
+             ON CONFLICT(track_key) DO UPDATE SET selection = excluded.selection",
+                params![track_key, json],
+            )
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
     /// How many songs have lyrics on disk — shown in the settings panel so the
     /// cache is visible rather than a mystery file.
     pub fn stored_track_count(&self) -> i64 {
         self.with(|connection| {
-            connection.query_row("SELECT COUNT(DISTINCT track_key) FROM lyrics", [], |row| {
+            connection.query_row("SELECT COUNT(*) FROM (SELECT track_key FROM lyrics UNION SELECT track_key FROM lyric_match)", [], |row| {
                 row.get(0)
             })
         })
@@ -285,10 +353,12 @@ mod tests {
                 Cue {
                     time_ms: 1000,
                     text: "LINE_A".into(),
+                    ..Default::default()
                 },
                 Cue {
                     time_ms: 2000,
                     text: "LINE_B".into(),
+                    ..Default::default()
                 },
             ],
             errors: vec!["NetEase: Http".into()],
@@ -347,6 +417,86 @@ mod tests {
             // Errors belong to one lookup attempt, not to the cached lyrics.
             assert!(stored.errors.is_empty());
             assert_eq!(db.stored_track_count(), 1);
+        });
+    }
+
+    fn selection() -> ManualMatch {
+        let mut lyrics = sample();
+        lyrics.cues[0].translation = Some("翻譯第一行".into());
+        lyrics.cues[0].words = vec![crate::lrc::WordCue {
+            start_ms: 1000,
+            end_ms: 1600,
+            text: "LINE_A".into(),
+        }];
+        ManualMatch {
+            candidate: LyricCandidate {
+                source: "lrclib".into(),
+                id: "42".into(),
+                title: "Title".into(),
+                artists: vec!["Artist".into()],
+                album: "Album".into(),
+                duration_ms: 180_000,
+            },
+            lyrics,
+        }
+    }
+
+    #[test]
+    fn manual_match_survives_restart_and_cache_clear_with_rich_lyrics() {
+        with_temp_data_dir(|_| {
+            let chosen = selection();
+            {
+                let db = Db::open();
+                db.save_manual_match("spotify:track-1", &chosen).unwrap();
+                db.save_lyrics("spotify:track-1", AUTO, TRACK, &chosen.lyrics);
+            }
+            let db = Db::open();
+            assert_eq!(
+                db.lyrics("spotify:track-1", AUTO).unwrap().cues,
+                chosen.lyrics.cues
+            );
+            db.clear_lyrics();
+            db.forget("spotify:track-1");
+            let restored = db.manual_match("spotify:track-1").unwrap();
+            assert_eq!(restored.candidate, chosen.candidate);
+            assert_eq!(restored.lyrics.cues, chosen.lyrics.cues);
+            assert!(restored.lyrics.errors.is_empty());
+            assert!(db.manual_match("ytmusic:track-1").is_none());
+            assert_eq!(db.stored_track_count(), 1);
+            db.set_preferred_source("spotify:track-1", None).unwrap();
+            assert!(db.manual_match("spotify:track-1").is_none());
+            assert_eq!(db.preferred_source("spotify:track-1"), None);
+        });
+    }
+
+    #[test]
+    fn changing_source_replaces_only_that_tracks_manual_choice() {
+        with_temp_data_dir(|_| {
+            let db = Db::open();
+            db.save_manual_match("one", &selection()).unwrap();
+            db.save_manual_match("two", &selection()).unwrap();
+            db.set_preferred_source("one", Some("netease")).unwrap();
+            assert!(db.manual_match("one").is_none());
+            assert!(db.manual_match("two").is_some());
+            assert_eq!(db.preferred_source("one").as_deref(), Some("netease"));
+        });
+    }
+
+    #[test]
+    fn a_failed_manual_save_does_not_replace_an_existing_choice() {
+        with_temp_data_dir(|_| {
+            let db = Db::open();
+            db.save_manual_match("one", &selection()).unwrap();
+            let mut empty = selection();
+            empty.lyrics = LyricsResult::empty("LRCLIB");
+            assert!(db.save_manual_match("one", &empty).is_err());
+            assert_eq!(db.manual_match("one").unwrap().candidate.id, "42");
+            // Missing storage must not claim the choice was saved.
+            let unavailable = Db {
+                connection: None,
+                warning: Some("unavailable".into()),
+            };
+            assert!(unavailable.save_manual_match("one", &selection()).is_err());
         });
     }
 

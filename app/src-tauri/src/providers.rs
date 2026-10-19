@@ -9,20 +9,22 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::lrc::{parse_lrc, strip_tags, unescape, Cue};
+use crate::lrc::{merge_translation, parse_lrc, parse_qrc, parse_yrc, strip_tags, unescape, Cue};
 use crate::matching::{matches, normalize};
 
 const USER_AGENT: &str = "Hakuro/4.0";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(6);
 const MAX_RESPONSE_BYTES: usize = 2_000_000;
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LyricsResult {
     pub text: String,
     pub source: String,
     /// Provider's returned title, or the successful query title when omitted.
+    #[serde(default)]
     pub matched_title: String,
     pub cues: Vec<Cue>,
+    #[serde(default)]
     pub errors: Vec<String>,
 }
 
@@ -83,6 +85,38 @@ pub struct TrackQuery {
     pub duration_ms: i64,
     /// The strongest matching key Musixmatch accepts; the other providers ignore it.
     pub spotify_id: Option<String>,
+}
+
+/// An explicit manual choice. Only a native provider id is accepted, never a URL.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct LyricCandidate {
+    pub source: String,
+    pub id: String,
+    pub title: String,
+    pub artists: Vec<String>,
+    pub album: String,
+    pub duration_ms: i64,
+}
+
+pub fn validate_candidate(candidate: &LyricCandidate) -> Result<(), ProviderError> {
+    let valid_id = !candidate.id.is_empty()
+        && candidate.id.len() <= 32
+        && match candidate.source.as_str() {
+            "lrclib" | "netease" => candidate.id.bytes().all(|c| c.is_ascii_digit()),
+            "qqmusic" => candidate.id.bytes().all(|c| c.is_ascii_alphanumeric()),
+            _ => false,
+        };
+    if !valid_id
+        || candidate.title.trim().is_empty()
+        || candidate.title.len() > 1024
+        || candidate.album.len() > 1024
+        || candidate.artists.len() > 32
+        || candidate.artists.iter().any(|artist| artist.len() > 512)
+        || !(0..=86_400_000).contains(&candidate.duration_ms)
+    {
+        return Err(ProviderError::BadPayload);
+    }
+    Ok(())
 }
 
 impl TrackQuery {
@@ -187,11 +221,20 @@ async fn request_json(
         builder = builder.header("Referer", referer);
     }
 
-    let response = builder.send().await?;
+    let mut response = builder.send().await?;
     let status = response.status();
-    let body = response.bytes().await?;
-    if body.len() > MAX_RESPONSE_BYTES {
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_RESPONSE_BYTES as u64)
+    {
         return Err(ProviderError::TooLarge);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err(ProviderError::TooLarge);
+        }
+        body.extend_from_slice(&chunk);
     }
     if !status.is_success() {
         return Err(ProviderError::Http);
@@ -218,6 +261,419 @@ fn names(value: &Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+// -------------------------------------------------------- Candidate search
+
+const MAX_CANDIDATES: usize = 20;
+const MAX_AUTOMATIC_FETCHES: usize = 4;
+
+fn candidate_from_json(source: &str, value: &Value) -> Option<LyricCandidate> {
+    let (id, title, artists, album, duration_ms) = match source {
+        "lrclib" => (
+            value.get("id")?.as_i64()?.to_string(),
+            str_field(value, "trackName"),
+            vec![str_field(value, "artistName")],
+            str_field(value, "albumName"),
+            (value.get("duration").and_then(Value::as_f64).unwrap_or(0.0) * 1000.0) as i64,
+        ),
+        "netease" => (
+            value.get("id")?.as_i64()?.to_string(),
+            str_field(value, "name"),
+            names(value, "artists"),
+            str_field(value.get("album").unwrap_or(&Value::Null), "name"),
+            value.get("duration").and_then(Value::as_i64).unwrap_or(0),
+        ),
+        "qqmusic" => (
+            str_field(value, "songmid"),
+            str_field(value, "songname"),
+            names(value, "singer"),
+            str_field(value, "albumname"),
+            (value.get("interval").and_then(Value::as_f64).unwrap_or(0.0) * 1000.0) as i64,
+        ),
+        _ => return None,
+    };
+    let candidate = LyricCandidate {
+        source: source.into(),
+        id,
+        title,
+        artists,
+        album,
+        duration_ms,
+    };
+    validate_candidate(&candidate).ok()?;
+    Some(candidate)
+}
+
+/// One bounded page. The caller picks a source and can deliberately use an alias.
+pub async fn search_candidates(
+    client: &reqwest::Client,
+    query: &str,
+    source: &str,
+) -> Result<Vec<LyricCandidate>, ProviderError> {
+    let query = query.trim();
+    if query.is_empty() || query.len() > 512 {
+        return Err(ProviderError::BadPayload);
+    }
+    let data = match source {
+        "lrclib" => {
+            request_json(
+                client,
+                "https://lrclib.net/api/search",
+                &[("q", query.to_string())],
+                None,
+                false,
+            )
+            .await?
+        }
+        "netease" => {
+            request_json(
+                client,
+                "https://music.163.com/api/search/get/",
+                &[
+                    ("s", query.to_string()),
+                    ("limit", MAX_CANDIDATES.to_string()),
+                    ("type", "1".into()),
+                    ("offset", "0".into()),
+                ],
+                Some("https://music.163.com/"),
+                true,
+            )
+            .await?
+        }
+        "qqmusic" => {
+            request_json(
+                client,
+                "https://c.y.qq.com/soso/fcgi-bin/client_search_cp",
+                &[
+                    ("w", query.to_string()),
+                    ("n", MAX_CANDIDATES.to_string()),
+                    ("p", "1".into()),
+                    ("format", "json".into()),
+                    ("cr", "1".into()),
+                ],
+                Some("https://y.qq.com/"),
+                false,
+            )
+            .await?
+        }
+        _ => return Err(ProviderError::BadPayload),
+    };
+    candidates_from_response(source, &data)
+}
+
+fn candidates_from_response(
+    source: &str,
+    data: &Value,
+) -> Result<Vec<LyricCandidate>, ProviderError> {
+    let list = match source {
+        "lrclib" => data.as_array(),
+        "netease" if data.get("code").and_then(Value::as_i64) == Some(200) => {
+            data.pointer("/result/songs").and_then(Value::as_array)
+        }
+        "qqmusic" if data.get("code").and_then(Value::as_i64) == Some(0) => {
+            data.pointer("/data/song/list").and_then(Value::as_array)
+        }
+        _ => return Err(ProviderError::Rejected),
+    };
+    let mut candidates = Vec::new();
+    for value in list.into_iter().flatten().take(MAX_CANDIDATES) {
+        if let Some(candidate) = candidate_from_json(source, value) {
+            if !candidates
+                .iter()
+                .any(|item: &LyricCandidate| item.id == candidate.id)
+            {
+                candidates.push(candidate);
+            }
+        }
+    }
+    Ok(candidates)
+}
+
+fn lrclib_result(data: &Value) -> LyricsResult {
+    let synced = str_field(data, "syncedLyrics");
+    let mut result = LyricsResult::from_raw(&synced, "LRCLIB");
+    if result.cues.is_empty() {
+        let plain = str_field(data, "plainLyrics");
+        if !plain.is_empty() {
+            result = LyricsResult::from_raw(&plain, "LRCLIB");
+        }
+    }
+    result.with_title(&str_field(data, "trackName"))
+}
+
+fn netease_result(data: &Value) -> LyricsResult {
+    let mut result = LyricsResult::from_raw(
+        data.pointer("/lrc/lyric")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        "NetEase",
+    );
+    let mut words = parse_yrc(
+        data.pointer("/yrc/lyric")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+    );
+    // Translation timelines can differ between old LRC and YRC. Exact timestamp
+    // alignment in merge_translation prevents a missing line shifting all others.
+    for field in ["tlyric", "ytlrc"] {
+        if let Some(raw) = data
+            .get(field)
+            .and_then(|value| value.get("lyric"))
+            .and_then(Value::as_str)
+        {
+            merge_translation(&mut result.cues, raw);
+            merge_translation(&mut words, raw);
+        }
+    }
+    add_word_cues(&mut result, words);
+    result
+}
+
+/// Keep line-only text when a rich payload is partial or contains malformed rows.
+fn add_word_cues(result: &mut LyricsResult, words: Vec<Cue>) {
+    if words.is_empty() {
+        return;
+    }
+    if result.cues.is_empty() {
+        result.cues = words;
+    } else {
+        let mut used = vec![false; words.len()];
+        let mut assigned = vec![false; result.cues.len()];
+        // Reserve every exact timestamp before a nearby repeated sentence can
+        // consume its rich row. The second pass still permits provider offsets.
+        for tolerance in [0, 2000] {
+            for (line_index, cue) in result.cues.iter_mut().enumerate() {
+                if assigned[line_index] {
+                    continue;
+                }
+                let title = normalize(&cue.text);
+                let matched = words
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, rich)| {
+                        !used[*index]
+                            && (rich.time_ms - cue.time_ms).abs() <= tolerance
+                            && !title.is_empty()
+                            && normalize(&rich.text) == title
+                    })
+                    .min_by_key(|(_, rich)| (rich.time_ms - cue.time_ms).abs());
+                if let Some((index, rich)) = matched {
+                    used[index] = true;
+                    assigned[line_index] = true;
+                    cue.time_ms = rich.time_ms;
+                    cue.words.clone_from(&rich.words);
+                    if rich.translation.is_some() {
+                        cue.translation.clone_from(&rich.translation);
+                    }
+                }
+            }
+        }
+        result.cues.sort_by_key(|cue| cue.time_ms);
+    }
+    result.text = result
+        .cues
+        .iter()
+        .map(|cue| cue.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+}
+
+fn decode_qq_field(data: &Value, field: &str) -> String {
+    let raw = str_field(data, field);
+    if raw.starts_with('[') || raw.starts_with('<') {
+        return raw;
+    }
+    base64_decode(&raw)
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_default()
+}
+
+fn qqmusic_result(data: &Value) -> LyricsResult {
+    let raw = decode_qq_field(data, "lyric");
+    let mut result = LyricsResult::from_raw(&raw, "QQ Music");
+    // The public endpoint generally returns LRC. Preserve decoded QRC if supplied;
+    // encrypted proprietary QRC requires a separate decoder and is not text.
+    let mut words = parse_qrc(&raw);
+    if words.is_empty() {
+        words = parse_qrc(&decode_qq_field(data, "qrc"));
+    }
+    let translation = decode_qq_field(data, "trans");
+    merge_translation(&mut result.cues, &translation);
+    merge_translation(&mut words, &translation);
+    add_word_cues(&mut result, words);
+    result
+}
+
+/// Fetch only an explicit, validated provider id; manual choices need not match
+/// the playing track's metadata (that is the reason the manual picker exists).
+pub async fn fetch_candidate(
+    client: &reqwest::Client,
+    candidate: &LyricCandidate,
+) -> ProviderResult {
+    validate_candidate(candidate)?;
+    let result = match candidate.source.as_str() {
+        "lrclib" => {
+            let data = request_json(
+                client,
+                &format!("https://lrclib.net/api/get/{}", candidate.id),
+                &[],
+                None,
+                false,
+            )
+            .await?;
+            lrclib_result(&data)
+        }
+        "netease" => {
+            // The newer endpoint carries yrc/ytlrc. One legacy retry keeps existing
+            // line-only coverage when a region or provider rejects the new route.
+            let newer = request_json(
+                client,
+                "https://music.163.com/api/song/lyric/v1",
+                &[
+                    ("id", candidate.id.clone()),
+                    ("cp", "false".into()),
+                    ("tv", "0".into()),
+                    ("lv", "0".into()),
+                    ("rv", "0".into()),
+                    ("kv", "0".into()),
+                    ("yv", "0".into()),
+                    ("ytv", "0".into()),
+                    ("yrv", "0".into()),
+                ],
+                Some("https://music.163.com/"),
+                true,
+            )
+            .await;
+            let newer = newer.and_then(|data| {
+                if data.get("code").and_then(Value::as_i64) != Some(200) {
+                    return Err(ProviderError::Rejected);
+                }
+                Ok(netease_result(&data))
+            });
+            match newer {
+                Ok(result) if !result.is_empty() => result,
+                _ => {
+                    let data = request_json(
+                        client,
+                        "https://music.163.com/api/song/lyric",
+                        &[
+                            ("id", candidate.id.clone()),
+                            ("lv", "-1".into()),
+                            ("tv", "-1".into()),
+                        ],
+                        Some("https://music.163.com/"),
+                        false,
+                    )
+                    .await?;
+                    if data.get("code").and_then(Value::as_i64) != Some(200) {
+                        return Err(ProviderError::Rejected);
+                    }
+                    netease_result(&data)
+                }
+            }
+        }
+        "qqmusic" => {
+            let data = request_json(
+                client,
+                "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg",
+                &[
+                    ("songmid", candidate.id.clone()),
+                    ("g_tk", "5381".into()),
+                    ("format", "json".into()),
+                    ("platform", "yqq".into()),
+                ],
+                Some("https://y.qq.com/portal/player.html"),
+                false,
+            )
+            .await?;
+            if data.get("code").and_then(Value::as_i64) != Some(0) {
+                return Err(ProviderError::Rejected);
+            }
+            qqmusic_result(&data)
+        }
+        _ => return Err(ProviderError::BadPayload),
+    };
+    Ok(result.with_title(&candidate.title))
+}
+
+fn automatic_candidates(
+    query: &TrackQuery,
+    mut candidates: Vec<LyricCandidate>,
+) -> Vec<LyricCandidate> {
+    candidates.retain(|candidate| {
+        matches(
+            &query.track,
+            &query.artists,
+            query.duration_ms,
+            &candidate.title,
+            &candidate.artists,
+            Some(candidate.duration_ms),
+        )
+    });
+    let album = normalize(&query.album);
+    candidates.sort_by_key(|candidate| normalize(&candidate.album) != album);
+    candidates.truncate(MAX_AUTOMATIC_FETCHES);
+    candidates
+}
+
+async fn fetch_first_available<F, Fut>(
+    candidates: Vec<LyricCandidate>,
+    deadline: tokio::time::Instant,
+    mut fetch: F,
+) -> ProviderResult
+where
+    F: FnMut(LyricCandidate) -> Fut,
+    Fut: std::future::Future<Output = ProviderResult>,
+{
+    let mut fallback = None;
+    let mut last_error = None;
+    for candidate in candidates {
+        if tokio::time::Instant::now() >= deadline {
+            last_error = Some(ProviderError::Timeout);
+            break;
+        }
+        let outcome = match tokio::time::timeout_at(deadline, fetch(candidate)).await {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                last_error = Some(ProviderError::Timeout);
+                break;
+            }
+        };
+        match outcome {
+            Ok(result) if !result.cues.is_empty() => return Ok(result),
+            Ok(result) if !result.is_empty() && fallback.is_none() => fallback = Some(result),
+            Ok(_) => {}
+            Err(error) => last_error = Some(error),
+        }
+    }
+    if let Some(result) = fallback {
+        return Ok(result);
+    }
+    if let Some(error) = last_error {
+        return Err(error);
+    }
+    Ok(LyricsResult::default())
+}
+
+async fn automatic_search(
+    client: &reqwest::Client,
+    query: &TrackQuery,
+    source: &str,
+) -> ProviderResult {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+    let candidates = tokio::time::timeout_at(
+        deadline,
+        search_candidates(client, &query.search_phrase(), source),
+    )
+    .await
+    .map_err(|_| ProviderError::Timeout)??;
+    fetch_first_available(
+        automatic_candidates(query, candidates),
+        deadline,
+        |candidate| async move { fetch_candidate(client, &candidate).await },
+    )
+    .await
+}
+
 // ---------------------------------------------------------------- LRCLIB
 
 pub async fn lrclib(client: &reqwest::Client, query: &TrackQuery) -> ProviderResult {
@@ -230,199 +686,45 @@ pub async fn lrclib(client: &reqwest::Client, query: &TrackQuery) -> ProviderRes
             ((query.duration_ms as f64 / 1000.0).round() as i64).to_string(),
         ),
     ];
-
-    let response = client
-        .get("https://lrclib.net/api/get")
-        .query(&params)
-        .header("Accept", "application/json")
-        .send()
-        .await?;
-    // 404 simply means LRCLIB has no entry for this recording.
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(LyricsResult::empty("LRCLIB"));
-    }
-    if !response.status().is_success() {
-        return Err(ProviderError::Http);
-    }
-    let data: Value = response.json().await?;
-
-    // The exact endpoint already matched album and duration; still verify identity.
-    let candidate_ms = data
-        .get("duration")
-        .and_then(Value::as_f64)
-        .map(|seconds| (seconds * 1000.0) as i64);
-    if !matches(
-        &query.track,
-        &query.artists,
-        query.duration_ms,
-        &str_field(&data, "trackName"),
-        &[str_field(&data, "artistName")],
-        candidate_ms,
-    ) {
-        return Ok(LyricsResult::empty("LRCLIB"));
-    }
-
-    let synced = str_field(&data, "syncedLyrics");
-    let result = LyricsResult::from_raw(&synced, "LRCLIB");
-    if !result.cues.is_empty() {
-        return Ok(result.with_title(&str_field(&data, "trackName")));
-    }
-    let plain = str_field(&data, "plainLyrics");
-    Ok(
-        LyricsResult::from_raw(if plain.is_empty() { &synced } else { &plain }, "LRCLIB")
-            .with_title(&str_field(&data, "trackName")),
-    )
+    let exact = request_json(client, "https://lrclib.net/api/get", &params, None, false).await;
+    lrclib_with_fallback(query, exact, || automatic_search(client, query, "lrclib")).await
 }
 
-// --------------------------------------------------------------- NetEase
+async fn lrclib_with_fallback<F, Fut>(
+    query: &TrackQuery,
+    exact: Result<Value, ProviderError>,
+    search: F,
+) -> ProviderResult
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = ProviderResult>,
+{
+    if let Ok(data) = exact {
+        if candidate_from_json("lrclib", &data).is_some_and(|candidate| {
+            matches(
+                &query.track,
+                &query.artists,
+                query.duration_ms,
+                &candidate.title,
+                &candidate.artists,
+                Some(candidate.duration_ms),
+            )
+        }) {
+            let result = lrclib_result(&data);
+            if !result.is_empty() {
+                return Ok(result);
+            }
+        }
+    }
+    search().await
+}
 
 pub async fn netease(client: &reqwest::Client, query: &TrackQuery) -> ProviderResult {
-    let search = request_json(
-        client,
-        "https://music.163.com/api/search/get/",
-        &[
-            ("s", query.search_phrase()),
-            ("limit", "8".to_string()),
-            ("type", "1".to_string()),
-            ("offset", "0".to_string()),
-        ],
-        Some("https://music.163.com/"),
-        true,
-    )
-    .await?;
-
-    if search.get("code").and_then(Value::as_i64) != Some(200) {
-        return Err(ProviderError::Rejected);
-    }
-
-    let mut songs: Vec<&Value> = search
-        .get("result")
-        .and_then(|result| result.get("songs"))
-        .and_then(Value::as_array)
-        .map(|list| list.iter().collect())
-        .unwrap_or_default();
-    // Same-album candidates first; a compilation re-issue often has a worse timeline.
-    let wanted_album = normalize(&query.album);
-    songs.sort_by_key(|song| {
-        normalize(&str_field(
-            song.get("album").unwrap_or(&Value::Null),
-            "name",
-        )) != wanted_album
-    });
-
-    for song in songs {
-        if !matches(
-            &query.track,
-            &query.artists,
-            query.duration_ms,
-            &str_field(song, "name"),
-            &names(song, "artists"),
-            song.get("duration").and_then(Value::as_i64),
-        ) {
-            continue;
-        }
-        let Some(id) = song.get("id").and_then(Value::as_i64) else {
-            continue;
-        };
-        let lyric = request_json(
-            client,
-            "https://music.163.com/api/song/lyric",
-            &[
-                ("id", id.to_string()),
-                ("lv", "-1".to_string()),
-                ("tv", "-1".to_string()),
-            ],
-            Some("https://music.163.com/"),
-            false,
-        )
-        .await?;
-        if lyric.get("code").and_then(Value::as_i64) != Some(200) {
-            return Err(ProviderError::Rejected);
-        }
-        let raw = str_field(lyric.get("lrc").unwrap_or(&Value::Null), "lyric");
-        return Ok(LyricsResult::from_raw(&raw, "NetEase").with_title(&str_field(song, "name")));
-    }
-
-    Ok(LyricsResult::empty("NetEase"))
+    automatic_search(client, query, "netease").await
 }
 
-// -------------------------------------------------------------- QQ Music
-
 pub async fn qqmusic(client: &reqwest::Client, query: &TrackQuery) -> ProviderResult {
-    // new_json=1 currently empties this endpoint; the legacy schema is the verified one.
-    let search = request_json(
-        client,
-        "https://c.y.qq.com/soso/fcgi-bin/client_search_cp",
-        &[
-            ("w", query.search_phrase()),
-            ("n", "8".to_string()),
-            ("p", "1".to_string()),
-            ("format", "json".to_string()),
-            ("cr", "1".to_string()),
-        ],
-        Some("https://y.qq.com/"),
-        false,
-    )
-    .await?;
-
-    if search.get("code").and_then(Value::as_i64) != Some(0) {
-        return Err(ProviderError::Rejected);
-    }
-
-    let mut songs: Vec<&Value> = search
-        .get("data")
-        .and_then(|data| data.get("song"))
-        .and_then(|song| song.get("list"))
-        .and_then(Value::as_array)
-        .map(|list| list.iter().collect())
-        .unwrap_or_default();
-    let wanted_album = normalize(&query.album);
-    songs.sort_by_key(|song| normalize(&str_field(song, "albumname")) != wanted_album);
-
-    for song in songs {
-        let candidate_ms = song
-            .get("interval")
-            .and_then(Value::as_f64)
-            .map(|seconds| (seconds * 1000.0) as i64);
-        if !matches(
-            &query.track,
-            &query.artists,
-            query.duration_ms,
-            &str_field(song, "songname"),
-            &names(song, "singer"),
-            candidate_ms,
-        ) {
-            continue;
-        }
-        let songmid = str_field(song, "songmid");
-        if songmid.is_empty() {
-            continue;
-        }
-        let lyric = request_json(
-            client,
-            "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg",
-            &[
-                ("songmid", songmid),
-                ("g_tk", "5381".to_string()),
-                ("format", "json".to_string()),
-                ("platform", "yqq".to_string()),
-            ],
-            Some("https://y.qq.com/portal/player.html"),
-            false,
-        )
-        .await?;
-        if lyric.get("code").and_then(Value::as_i64) != Some(0) {
-            return Err(ProviderError::Rejected);
-        }
-        let encoded = str_field(&lyric, "lyric");
-        let decoded = base64_decode(&encoded).ok_or(ProviderError::BadPayload)?;
-        let raw = String::from_utf8(decoded).map_err(|_| ProviderError::BadPayload)?;
-        return Ok(
-            LyricsResult::from_raw(&raw, "QQ Music").with_title(&str_field(song, "songname"))
-        );
-    }
-
-    Ok(LyricsResult::empty("QQ Music"))
+    automatic_search(client, query, "qqmusic").await
 }
 
 fn base64_decode(value: &str) -> Option<Vec<u8>> {
@@ -453,10 +755,9 @@ pub async fn fetch_one(
 
 /// Ordered lookup across the sources the settings enable.
 ///
-/// The first synchronized result wins. Plain text from an earlier provider is
-/// kept only as a fallback, so a source with words but no timeline never stops
-/// a later source from supplying the timeline. A provider that errors is noted
-/// and skipped: none of them is allowed to break the chain.
+/// The first word-timed result wins. After finding line timing, inspect at most
+/// two more enabled sources for words, then keep that original line result.
+/// Plain text remains a last resort. Errors never break the source chain.
 ///
 /// The order is the reader's, from the settings panel; `settings::PROVIDERS`
 /// documents the default and why it is what it is.
@@ -467,21 +768,26 @@ pub async fn fetch_lyrics(
     order: &[String],
 ) -> LyricsResult {
     let mut chain = Chain::default();
-
-    for id in order {
-        let label = crate::settings::provider_label(id).unwrap_or(id.as_str());
-        let outcome = fetch_one(client, musixmatch_session, id, query).await;
-        if let Some(result) = chain.consider(label, outcome) {
-            return result;
-        }
-    }
-
-    if let Some(alternate) = query.alternate_query() {
+    let mut word_deadline = None;
+    let alternate = query.alternate_query();
+    'queries: for query in std::iter::once(query).chain(alternate.as_ref()) {
         for id in order {
             let label = crate::settings::provider_label(id).unwrap_or(id.as_str());
-            let outcome = fetch_one(client, musixmatch_session, id, &alternate).await;
+            let lookup = fetch_one(client, musixmatch_session, id, query);
+            let outcome = if let Some(deadline) = word_deadline {
+                match tokio::time::timeout_at(deadline, lookup).await {
+                    Ok(outcome) => outcome,
+                    // Optional enrichment must not delay an already usable answer.
+                    Err(_) => break 'queries,
+                }
+            } else {
+                lookup.await
+            };
             if let Some(result) = chain.consider(label, outcome) {
                 return result;
+            }
+            if chain.remaining_after_lines.is_some() && word_deadline.is_none() {
+                word_deadline = Some(tokio::time::Instant::now() + Duration::from_secs(3));
             }
         }
     }
@@ -528,28 +834,47 @@ pub async fn fetch_pinned(
 struct Chain {
     fallback: Option<LyricsResult>,
     errors: Vec<String>,
+    /// ponytail: two extra lookups bound latency; no parallel task scheduler.
+    remaining_after_lines: Option<usize>,
 }
 
 impl Chain {
     /// Returns the result to stop on, or `None` to keep going.
     fn consider(&mut self, name: &str, outcome: ProviderResult) -> Option<LyricsResult> {
+        if let Some(remaining) = &mut self.remaining_after_lines {
+            *remaining = remaining.saturating_sub(1);
+        }
         match outcome {
             Ok(mut result) => {
-                if !result.cues.is_empty() {
+                if result.cues.iter().any(|cue| !cue.words.is_empty()) {
                     result.errors = std::mem::take(&mut self.errors);
                     return Some(result);
                 }
-                if !result.text.is_empty() && self.fallback.is_none() {
+                if !result.cues.is_empty() {
+                    self.remaining_after_lines.get_or_insert(2);
+                    if self
+                        .fallback
+                        .as_ref()
+                        .is_none_or(|saved| saved.cues.is_empty())
+                    {
+                        self.fallback = Some(result);
+                    }
+                } else if !result.text.is_empty() && self.fallback.is_none() {
                     self.fallback = Some(result);
                 }
-                None
             }
             Err(error) => {
                 // Only the kind of failure is recorded: responses and URLs can
                 // carry lyrics and metadata and must not reach the interface.
                 self.errors.push(format!("{name}: {error}"));
-                None
             }
+        }
+        if self.remaining_after_lines == Some(0) {
+            let mut result = self.fallback.take().unwrap_or_default();
+            result.errors = std::mem::take(&mut self.errors);
+            Some(result)
+        } else {
+            None
         }
     }
 
@@ -615,12 +940,13 @@ mod tests {
                 Ok(LyricsResult::from_raw("plain", "plain").with_title("Plain title"))
             )
             .is_none());
-        let result = chain
+        assert!(chain
             .consider(
                 "synced",
                 Ok(LyricsResult::from_raw("[00:01]line", "synced").with_title("Synced title")),
             )
-            .unwrap();
+            .is_none());
+        let result = chain.finish();
         assert_eq!(result.matched_title, "Synced title");
     }
 
@@ -651,7 +977,10 @@ mod tests {
         let automatic = fetch_lyrics(&client, &session, &query, &order).await;
         println!(
             "localized default: source={} title={} cues={} errors={:?}",
-            automatic.source, automatic.matched_title, automatic.cues.len(), automatic.errors
+            automatic.source,
+            automatic.matched_title,
+            automatic.cues.len(),
+            automatic.errors
         );
         assert!(!automatic.cues.is_empty());
         assert!(!automatic.matched_title.is_empty());
@@ -788,5 +1117,308 @@ mod tests {
         };
         assert_eq!(query.search_phrase(), "Title First");
         assert_eq!(query.primary_artist(), "First");
+    }
+
+    fn candidate(id: &str) -> LyricCandidate {
+        LyricCandidate {
+            source: "netease".into(),
+            id: id.into(),
+            title: "Title".into(),
+            artists: vec!["First".into()],
+            album: "Album".into(),
+            duration_ms: 180_000,
+        }
+    }
+
+    #[tokio::test]
+    async fn lrclib_falls_back_for_http_failure_empty_or_wrong_identity() {
+        let empty = serde_json::json!({
+            "id": 1, "trackName": "Title", "artistName": "First", "albumName": "Album",
+            "duration": 180, "syncedLyrics": "", "plainLyrics": "",
+        });
+        let wrong = serde_json::json!({
+            "id": 2, "trackName": "Title (Live)", "artistName": "First", "albumName": "Album",
+            "duration": 180, "syncedLyrics": "[00:01]wrong",
+        });
+        for exact in [Err(ProviderError::Http), Ok(empty.clone()), Ok(wrong)] {
+            let result = lrclib_with_fallback(&query(), exact, || async {
+                Ok(LyricsResult::from_raw("[00:01]search answer", "search"))
+            })
+            .await
+            .unwrap();
+            assert_eq!(result.source, "search");
+        }
+        let mut found = empty;
+        found["syncedLyrics"] = Value::String("[00:01]exact".into());
+        let result = lrclib_with_fallback(&query(), Ok(found), || async {
+            panic!("an exact answer must avoid the search request");
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.text, "exact");
+    }
+
+    #[tokio::test]
+    async fn automatic_candidates_continue_after_empty_and_plain_results() {
+        let candidates = vec![candidate("1"), candidate("2"), candidate("3")];
+        let mut tried = Vec::new();
+        let result = fetch_first_available(
+            candidates,
+            tokio::time::Instant::now() + Duration::from_secs(1),
+            |candidate| {
+                tried.push(candidate.id.clone());
+                async move {
+                    Ok(match candidate.id.as_str() {
+                        "1" => LyricsResult::empty("NetEase"),
+                        "2" => LyricsResult::from_raw("plain", "NetEase"),
+                        _ => LyricsResult::from_raw("[00:01]timed", "NetEase"),
+                    })
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(tried, ["1", "2", "3"]);
+        assert_eq!(result.text, "timed");
+        assert_eq!(result.cues.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn candidate_deadline_preserves_already_fetched_plain_lyrics() {
+        let started = tokio::time::Instant::now();
+        let deadline = started + Duration::from_millis(20);
+        let result = fetch_first_available(
+            vec![candidate("1"), candidate("2")],
+            deadline,
+            |candidate| async move {
+                if candidate.id == "1" {
+                    Ok(LyricsResult::from_raw("Already fetched", "NetEase"))
+                } else {
+                    std::future::pending::<ProviderResult>().await
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.text, "Already fetched");
+        assert!(started.elapsed() < Duration::from_secs(1));
+
+        let error = fetch_first_available(
+            vec![candidate("1")],
+            tokio::time::Instant::now() + Duration::from_millis(20),
+            |_| std::future::pending::<ProviderResult>(),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(error, ProviderError::Timeout));
+    }
+
+    #[test]
+    fn candidate_search_preserves_manual_aliases_and_rejects_unsafe_ids() {
+        let response = serde_json::json!({"code":200,"result":{"songs":[
+            {"id":42,"name":"Alias title","artists":[{"name":"Other script"}],
+             "album":{"name":"Album"},"duration":180000}
+        ]}});
+        let candidates = candidates_from_response("netease", &response).unwrap();
+        assert_eq!(candidates[0].title, "Alias title");
+        assert!(automatic_candidates(&query(), candidates).is_empty());
+        for id in [
+            "../../settings",
+            "https://example.com",
+            "1?other=value",
+            "",
+            "123\n",
+        ] {
+            assert!(validate_candidate(&candidate(id)).is_err());
+        }
+        let mut valid = candidate("42");
+        assert!(validate_candidate(&valid).is_ok());
+        valid.source = "qqmusic".into();
+        valid.id = "003abcXYZ".into();
+        assert!(validate_candidate(&valid).is_ok());
+        valid.title = "x".repeat(1025);
+        assert!(validate_candidate(&valid).is_err());
+    }
+
+    #[test]
+    fn automatic_selection_keeps_identity_album_order_and_fetch_bound() {
+        let mut candidates = (1..=10)
+            .map(|n| candidate(&n.to_string()))
+            .collect::<Vec<_>>();
+        candidates[0].album = "Compilation".into();
+        candidates[1].title = "Title (Live)".into();
+        candidates[2].duration_ms += 5000;
+        let selected = automatic_candidates(&query(), candidates);
+        assert_eq!(selected.len(), MAX_AUTOMATIC_FETCHES);
+        assert_eq!(selected[0].id, "4");
+        assert!(!selected.iter().any(|item| item.id == "2" || item.id == "3"));
+    }
+
+    #[test]
+    fn netease_retains_words_translation_and_line_fallback() {
+        let data = serde_json::json!({
+            "lrc":{"lyric":"[00:01]AB\n[00:03]Keep this line"},
+            "yrc":{"lyric":"[1000,1000](1000,500,0)A(1500,500,0)B"},
+            "tlyric":{"lyric":"[00:01]Translation"},
+            "ytlrc":{"lyric":"[00:01]Translation"}
+        });
+        let result = netease_result(&data);
+        assert_eq!(result.cues.len(), 2);
+        assert_eq!(result.cues[0].words.len(), 2);
+        assert_eq!(result.cues[0].translation.as_deref(), Some("Translation"));
+        assert_eq!(result.cues[1].text, "Keep this line");
+        assert!(result.cues[1].words.is_empty());
+        assert!(result.cues[1].translation.is_none());
+        let shifted = serde_json::json!({
+            "lrc":{"lyric":"[00:01]AB"},
+            "yrc":{"lyric":"[1100,1000](1100,500,0)A(1600,500,0)B"},
+            "tlyric":{"lyric":"[00:01]Translation"}
+        });
+        let result = netease_result(&shifted);
+        assert_eq!(result.cues[0].time_ms, 1100);
+        assert_eq!(result.cues[0].translation.as_deref(), Some("Translation"));
+        // Equal line counts do not prove coverage: the rich file can split one
+        // sentence in two while omitting a different sentence completely.
+        let split_and_missing = serde_json::json!({
+            "lrc":{"lyric":"[00:01]AB\n[00:03]Keep this line"},
+            "yrc":{"lyric":"[1000,500](1000,500,0)A\n[1500,500](1500,500,0)B"},
+            "tlyric":{"lyric":"[00:03]Keep its translation"}
+        });
+        let result = netease_result(&split_and_missing);
+        assert_eq!(result.cues.len(), 2);
+        assert_eq!(result.cues[1].text, "Keep this line");
+        assert_eq!(
+            result.cues[1].translation.as_deref(),
+            Some("Keep its translation")
+        );
+    }
+
+    #[test]
+    fn rich_exact_match_is_reserved_before_nearby_repeated_text() {
+        let data = serde_json::json!({
+            "lrc":{"lyric":"[00:01]Go\n[00:02]Go\n[00:05]Keep"},
+            "yrc":{"lyric":"[2000,1000](2000,1000,0)Go"},
+            "tlyric":{"lyric":"[00:01]First translation\n[00:02]Second translation"}
+        });
+        let result = netease_result(&data);
+        assert_eq!(
+            result
+                .cues
+                .iter()
+                .map(|cue| cue.time_ms)
+                .collect::<Vec<_>>(),
+            [1000, 2000, 5000]
+        );
+        assert!(result.cues[0].words.is_empty());
+        assert_eq!(result.cues[1].words.len(), 1);
+        assert_eq!(
+            result.cues[1].translation.as_deref(),
+            Some("Second translation")
+        );
+        let active = crate::lrc::active_line(&result.cues, 2500) as usize;
+        assert_eq!(active, 1);
+        assert!(!result.cues[active].words.is_empty());
+    }
+
+    #[test]
+    fn qqmusic_decodes_translation_and_plaintext_qrc() {
+        use base64::Engine;
+        let encode = |raw: &str| base64::engine::general_purpose::STANDARD.encode(raw);
+        let data = serde_json::json!({
+            "lyric":encode("[00:01]AB"),
+            "qrc":"[1000,1000]A(1000,500)B(1500,500)",
+            "trans":encode("[00:01]Translation")
+        });
+        let result = qqmusic_result(&data);
+        assert_eq!(result.cues[0].words.len(), 2);
+        assert_eq!(result.cues[0].translation.as_deref(), Some("Translation"));
+    }
+
+    #[test]
+    fn word_preference_stops_after_two_extra_sources_and_keeps_first_lines() {
+        let line = || LyricsResult::from_raw("[00:01]line", "first");
+        let mut chain = Chain::default();
+        assert!(chain.consider("first", Ok(line())).is_none());
+        assert!(chain
+            .consider("second", Ok(LyricsResult::empty("second")))
+            .is_none());
+        let result = chain
+            .consider("third", Err(ProviderError::Timeout))
+            .unwrap();
+        assert_eq!(result.source, "first");
+        assert_eq!(result.errors, ["third: Timeout"]);
+
+        let mut chain = Chain::default();
+        assert!(chain.consider("first", Ok(line())).is_none());
+        let mut rich = LyricsResult::from_raw("[00:01]AB", "rich");
+        rich.cues = parse_yrc("[1000,1000](1000,500,0)A(1500,500,0)B");
+        assert_eq!(chain.consider("rich", Ok(rich)).unwrap().source, "rich");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live lyric providers"]
+    async fn live_manual_candidates_and_rich_netease_probe() {
+        let client = super::client().unwrap();
+        for query in ["丽都假日 HOYO-MiX", "Lemon 米津玄師"] {
+            let candidates = search_candidates(&client, query, "netease").await.unwrap();
+            assert!(!candidates.is_empty());
+            let candidate = &candidates[0];
+            let rich_response = request_json(
+                &client,
+                "https://music.163.com/api/song/lyric/v1",
+                &[
+                    ("id", candidate.id.clone()),
+                    ("cp", "false".into()),
+                    ("tv", "0".into()),
+                    ("lv", "0".into()),
+                    ("rv", "0".into()),
+                    ("kv", "0".into()),
+                    ("yv", "0".into()),
+                    ("ytv", "0".into()),
+                    ("yrv", "0".into()),
+                ],
+                Some("https://music.163.com/"),
+                true,
+            )
+            .await
+            .unwrap();
+            println!(
+                "v1 code={} lrc_bytes={} yrc_bytes={} tlyric_bytes={} ytlrc_bytes={}",
+                rich_response
+                    .get("code")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                rich_response
+                    .pointer("/lrc/lyric")
+                    .and_then(Value::as_str)
+                    .map_or(0, str::len),
+                rich_response
+                    .pointer("/yrc/lyric")
+                    .and_then(Value::as_str)
+                    .map_or(0, str::len),
+                rich_response
+                    .pointer("/tlyric/lyric")
+                    .and_then(Value::as_str)
+                    .map_or(0, str::len),
+                rich_response
+                    .pointer("/ytlrc/lyric")
+                    .and_then(Value::as_str)
+                    .map_or(0, str::len)
+            );
+            let result = fetch_candidate(&client, candidate).await.unwrap();
+            println!(
+                "netease id={} candidates={} cues={} words={} translations={}",
+                candidate.id,
+                candidates.len(),
+                result.cues.len(),
+                result.cues.iter().map(|cue| cue.words.len()).sum::<usize>(),
+                result
+                    .cues
+                    .iter()
+                    .filter(|cue| cue.translation.is_some())
+                    .count()
+            );
+            assert!(!result.is_empty());
+        }
     }
 }

@@ -346,6 +346,7 @@ impl Spotify {
             .cloned()
             .unwrap_or(Value::Null);
         let allowed = |key: &str| !disallows.get(key).and_then(Value::as_bool).unwrap_or(false);
+        let (volume_percent, can_set_volume) = volume_state(&data["device"]);
 
         Ok(Playback {
             track_id: item
@@ -384,11 +385,14 @@ impl Spotify {
             can_skip_next: allowed("skipping_next"),
             can_skip_previous: allowed("skipping_prev"),
             can_seek: allowed("seeking"),
+            volume_percent,
+            can_set_volume,
             device_name: data
                 .get("device")
                 .and_then(|device| device.get("name"))
                 .and_then(Value::as_str)
                 .map(str::to_string),
+            device_id: data["device"]["id"].as_str().map(str::to_string),
             source: PlayerKind::Spotify,
         })
     }
@@ -427,6 +431,36 @@ impl Spotify {
         .await?;
         Ok(())
     }
+
+    pub async fn set_volume(
+        &self,
+        volume_percent: u8,
+        device_id: Option<&str>,
+    ) -> Result<(), SpotifyError> {
+        if volume_percent > 100 {
+            return Err(SpotifyError::Config(
+                "Volume must be between 0 and 100.".into(),
+            ));
+        }
+        let mut query = vec![("volume_percent", volume_percent.to_string())];
+        if let Some(id) = device_id.filter(|id| !id.is_empty()) {
+            query.push(("device_id", id.to_string()));
+        }
+        self.call(reqwest::Method::PUT, "/me/player/volume", &query)
+            .await?;
+        Ok(())
+    }
+}
+
+/// Spotify reports null volume for some devices and explicitly marks support.
+fn volume_state(device: &Value) -> (Option<u8>, bool) {
+    let percent = device["volume_percent"]
+        .as_u64()
+        .filter(|value| *value <= 100)
+        .map(|value| value as u8);
+    let supported = device["supports_volume"].as_bool().unwrap_or(false)
+        && !device["is_restricted"].as_bool().unwrap_or(false);
+    (percent, supported)
 }
 
 /// Serve exactly one loopback request and return the authorization code.
@@ -527,6 +561,40 @@ fn respond(stream: &mut TcpStream, message: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn volume_reports_unknown_values_and_restricted_devices_honestly() {
+        for percent in [0, 50, 100] {
+            assert_eq!(
+                volume_state(&serde_json::json!({
+                    "volume_percent": percent, "supports_volume": true, "is_restricted": false,
+                })),
+                (Some(percent as u8), true)
+            );
+        }
+        for percent in [
+            serde_json::Value::Null,
+            serde_json::json!(-1),
+            serde_json::json!(101),
+        ] {
+            assert_eq!(
+                volume_state(&serde_json::json!({"volume_percent": percent})),
+                (None, false)
+            );
+        }
+        assert_eq!(
+            volume_state(&serde_json::json!({
+                "volume_percent": 40, "supports_volume": true, "is_restricted": true,
+            })),
+            (Some(40), false)
+        );
+        assert_eq!(
+            volume_state(&serde_json::json!({
+                "volume_percent": 40, "supports_volume": false,
+            })),
+            (Some(40), false)
+        );
+    }
 
     #[test]
     fn pkce_challenge_is_the_sha256_of_the_verifier() {

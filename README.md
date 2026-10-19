@@ -28,12 +28,17 @@ YouTube Music 沒有「目前播放」的 API，所以 Hakuro 讀的是 Windows 
 
 ## 歌詞與設定
 
+- **Volume** 滑桿控制 Spotify 目前播放裝置的音量（0–100%），放開或以鍵盤提交時才送出調整，沿用既有授權。裝置不支援時會停用；YouTube Music 的 Windows 媒體介面沒有提供音量控制，請在播放器內調整。Spotify 音量 API 的帳戶要求依 [官方文件](https://developer.spotify.com/documentation/web-api/reference/set-volume-for-users-playback) 為準。
 - 點目前顯示的**歌詞來源按鈕**，可選擇這首歌偏好的來源，或回到自動搜尋。每首歌的選擇會保存在 SQLite。
+- **Find lyrics** 可在已啟用的 LRCLIB、NetEase 或 QQ Music 搜尋其他曲名／歌手，查看候選與歌詞預覽，再以 **Use these lyrics** 綁定目前這首歌。手動匹配會跨重啟保存；**Restore automatic** 可取消綁定，恢復自動搜尋。切換這首歌的來源也會取代手動匹配。
 - **Refresh lyrics** 會略過快取、重新向來源取得目前歌曲的歌詞；來源選擇控制搜尋對象，兩者可同時使用。
+- 有手動匹配時，重新整理會取得所選候選的歌詞；清除下載快取仍會保留手動匹配。
 - **Settings** 可調整全域歌詞來源順序與啟用狀態。支援 LRCLIB、PetitLyrics、Musixmatch、NetEase、QQ Music。
 - 歌詞快取依播放來源分開存放，Spotify 與 YouTube Music 不會互相讀到對方的結果。
 - **Settings** 可設定按鈕與控制項的強調色、目前歌詞的高亮色、已唱過歌詞的顏色。
 - **Follow lyrics** 控制是否自動捲動至目前歌詞；有時間軸時會隨播放位置高亮，純文字歌詞不會猜測時間。
+- 來源提供逐字時間時，會跟隨播放位置突出目前的字詞；沒有逐字資料就維持逐行高亮。PetitLyrics 與 NetEase 可提供逐字資料，實際覆蓋依歌曲而異。
+- 來源提供翻譯時，譯文會顯示在原文下方；搜尋視窗的 **Show translations when available** 可切換本次開啟 App 的顯示。翻譯依時間戳對齊，不會自行翻譯歌曲或把無法對齊的文字硬套到原文上。
 
 SQLite 保留成功下載的歌詞，重新開啟 App 仍可使用。來源可能因網路、地區、限流或服務變更而無法提供結果；有同步歌詞時優先呈現同步歌詞。搜尋會向來源傳送歌曲名稱、歌手等查詢資料，不會傳送 Spotify token。
 
@@ -44,7 +49,7 @@ SQLite 保留成功下載的歌詞，重新開啟 App 仍可使用。來源可�
 | 檔案 | 內容 |
 | --- | --- |
 | `settings.json` | 播放器選擇、Client ID、全域來源偏好、配色與跟隨歌詞設定 |
-| `lyrics.db` | 已下載歌詞與每首歌的來源偏好 |
+| `lyrics.db` | 已下載歌詞、逐字時間與翻譯，以及每首歌的來源偏好和手動匹配 |
 | `lyrics.db-wal`、`lyrics.db-shm` | SQLite 執行期間可能產生的輔助檔 |
 | `session.bin` | 經 Windows DPAPI 加密的 Spotify refresh token；只跟隨 YouTube Music 時不會產生 |
 

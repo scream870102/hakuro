@@ -1,6 +1,24 @@
 # hakuro session recovery
 
-## Active task — 2026-10-02 localized lyric titles
+## Active task — 2026-10-19 lyric search, word timing and translations
+
+Goal: keep the existing Spotify companion integration while adding manual lyric search/preview/binding, stronger automatic fallback, word timing and provider-supplied bilingual lyrics.
+Scope update: user additionally requested volume control. Add a Spotify active-device volume slider using the existing playback-control scope; SMTC/unsupported devices remain disabled without altering system master volume.
+Acceptance:
+- [x] Search enabled LRCLIB/NetEase/QQ sources, preview candidates, save a per-track match across restart, and restore automatic matching; stale requests cannot bind to another track.
+- [x] LRCLIB search fallback and continued candidate attempts work without weakening recording identity safeguards.
+- [x] Word timing and translations survive parsing, SQLite, events and full/compact rendering; old line-only caches remain readable.
+- [x] Parser/provider/database/frontend regressions, build and independent review pass.
+- [x] Volume 0–100 is read from Spotify, submitted on slider commit, and disabled when unsupported; errors and stale requests do not leave misleading UI.
+Known: clean tracked worktree at start; untracked app/public/design-preview.html is pre-existing and must remain untouched. No Spotify playback/auth changes or commits requested. Translations come from lyric providers, not machine translation.
+Ownership: root = lib.rs/db.rs/integration; hakuro_spotify = providers.rs/matching.rs; rich_lyrics = lrc.rs/petitlyrics.rs/musixmatch.rs; lyrics_ui = main.ts/main.test.ts/styles.css/index.html.
+Plan: establish additive cue/candidate contracts, implement independent layers, integrate persistent overrides and race guards, then run tests and a fresh review.
+Progress: complete. Final full checks: Rust 93 passed / 3 live tests ignored by default, frontend 44 passed, production frontend build and diff check passed. Independent lyric and volume reviews passed after fixes. Manual matches are stored independently of expiring cache; old JSON remains readable. Spotify auth/playback model unchanged, with one new volume endpoint using the existing scope and reported device ID. README updated; no commits or installed-app/user-configuration changes.
+Live evidence: NetEase manual search returned 20 candidates per query; selected Lemon returned 42 original lines and 42 translations. The two tested anonymous v1 responses had no YRC/YTLRC; parser/word rendering are fixture-tested, but live NetEase word availability is not verified. Network sandbox could not reach the endpoints; the permitted escalated public-source probe succeeded without printing lyric bodies.
+Limits: no interactive desktop playback/volume or real WebView layout test. YouTube Music SMTC does not expose volume, so its slider is disabled. Translations and word timing require provider data; no machine translation, QQ proprietary decryption or NetEase eapi integration. Translation toggle is session-only. Pre-existing app/public/design-preview.html left untouched.
+Reusable findings: serialize revision validation together with DB save and event emission, not just a check before a concurrent commit. Rich timelines must preserve original lines and reserve all exact matches before approximate one-to-one pairing. Put candidate time budgets inside the loop so cancellation preserves an already downloaded fallback. Volume request/UI identity should use device ID rather than a display name.
+
+## Previous completed task — 2026-10-02 localized lyric titles
 
 Goal: find lyrics for Spotify's `エリーの休日` and show the matched lyric title in parentheses beside the player title when different.
 Acceptance:

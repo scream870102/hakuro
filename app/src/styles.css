@@ -89,7 +89,8 @@ body {
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     "chrome chrome"
-    "meta   badge";
+    "meta   badge"
+    "volume volume";
   align-items: center;
   gap: 8px 16px;
   padding: 0 20px 14px;
@@ -146,14 +147,14 @@ body.is-compact .lyrics {
   mask-image: none;
 }
 
-/* The scrubber joins the chrome row, filling whatever the four remaining
-   buttons leave (settings, refresh, mode, pin). Out of the grid, so the header
+/* The scrubber joins the chrome row, filling whatever the five remaining
+   buttons leave (lyrics, settings, refresh, mode, pin). Out of the grid, so the header
    is the whole of the chrome the minimum height has to pay for. */
 body.is-compact .controls {
   position: absolute;
   top: 0;
   left: 12px;
-  right: calc(4 * var(--chrome-button));
+  right: calc(5 * var(--chrome-button));
   height: var(--chrome-height);
   display: flex;
   align-items: center;
@@ -313,6 +314,11 @@ body.is-maximized .icon-maximize {
   flex-shrink: 0;
 }
 
+.volume-control { grid-area: volume; display: flex; align-items: center; gap: 8px; min-width: 0; height: 24px; color: var(--ink-dim); font-size: 12px; }
+.volume-control input { flex: 1; min-width: 0; height: 16px; margin: 0; accent-color: var(--accent); }
+.volume-control input:disabled { opacity: 0.4; }
+.volume-control output { min-width: 4ch; text-align: right; font-variant-numeric: tabular-nums; }
+
 .badge {
   padding: 3px 9px;
   border: 1px solid var(--hairline);
@@ -435,6 +441,14 @@ body.is-maximized .icon-maximize {
   color: var(--past-line);
   filter: none;
 }
+
+.lyric-word { white-space: pre-wrap; }
+.line.is-active .lyric-word { color: var(--ink-dim); }
+.line.is-active .lyric-word.is-sung { color: var(--active-line); }
+.line.is-active .lyric-word.is-singing { color: var(--accent); text-shadow: 0 0 12px color-mix(in srgb, var(--accent) 40%, transparent); }
+.lyric-translation { display: block; margin-top: 4px; font-size: 0.65em; font-weight: 450; line-height: 1.4; opacity: 0.8; }
+body.hide-translations .lyric-translation { display: none; }
+body.is-compact.has-translations .stage { min-height: calc(3 * (var(--lyric-size) * 2.23 + 22px)); }
 
 @media (prefers-reduced-motion: reduce) {
   .line,
@@ -793,6 +807,15 @@ dialog kbd {
 }
 .follow-setting { display: block; margin-top: 20px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.lyrics-match-actions { flex-wrap: wrap; }
+.lyrics-candidates { list-style: none; padding: 0; max-height: 220px; overflow-y: auto; }
+.lyric-candidate { width: 100%; padding: 10px; margin-bottom: 6px; text-align: left; border: 1px solid var(--hairline); border-radius: 7px; color: var(--ink); background: #242929; cursor: pointer; overflow-wrap: anywhere; }
+.lyric-candidate strong, .lyric-candidate span { display: block; }
+.lyric-candidate span { margin-top: 4px; color: var(--ink-dim); font-size: 12px; }
+.lyric-candidate[aria-pressed="true"] { border-color: var(--accent); }
+#lyrics-preview { max-height: 240px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.7 var(--font); }
+#lyrics-search-source { margin-bottom: 8px; }
+#lyrics-search-form > label { display: block; margin-top: 12px; }
 #settings-error, #source-error { color: #e6c185; }
 @media (max-width: 650px) {
   .window-controls .status { display: none; }

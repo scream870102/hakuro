@@ -345,7 +345,8 @@ mod tests {
             lrc[0],
             Cue {
                 time_ms: 1000,
-                text: "LINE_A".into()
+                text: "LINE_A".into(),
+                ..Default::default()
             }
         );
 
@@ -354,7 +355,8 @@ mod tests {
             json[0],
             Cue {
                 time_ms: 1000,
-                text: "LINE_A".into()
+                text: "LINE_A".into(),
+                ..Default::default()
             }
         );
     }

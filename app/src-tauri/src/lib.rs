@@ -35,7 +35,7 @@ use tokio::sync::RwLock;
 use db::Db;
 use lrc::Cue;
 use player::{Playback, Player, PlayerError, PlayerKind};
-use providers::{LyricsResult, TrackQuery};
+use providers::{LyricCandidate, LyricsResult, TrackQuery};
 use settings::Settings;
 use smtc::Smtc;
 use spotify::Spotify;
@@ -95,6 +95,14 @@ struct LyricsEvent {
     /// The source this track is pinned to, or empty for the normal order. The
     /// interface shows it as the current choice in the source menu.
     requested: String,
+    manual: bool,
+}
+
+struct LyricPreview {
+    track_key: String,
+    generation: u64,
+    candidate: LyricCandidate,
+    lyrics: LyricsResult,
 }
 
 /// One lyrics source as the settings panel and the source menu list it.
@@ -127,6 +135,11 @@ struct Session {
     generation: AtomicU64,
     /// Also supersede lookups when refreshing or changing sources on the same song.
     lookup_request: AtomicU64,
+    /// Serialize checking a lookup revision with saving and emitting its result.
+    /// Network requests never hold this lock.
+    lyrics_update: tokio::sync::Mutex<()>,
+    preview_request: AtomicU64,
+    lyric_preview: RwLock<Option<LyricPreview>>,
     current_track: RwLock<String>,
     /// The last sample, kept so a source change can look the song up again
     /// straight away instead of waiting for the next poll.
@@ -561,8 +574,18 @@ async fn apply_playback(app: &AppHandle, playback: Playback) {
 /// Answer from the database if it can, otherwise look the song up.
 async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
     let state = app.state::<AppState>();
-    let request = state.session.lookup_request.fetch_add(1, Ordering::SeqCst) + 1;
+    let _update = state.session.lyrics_update.lock().await;
     let key = track_key(playback);
+    if state.session.generation.load(Ordering::SeqCst) != generation
+        || *state.session.current_track.read().await != key
+    {
+        return;
+    }
+    let request = state.session.lookup_request.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Some(selection) = state.db.manual_match(&key) {
+        emit_lyrics(app, generation, &key, "", selection.lyrics, true);
+        return;
+    }
     let requested = state
         .db
         .preferred_source(&key)
@@ -576,7 +599,7 @@ async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
         requested.clone()
     };
     if let Some(cached) = state.db.lyrics(&key, &cache_key) {
-        emit_lyrics(app, generation, &key, &requested, cached);
+        emit_lyrics(app, generation, &key, &requested, cached, false);
         return;
     }
 
@@ -604,6 +627,7 @@ async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
         };
 
         let state = handle.state::<AppState>();
+        let _update = state.session.lyrics_update.lock().await;
         // Drop the answer if the song moved on while the lookup was in flight.
         if state.session.generation.load(Ordering::SeqCst) != generation
             || state.session.lookup_request.load(Ordering::SeqCst) != request
@@ -619,7 +643,7 @@ async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
             },
             &result,
         );
-        emit_lyrics(&handle, generation, &key, &requested, result);
+        emit_lyrics(&handle, generation, &key, &requested, result, false);
     });
 }
 
@@ -629,6 +653,7 @@ fn emit_lyrics(
     track_id: &str,
     requested: &str,
     result: LyricsResult,
+    manual: bool,
 ) {
     let _ = app.emit(
         "lyrics",
@@ -642,6 +667,7 @@ fn emit_lyrics(
             text: result.text,
             partial: !result.errors.is_empty(),
             requested: requested.to_string(),
+            manual,
         },
     );
 }
@@ -667,8 +693,37 @@ async fn refresh_current(app: &AppHandle) {
 /// Forget the downloaded lyrics for the current song and look them up again.
 #[tauri::command]
 async fn reload_lyrics(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    let key = state.session.current_track.read().await.clone();
-    state.db.forget(&key);
+    let (key, selection, generation, request) = {
+        let _update = state.session.lyrics_update.lock().await;
+        let key = state.session.current_track.read().await.clone();
+        let generation = state.session.generation.load(Ordering::SeqCst);
+        let request = state.session.lookup_request.fetch_add(1, Ordering::SeqCst) + 1;
+        let selection = state.db.manual_match(&key);
+        if selection.is_none() {
+            state.db.forget(&key);
+        }
+        (key, selection, generation, request)
+    };
+    if let Some(selection) = selection {
+        let lyrics = providers::fetch_candidate(&state.http, &selection.candidate)
+            .await
+            .map_err(|error| format!("Could not refresh the selected lyrics: {error}"))?;
+        let _update = state.session.lyrics_update.lock().await;
+        let current = state.session.current_track.read().await;
+        validate_source_track(&current, &key)?;
+        if state.session.generation.load(Ordering::SeqCst) != generation
+            || state.session.lookup_request.load(Ordering::SeqCst) != request
+        {
+            return Err("The lyric selection changed. Try refreshing again.".into());
+        }
+        let refreshed = db::ManualMatch {
+            candidate: selection.candidate,
+            lyrics,
+        };
+        state.db.save_manual_match(&key, &refreshed)?;
+        emit_lyrics(&app, generation, &key, "", refreshed.lyrics, true);
+        return Ok(());
+    }
     refresh_current(&app).await;
     Ok(())
 }
@@ -684,6 +739,7 @@ async fn set_track_source(
     source: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let update = state.session.lyrics_update.lock().await;
     let key = state.session.current_track.read().await.clone();
     validate_source_track(&key, &track_id)?;
     let source = source.filter(|id| !id.is_empty());
@@ -693,8 +749,127 @@ async fn set_track_source(
         }
     }
     state.db.set_preferred_source(&key, source.as_deref())?;
+    state.session.lookup_request.fetch_add(1, Ordering::SeqCst);
+    state.session.preview_request.fetch_add(1, Ordering::SeqCst);
+    *state.session.lyric_preview.write().await = None;
+    drop(update);
     refresh_current(&app).await;
     Ok(())
+}
+
+async fn validate_search_source(state: &AppState, source: &str) -> Result<(), String> {
+    if !["lrclib", "netease", "qqmusic"].contains(&source) {
+        return Err("This source does not support manual lyric search.".into());
+    }
+    if !state
+        .settings
+        .read()
+        .await
+        .lookup_order()
+        .iter()
+        .any(|id| id == source)
+    {
+        return Err("Enable this lyrics source in Settings first.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn search_lyrics(
+    track_id: String,
+    query: String,
+    source: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<LyricCandidate>, String> {
+    validate_source_track(&state.session.current_track.read().await, &track_id)?;
+    validate_search_source(&state, &source).await?;
+    let generation = state.session.generation.load(Ordering::SeqCst);
+    state.session.preview_request.fetch_add(1, Ordering::SeqCst);
+    *state.session.lyric_preview.write().await = None;
+    let candidates = providers::search_candidates(&state.http, &query, &source)
+        .await
+        .map_err(|error| format!("Lyrics search failed: {error}"))?;
+    validate_source_track(&state.session.current_track.read().await, &track_id)?;
+    if state.session.generation.load(Ordering::SeqCst) != generation {
+        return Err("The playing song changed. Search again.".into());
+    }
+    Ok(candidates)
+}
+
+#[tauri::command]
+async fn preview_lyric_candidate(
+    track_id: String,
+    candidate: LyricCandidate,
+    state: State<'_, AppState>,
+) -> Result<LyricsResult, String> {
+    validate_source_track(&state.session.current_track.read().await, &track_id)?;
+    validate_search_source(&state, &candidate.source).await?;
+    let generation = state.session.generation.load(Ordering::SeqCst);
+    let request = state.session.preview_request.fetch_add(1, Ordering::SeqCst) + 1;
+    *state.session.lyric_preview.write().await = None;
+    let lyrics = providers::fetch_candidate(&state.http, &candidate)
+        .await
+        .map_err(|error| format!("Lyric preview failed: {error}"))?;
+    let current = state.session.current_track.read().await;
+    validate_source_track(&current, &track_id)?;
+    let mut preview = state.session.lyric_preview.write().await;
+    if state.session.generation.load(Ordering::SeqCst) != generation
+        || state.session.preview_request.load(Ordering::SeqCst) != request
+    {
+        return Err("This preview is no longer current. Select the result again.".into());
+    }
+    if lyrics.is_empty() {
+        return Err("This result has no lyrics. Try another candidate.".into());
+    }
+    *preview = Some(LyricPreview {
+        track_key: track_id,
+        generation,
+        candidate,
+        lyrics: lyrics.clone(),
+    });
+    Ok(lyrics)
+}
+
+#[tauri::command]
+async fn apply_lyric_match(
+    app: AppHandle,
+    track_id: String,
+    candidate: LyricCandidate,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    validate_search_source(&state, &candidate.source).await?;
+    let _update = state.session.lyrics_update.lock().await;
+    let current = state.session.current_track.read().await;
+    validate_source_track(&current, &track_id)?;
+    let generation = state.session.generation.load(Ordering::SeqCst);
+    let mut preview = state.session.lyric_preview.write().await;
+    let previewed = preview
+        .as_ref()
+        .filter(|preview| {
+            preview.track_key == track_id
+                && preview.generation == generation
+                && preview.candidate == candidate
+        })
+        .ok_or_else(|| "Preview this result before saving the match.".to_string())?;
+    let selection = db::ManualMatch {
+        candidate,
+        lyrics: previewed.lyrics.clone(),
+    };
+    state.db.save_manual_match(&track_id, &selection)?;
+    state.session.lookup_request.fetch_add(1, Ordering::SeqCst);
+    state.session.preview_request.fetch_add(1, Ordering::SeqCst);
+    *preview = None;
+    emit_lyrics(&app, generation, &track_id, "", selection.lyrics, true);
+    Ok(())
+}
+
+#[tauri::command]
+async fn clear_lyric_match(
+    app: AppHandle,
+    track_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    set_track_source(app, track_id, None, state).await
 }
 
 fn validate_source_track(current: &str, selected: &str) -> Result<(), String> {
@@ -766,6 +941,24 @@ async fn seek(position_ms: i64, state: State<'_, AppState>) -> Result<(), String
     .await
 }
 
+#[tauri::command]
+async fn set_volume(volume_percent: u8, state: State<'_, AppState>) -> Result<(), String> {
+    if volume_percent > 100 {
+        return Err("Volume must be between 0 and 100.".into());
+    }
+    let device_id = {
+        let playback = state.session.current_playback.read().await;
+        let Some(playback) = playback.as_ref().filter(|sample| sample.can_set_volume) else {
+            return Err("This player or device does not support volume control.".into());
+        };
+        playback.device_id.clone()
+    };
+    with_client(&state, |client| async move {
+        client.set_volume(volume_percent, device_id).await
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -793,6 +986,9 @@ mod tests {
             can_skip_previous: false,
             can_seek: true,
             device_name: Some("Device".into()),
+            device_id: Some("device-1".into()),
+            volume_percent: Some(50),
+            can_set_volume: true,
             source: PlayerKind::Spotify,
         }
     }
@@ -845,6 +1041,9 @@ mod tests {
             "canSkipPrevious",
             "canSeek",
             "deviceName",
+            "deviceId",
+            "volumePercent",
+            "canSetVolume",
             "generation",
         ] {
             assert!(object.contains_key(key), "missing key: {key}");
@@ -856,6 +1055,8 @@ mod tests {
             "duration_ms",
             "is_playing",
             "can_seek",
+            "volume_percent",
+            "can_set_volume",
         ] {
             assert!(!object.contains_key(key), "snake_case leaked: {key}");
         }
@@ -874,10 +1075,12 @@ mod tests {
             cues: vec![Cue {
                 time_ms: 1000,
                 text: "LINE_A".into(),
+                ..Default::default()
             }],
             text: "LINE_A".into(),
             partial: false,
             requested: "netease".into(),
+            manual: false,
         };
         let json = serde_json::to_value(&event).unwrap();
         let object = json.as_object().unwrap();
@@ -892,6 +1095,7 @@ mod tests {
             "text",
             "partial",
             "requested",
+            "manual",
         ] {
             assert!(object.contains_key(key), "missing key: {key}");
         }
@@ -1034,11 +1238,16 @@ pub fn run() {
             clear_lyrics_cache,
             set_track_source,
             reload_lyrics,
+            search_lyrics,
+            preview_lyric_candidate,
+            apply_lyric_match,
+            clear_lyric_match,
             refresh_playback,
             play,
             pause,
             next_track,
             previous_track,
+            set_volume,
             seek
         ])
         .run(tauri::generate_context!())

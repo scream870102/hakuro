@@ -20,6 +20,10 @@
            "deep": the art and the track name drag the window, these do not. -->
       <div class="window-controls">
         <span class="status" id="status-text">Connecting…</span>
+        <button class="window-button" id="lyrics-search-open" type="button" disabled
+                title="Find lyrics" aria-label="Find lyrics" aria-haspopup="dialog">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="5" cy="5" r="3"/><path d="m7.3 7.3 3 3"/></svg>
+        </button>
         <button class="window-button" id="settings-open" type="button" title="Settings" aria-label="Settings">
           <svg viewBox="0 0 12 12" aria-hidden="true">
             <path d="M1.8 4h8.4M1.8 8h8.4"/><circle cx="4.2" cy="4" r="1.5"/><circle cx="7.8" cy="8" r="1.5"/>
@@ -67,6 +71,11 @@
       </div>
       <div class="titlebar__status">
         <button class="badge" id="source-badge" disabled aria-haspopup="dialog">Lyrics source ▾</button>
+      </div>
+      <div class="volume-control" id="volume-control" title="Volume control is unavailable for this player or device">
+        <label for="volume">Volume</label>
+        <input id="volume" type="range" min="0" max="100" step="1" value="0" disabled aria-describedby="volume-value" />
+        <output id="volume-value" for="volume">—</output>
       </div>
     </header>
 
@@ -123,12 +132,37 @@
       <h2 id="source-title">Source for this song</h2>
       <p id="source-track"></p>
       <p>Choose a preferred source, or use your global search order.</p>
+      <p>Applying a source replaces any manually selected lyrics for this song.</p>
       <label for="track-source">Preferred source</label>
       <select id="track-source"></select>
       <p id="source-error" role="alert"></p>
       <div class="dialog-actions">
         <button class="ghost-button" id="source-cancel">Cancel</button>
         <button class="ghost-button" id="source-save">Apply</button>
+      </div>
+    </dialog>
+
+    <dialog id="lyrics-search-dialog" aria-labelledby="lyrics-search-title">
+      <h2 id="lyrics-search-title">Find lyrics</h2>
+      <p id="lyrics-search-track"></p>
+      <form id="lyrics-search-form">
+        <label for="lyrics-query">Song title or artist (any language)</label>
+        <input id="lyrics-query" type="text" required maxlength="300" autocomplete="off" />
+        <label for="lyrics-search-source">Search source</label>
+        <select id="lyrics-search-source"></select>
+        <div class="dialog-actions"><button class="ghost-button" id="lyrics-search-submit" type="submit">Search</button></div>
+      </form>
+      <p id="lyrics-search-status" role="status" aria-live="polite"></p>
+      <ol id="lyrics-candidates" class="lyrics-candidates" aria-label="Matching songs"></ol>
+      <section id="lyrics-preview-panel" hidden aria-labelledby="lyrics-preview-title">
+        <h3 id="lyrics-preview-title">Preview</h3>
+        <pre id="lyrics-preview"></pre>
+      </section>
+      <label class="follow-setting"><input id="show-translations" type="checkbox" checked /> Show translations when available</label>
+      <div class="dialog-actions lyrics-match-actions">
+        <button class="ghost-button" id="lyrics-match-clear" type="button" disabled>Restore automatic</button>
+        <button class="ghost-button" id="lyrics-search-close" type="button">Close</button>
+        <button class="ghost-button" id="lyrics-match-apply" type="button" disabled>Use these lyrics</button>
       </div>
     </dialog>
 

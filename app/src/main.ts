@@ -13,6 +13,25 @@ import { activeLine, emptySample, formatTime, positionAt, type Sample } from "./
 interface Cue {
   time_ms: number;
   text: string;
+  translation?: string | null;
+  words?: { start_ms: number; end_ms: number; text: string }[];
+}
+
+interface LyricCandidate {
+  source: string;
+  id: string;
+  title: string;
+  artists: string[];
+  album: string;
+  duration_ms: number;
+}
+
+interface LyricsResult {
+  text: string;
+  source: string;
+  matched_title: string;
+  cues: Cue[];
+  errors: unknown[];
 }
 
 interface PlaybackEvent {
@@ -28,7 +47,10 @@ interface PlaybackEvent {
   canSkipNext: boolean;
   canSkipPrevious: boolean;
   canSeek: boolean;
+  volumePercent?: number | null;
+  canSetVolume?: boolean;
   deviceName: string | null;
+  deviceId?: string | null;
   generation: number;
 }
 
@@ -42,6 +64,7 @@ interface LyricsEvent {
   text: string;
   partial: boolean;
   requested: string;
+  manual?: boolean;
 }
 
 type ClickThrough = "off" | "auto" | "always";
@@ -109,6 +132,10 @@ const ui = {
   mode: element<HTMLButtonElement>("mode-toggle"),
   reload: element<HTMLButtonElement>("reload"),
   reconnect: element<HTMLButtonElement>("reconnect"),
+  search: element<HTMLButtonElement>("lyrics-search-open"),
+  volume: element<HTMLInputElement>("volume"),
+  volumeValue: element<HTMLOutputElement>("volume-value"),
+  volumeControl: element("volume-control"),
 };
 
 const state = {
@@ -121,6 +148,8 @@ const state = {
   cues: [] as Cue[],
   cueTimes: [] as number[],
   lines: [] as HTMLLIElement[],
+  wordSpans: [] as HTMLSpanElement[][],
+  manual: false,
   highlighted: -1,
   synced: false,
   canSeek: false,
@@ -167,6 +196,8 @@ function clearLyrics(placeholder: string) {
   renderTrackName();
   ui.lyricsList.replaceChildren();
   state.lines = [];
+  state.wordSpans = [];
+  state.manual = false;
   state.cues = [];
   state.cueTimes = [];
   state.highlighted = -1;
@@ -174,6 +205,7 @@ function clearLyrics(placeholder: string) {
   ui.sourceBadge.textContent = "Lyrics source ▾";
   ui.lyricsEmpty.textContent = placeholder;
   ui.lyricsEmpty.hidden = false;
+  updateTranslationLayout();
 }
 
 function showAlbumArt(url: string | null) {
@@ -208,22 +240,40 @@ function renderLyrics(event: LyricsEvent) {
   state.cues = event.synced ? event.cues : [];
   state.cueTimes = state.cues.map((cue) => cue.time_ms);
   state.synced = event.synced;
+  state.manual = event.manual ?? false;
 
   const rows = event.synced ? event.cues.map((cue) => cue.text) : event.text.split("\n");
   for (const [index, text] of rows.entries()) {
     const line = document.createElement("li");
     line.className = event.synced ? "line line--seekable" : "line line--plain";
     // A blank cue is a musical gap: keep its height, show nothing.
-    line.textContent = text || " ";
+    const cue = state.cues[index];
+    const words = cue?.words ?? [];
+    const spans = words.map((word) => {
+      const span = document.createElement("span");
+      span.className = "lyric-word";
+      span.textContent = word.text;
+      return span;
+    });
+    if (spans.length) line.append(...spans);
+    else line.textContent = text || " ";
+    state.wordSpans.push(spans);
+    if (cue?.translation) {
+      const translation = document.createElement("span");
+      translation.className = "lyric-translation";
+      translation.textContent = cue.translation;
+      line.append(translation);
+    }
     if (event.synced) line.dataset.index = String(index);
     ui.lyricsList.append(line);
     state.lines.push(line);
   }
 
-  ui.sourceBadge.textContent = `${event.source} · ${event.synced ? "Synced" : "Plain"}`;
+  ui.sourceBadge.textContent = `${event.source} · ${event.synced ? "Synced" : "Plain"}${state.manual ? " · Manual" : ""}`;
   ui.sourceBadge.className = event.synced ? "badge badge--synced" : "badge";
   ui.sourceBadge.hidden = false;
   setNotice(event.partial ? "Some lyrics sources were unavailable." : "");
+  updateTranslationLayout();
 }
 
 function highlight(index: number) {
@@ -260,7 +310,20 @@ function frame() {
   ui.scrubber.setAttribute("aria-valuenow", String(Math.round(position)));
   ui.scrubber.setAttribute("aria-valuemax", String(Math.round(duration)));
 
-  if (state.synced) highlight(activeLine(state.cueTimes, position));
+  if (state.synced) {
+    const index = activeLine(state.cueTimes, position);
+    // Reset the old row on seeks and track changes; all timings use the same
+    // playback clock as the line highlight, so pause needs no separate timer.
+    if (index !== state.highlighted) {
+      state.wordSpans[state.highlighted]?.forEach((span) => span.classList.remove("is-singing", "is-sung"));
+    }
+    highlight(index);
+    state.wordSpans[index]?.forEach((span, wordIndex) => {
+      const word = state.cues[index].words![wordIndex];
+      span.classList.toggle("is-singing", position >= word.start_ms && position < word.end_ms);
+      span.classList.toggle("is-sung", position >= word.end_ms);
+    });
+  }
   requestAnimationFrame(frame);
 }
 
@@ -276,6 +339,115 @@ async function send(command: string, args?: Record<string, unknown>) {
     setNotice(String(error));
   }
 }
+
+// Volume belongs to the active player/device, not the song. A serial discards
+// pending replies after either changes; normal polls never interrupt a drag.
+let volumeDevice = "";
+let volumeSerial = 0;
+let volumeConfirmed: number | null = null;
+let volumeSupported = false;
+let volumeEditing = false;
+let volumeDirty = false;
+let volumePending = false;
+
+function renderVolume() {
+  ui.volume.disabled = !volumeSupported || volumePending;
+  const value = volumeConfirmed;
+  ui.volume.value = String(value ?? 0);
+  ui.volumeValue.textContent = value === null ? "—" : `${value}%`;
+  ui.volume.setAttribute("aria-valuetext", value === null ? "Unavailable" : `${value}%`);
+  ui.volumeControl.title = volumeSupported
+    ? "Spotify active device volume"
+    : config?.settings.player === "ytmusic"
+      ? "YouTube Music does not expose volume control through Windows media sessions"
+      : "Volume control is unavailable for this player or device";
+}
+
+function resetVolume() {
+  volumeSerial++;
+  volumeDevice = "";
+  volumeConfirmed = null;
+  volumeSupported = false;
+  volumeEditing = false;
+  volumeDirty = false;
+  volumePending = false;
+  renderVolume();
+}
+
+function receiveVolume(payload: PlaybackEvent) {
+  const device = `${config?.settings.player ?? ""}|${payload.deviceId ?? payload.deviceName ?? ""}|${Boolean(payload.canSetVolume)}`;
+  if (device !== volumeDevice) {
+    resetVolume();
+    volumeDevice = device;
+  }
+  const value = payload.volumePercent;
+  volumeConfirmed = typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.min(100, Math.round(value))) : null;
+  volumeSupported = payload.canSetVolume === true && volumeConfirmed !== null;
+  if (!volumeSupported) {
+    volumeSerial++;
+    volumeEditing = false;
+    volumePending = false;
+  }
+  if (!volumeEditing && !volumePending) renderVolume();
+}
+
+ui.volume.addEventListener("pointerdown", () => {
+  if (ui.volume.disabled) return;
+  volumeEditing = true;
+  volumeDirty = false;
+});
+// This row sits inside the draggable titlebar; slider gestures stay controls.
+for (const event of ["pointerdown", "mousedown"]) {
+  ui.volumeControl.addEventListener(event, (event) => event.stopPropagation());
+}
+ui.volume.addEventListener("input", () => {
+  if (ui.volume.disabled) return;
+  volumeEditing = true;
+  volumeDirty = true;
+  ui.volumeValue.textContent = `${ui.volume.value}%`;
+  ui.volume.setAttribute("aria-valuetext", `${ui.volume.value}%`);
+});
+ui.volume.addEventListener("pointerup", () => {
+  if (!volumeDirty && !volumePending) {
+    volumeEditing = false;
+    renderVolume();
+  }
+});
+for (const event of ["pointercancel", "blur"]) {
+  ui.volume.addEventListener(event, () => {
+    if (volumePending) return;
+    volumeEditing = false;
+    volumeDirty = false;
+    renderVolume();
+  });
+}
+ui.volume.addEventListener("change", async () => {
+  if (!volumeSupported || volumePending) return;
+  const volumePercent = Math.max(0, Math.min(100, Math.round(Number(ui.volume.value))));
+  const serial = ++volumeSerial;
+  const restoreFocus = document.activeElement === ui.volume;
+  volumeEditing = false;
+  volumeDirty = false;
+  volumePending = true;
+  ui.volume.disabled = true;
+  ui.volumeValue.textContent = `${volumePercent}%`;
+  ui.volume.setAttribute("aria-valuetext", `${volumePercent}%`);
+  try {
+    await invoke("set_volume", { volumePercent });
+    if (serial !== volumeSerial) return;
+    volumeConfirmed = volumePercent;
+  } catch (error) {
+    if (serial !== volumeSerial) return;
+    setNotice(String(error));
+  } finally {
+    if (serial === volumeSerial) {
+      volumePending = false;
+      renderVolume();
+      if (restoreFocus && document.activeElement === document.body) ui.volume.focus();
+    }
+  }
+});
 
 function seekToFraction(clientX: number) {
   if (!state.canSeek || state.sample.durationMs <= 0) return;
@@ -337,15 +509,22 @@ void appWindow.onFocusChanged(({ payload: focused }) => {
 // `body.is-compact` in the stylesheet, so the window can never be dragged
 // smaller than the three lines the mode promises.
 const COMPACT_MIN_WIDTH = 340;
-// Header only: the chrome row (32px) + gap (4px) + the art row (34px) + the
-// bottom padding (6px), with a little slack. The scrubber costs nothing extra
+// Header only: chrome (32px), art (34px), volume (24px), two gaps (8px)
+// and bottom padding (6px), with a little slack. The scrubber costs nothing extra
 // because compact lifts it into the chrome row.
-const COMPACT_CHROME = 80;
+const COMPACT_CHROME = 108;
 const FULL_MIN_WIDTH = 520;
 const FULL_MIN_HEIGHT = 460;
 
 const compactMinHeight = (lyricSize: number) =>
-  Math.ceil(3 * (lyricSize * 1.32 + 18)) + COMPACT_CHROME;
+  Math.ceil(3 * (document.body.classList.contains("has-translations") ? lyricSize * 2.23 + 22 : lyricSize * 1.32 + 18)) + COMPACT_CHROME;
+
+function updateTranslationLayout() {
+  const visible = element<HTMLInputElement>("show-translations").checked;
+  document.body.classList.toggle("hide-translations", !visible);
+  document.body.classList.toggle("has-translations", visible && state.cues.some((cue) => Boolean(cue.translation)));
+  if (config?.settings.compact) void applyWindowBounds(config.settings);
+}
 
 /** The full-mode size to come back to, remembered at the moment of switching. */
 let roomySize: LogicalSize | undefined;
@@ -499,7 +678,9 @@ function dismissOnClickAway(dialog: HTMLDialogElement, dismiss: () => void) {
 }
 
 function applyConfig(value: Config) {
+  const changedPlayer = config && config.settings.player !== value.settings.player;
   config = value;
+  if (changedPlayer) resetVolume();
   const { theme } = value.settings;
   document.documentElement.style.setProperty("--accent", theme.accent);
   document.documentElement.style.setProperty("--active-line", theme.activeLine);
@@ -646,6 +827,160 @@ element("source-save").addEventListener("click", async () => {
   finally { button.disabled = false; }
 });
 
+// Manual matching has one request serial shared by search and preview. Editing
+// a query, closing, or changing tracks invalidates any outstanding response.
+const searchDialog = element<HTMLDialogElement>("lyrics-search-dialog");
+const searchQuery = element<HTMLInputElement>("lyrics-query");
+const searchSource = element<HTMLSelectElement>("lyrics-search-source");
+const searchStatus = element("lyrics-search-status");
+const candidatesList = element("lyrics-candidates");
+const previewPanel = element("lyrics-preview-panel");
+const previewText = element("lyrics-preview");
+const matchApply = element<HTMLButtonElement>("lyrics-match-apply");
+const matchClear = element<HTMLButtonElement>("lyrics-match-clear");
+let searchTrackId = "";
+let searchSerial = 0;
+let selectedCandidate: LyricCandidate | undefined;
+let matchSaving = false;
+
+function resetSearch() {
+  searchSerial++;
+  selectedCandidate = undefined;
+  matchApply.disabled = true;
+  previewPanel.hidden = true;
+  previewText.textContent = "";
+  candidatesList.replaceChildren();
+  searchStatus.textContent = "";
+}
+
+function closeSearch() {
+  resetSearch();
+  searchDialog.close();
+  ui.search.focus();
+}
+
+const searchIsCurrent = (serial: number, trackId: string) =>
+  searchDialog.open && serial === searchSerial && trackId === state.trackId && trackId === searchTrackId;
+
+ui.search.addEventListener("click", () => {
+  if (!config || !state.trackId || matchSaving) return;
+  resetSearch();
+  searchTrackId = state.trackId;
+  element("lyrics-search-track").textContent = `${state.trackName} · ${ui.trackArtist.textContent}`;
+  searchQuery.value = `${state.trackName} ${ui.trackArtist.textContent}`.trim();
+  searchSource.replaceChildren();
+  for (const source of config.settings.sources) {
+    if (!source.enabled || !["lrclib", "netease", "qqmusic"].includes(source.id)) continue;
+    const label = config.providers.find((provider) => provider.id === source.id)?.label ?? source.id;
+    searchSource.add(new Option(label, source.id));
+  }
+  element<HTMLButtonElement>("lyrics-search-submit").disabled = !searchSource.options.length;
+  if (!searchSource.options.length) searchStatus.textContent = "Enable LRCLIB, NetEase or QQ Music in Settings to search.";
+  matchClear.disabled = !state.manual || matchSaving;
+  searchDialog.showModal();
+  searchQuery.focus();
+  searchQuery.select();
+});
+
+element("lyrics-search-close").addEventListener("click", closeSearch);
+dismissOnClickAway(searchDialog, closeSearch);
+searchDialog.addEventListener("close", () => { searchSerial++; });
+searchQuery.addEventListener("input", resetSearch);
+searchSource.addEventListener("change", resetSearch);
+element("show-translations").addEventListener("change", updateTranslationLayout);
+
+async function previewCandidate(candidate: LyricCandidate, button: HTMLButtonElement) {
+  const serial = ++searchSerial;
+  const trackId = searchTrackId;
+  selectedCandidate = undefined;
+  matchApply.disabled = true;
+  previewPanel.hidden = true;
+  searchStatus.textContent = "Loading preview…";
+  candidatesList.querySelectorAll("button").forEach((row) => row.setAttribute("aria-pressed", String(row === button)));
+  try {
+    const result = await invoke<LyricsResult>("preview_lyric_candidate", { trackId, candidate });
+    if (!searchIsCurrent(serial, trackId)) return;
+    const text = result.cues.length
+      ? result.cues.map((cue) => `${formatTime(cue.time_ms)}  ${cue.text}${cue.translation ? `\n    ${cue.translation}` : ""}`).join("\n")
+      : result.text;
+    previewText.textContent = text;
+    previewPanel.hidden = !text;
+    searchStatus.textContent = text ? "Preview ready. Use these lyrics to remember this match for this song." : "This candidate has no lyrics. Try another result.";
+    if (text) {
+      selectedCandidate = candidate;
+      matchApply.disabled = matchSaving;
+    }
+  } catch (error) {
+    if (searchIsCurrent(serial, trackId)) searchStatus.textContent = String(error);
+  }
+}
+
+element("lyrics-search-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (matchSaving || !searchQuery.value.trim() || !searchSource.value || searchTrackId !== state.trackId) return;
+  resetSearch();
+  const serial = searchSerial;
+  const trackId = searchTrackId;
+  searchStatus.textContent = "Searching…";
+  try {
+    const candidates = await invoke<LyricCandidate[]>("search_lyrics", {
+      trackId, query: searchQuery.value.trim(), source: searchSource.value,
+    });
+    if (!searchIsCurrent(serial, trackId)) return;
+    searchStatus.textContent = candidates.length ? `${candidates.length} results. Choose one to preview.` : "No results. Try another title, artist or source.";
+    for (const candidate of candidates) {
+      const row = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "lyric-candidate";
+      button.setAttribute("aria-pressed", "false");
+      const title = document.createElement("strong");
+      title.textContent = candidate.title;
+      const detail = document.createElement("span");
+      detail.textContent = [candidate.artists.join(", "), candidate.album, candidate.duration_ms > 0 ? formatTime(candidate.duration_ms) : "", candidate.source].filter(Boolean).join(" · ");
+      button.append(title, detail);
+      button.addEventListener("click", () => { if (!matchSaving) void previewCandidate(candidate, button); });
+      row.append(button);
+      candidatesList.append(row);
+    }
+  } catch (error) {
+    if (searchIsCurrent(serial, trackId)) searchStatus.textContent = String(error);
+  }
+});
+
+async function saveMatch(clear: boolean) {
+  if (matchSaving || searchTrackId !== state.trackId || !searchDialog.open || (!clear && !selectedCandidate)) return;
+  const serial = ++searchSerial;
+  const trackId = searchTrackId;
+  matchSaving = true;
+  ui.search.disabled = true;
+  searchQuery.disabled = true;
+  searchSource.disabled = true;
+  element<HTMLButtonElement>("lyrics-search-submit").disabled = true;
+  matchApply.disabled = true;
+  matchClear.disabled = true;
+  searchStatus.textContent = clear ? "Restoring automatic search…" : "Saving match…";
+  try {
+    await invoke(clear ? "clear_lyric_match" : "apply_lyric_match", clear ? { trackId } : { trackId, candidate: selectedCandidate });
+    if (searchIsCurrent(serial, trackId)) closeSearch();
+  } catch (error) {
+    if (searchIsCurrent(serial, trackId)) searchStatus.textContent = String(error);
+  } finally {
+    matchSaving = false;
+    ui.search.disabled = !state.trackId || !config;
+    if (!searchDialog.open) ui.search.focus();
+    searchQuery.disabled = false;
+    searchSource.disabled = false;
+    element<HTMLButtonElement>("lyrics-search-submit").disabled = !searchSource.options.length;
+    if (searchIsCurrent(serial, trackId)) {
+      matchApply.disabled = !selectedCandidate;
+      matchClear.disabled = !state.manual;
+    }
+  }
+}
+matchApply.addEventListener("click", () => void saveMatch(false));
+matchClear.addEventListener("click", () => void saveMatch(true));
+
 ui.notice.addEventListener("click", dismissNotice);
 
 ui.scrubber.addEventListener("pointerdown", (event) => {
@@ -686,14 +1021,17 @@ ui.follow.addEventListener("change", () => {
 // ------------------------------------------------------------------- events
 
 const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
+  receiveVolume(payload);
   const trackId = payload.hasTrack ? payload.trackId || `${payload.name}|${payload.durationMs}` : "";
   if (state.trackId !== trackId) {
     sourceDialog.close();
+    if (searchDialog.open) closeSearch();
     state.requestedSource = "";
   }
   state.trackId = trackId;
   ui.sourceBadge.disabled = !payload.hasTrack || !config;
   ui.reload.disabled = !payload.hasTrack;
+  ui.search.disabled = !payload.hasTrack || !config || matchSaving;
   state.sample = {
     positionMs: payload.progressMs,
     playing: payload.isPlaying,
@@ -732,7 +1070,7 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
 
 const lyricsReady = listen<LyricsEvent>("lyrics", ({ payload }) => {
   // A late answer for a song that already changed is not shown.
-  if (payload.generation !== state.generation) return;
+  if (payload.generation !== state.generation || payload.trackId !== state.trackId) return;
   renderLyrics(payload);
 });
 

@@ -13,7 +13,7 @@
 use roxmltree::Document;
 use serde_json::Value as JsonValue;
 
-use crate::lrc::Cue;
+use crate::lrc::{Cue, WordCue};
 use crate::matching::normalize;
 use crate::providers::{LyricsResult, ProviderError, TrackQuery};
 
@@ -130,7 +130,7 @@ async fn request(
     }))
 }
 
-/// Fold the per-word timings of a `<wsy>` document into one cue per line.
+/// Keep the per-word timings of a `<wsy>` document alongside its original line.
 pub fn parse_word_synced(xml: &str) -> Option<Vec<Cue>> {
     let document = Document::parse(xml).ok()?;
     let mut cues: Vec<Cue> = Vec::new();
@@ -170,9 +170,41 @@ pub fn parse_word_synced(xml: &str) -> Option<Vec<Cue>> {
                     .collect::<String>()
             });
 
+        let timed_words: Option<Vec<_>> = words
+            .iter()
+            .map(|word| {
+                let value = |name| {
+                    word.children()
+                        .find(|node| node.has_tag_name(name))
+                        .and_then(|node| node.text())
+                };
+                let start_ms = value("starttime")?.trim().parse::<i64>().ok()?.max(0);
+                let end_ms = value("endtime")?.trim().parse::<i64>().ok()?.max(0);
+                (end_ms >= start_ms).then(|| WordCue {
+                    start_ms,
+                    end_ms,
+                    text: value("wordstring").unwrap_or("").to_string(),
+                })
+            })
+            .collect();
+        let timed_words = timed_words
+            .filter(|words| {
+                words
+                    .iter()
+                    .map(|word| word.text.as_str())
+                    .collect::<String>()
+                    .trim()
+                    == text.trim()
+                    && words
+                        .windows(2)
+                        .all(|pair| pair[0].start_ms <= pair[1].start_ms)
+            })
+            .unwrap_or_default();
         cues.push(Cue {
             time_ms: start.max(0),
             text: text.trim().to_string(),
+            words: timed_words,
+            ..Default::default()
         });
     }
 
@@ -203,6 +235,7 @@ pub fn parse_mxm_subtitle(body: &str) -> Option<Vec<Cue>> {
         cues.push(Cue {
             time_ms: (seconds * 1000.0).round() as i64,
             text,
+            ..Default::default()
         });
     }
     if cues.is_empty() {
@@ -234,14 +267,16 @@ mod tests {
             cues[0],
             Cue {
                 time_ms: 0,
-                text: "LINE_A".into()
+                text: "LINE_A".into(),
+                ..Default::default()
             }
         );
         assert_eq!(
             cues[1],
             Cue {
                 time_ms: 1200,
-                text: "LINE_B".into()
+                text: "LINE_B".into(),
+                ..Default::default()
             }
         );
     }
@@ -256,9 +291,44 @@ mod tests {
             cues[0],
             Cue {
                 time_ms: 500,
-                text: "W1W2".into()
+                text: "W1W2".into(),
+                ..Default::default()
             }
         );
+    }
+
+    #[test]
+    fn word_timings_survive_when_they_cover_the_original_line() {
+        let xml = "<wsy><line><linestring>Hello world</linestring>\
+            <word><starttime>1000</starttime><endtime>1400</endtime><wordstring>Hello </wordstring></word>\
+            <word><starttime>1500</starttime><endtime>2000</endtime><wordstring>world</wordstring></word></line></wsy>";
+        let cues = parse_word_synced(xml).unwrap();
+        assert_eq!(
+            cues[0].words,
+            vec![
+                WordCue {
+                    start_ms: 1000,
+                    end_ms: 1400,
+                    text: "Hello ".into()
+                },
+                WordCue {
+                    start_ms: 1500,
+                    end_ms: 2000,
+                    text: "world".into()
+                },
+            ]
+        );
+        assert!(
+            parse_word_synced(&xml.replace("<endtime>1400</endtime>", "")).unwrap()[0]
+                .words
+                .is_empty()
+        );
+        assert!(parse_word_synced(
+            &xml.replace("<endtime>1400</endtime>", "<endtime>500</endtime>")
+        )
+        .unwrap()[0]
+            .words
+            .is_empty());
     }
 
     #[test]
@@ -278,14 +348,16 @@ mod tests {
             cues[0],
             Cue {
                 time_ms: 500,
-                text: "LINE_B".into()
+                text: "LINE_B".into(),
+                ..Default::default()
             }
         );
         assert_eq!(
             cues[1],
             Cue {
                 time_ms: 12_340,
-                text: "LINE_A".into()
+                text: "LINE_A".into(),
+                ..Default::default()
             }
         );
     }

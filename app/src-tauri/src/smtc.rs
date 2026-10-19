@@ -175,7 +175,10 @@ fn read_sample(session: &Session) -> Option<Sample> {
     Some(Sample {
         title: props.Title().map(|v| v.to_string()).unwrap_or_default(),
         artist: props.Artist().map(|v| v.to_string()).unwrap_or_default(),
-        album: props.AlbumTitle().map(|v| v.to_string()).unwrap_or_default(),
+        album: props
+            .AlbumTitle()
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
         art: props.Thumbnail().ok().as_ref().and_then(read_art),
         status: info.PlaybackStatus().unwrap_or(Status::Closed),
         anchor_ms: timeline.Position().map(ms).unwrap_or_default(),
@@ -262,7 +265,10 @@ impl Watch {
             can_skip_next: sample.can_next,
             can_skip_previous: sample.can_previous,
             can_seek: sample.can_seek,
+            volume_percent: None,
+            can_set_volume: false,
             device_name: (!sample.app.is_empty()).then_some(sample.app),
+            device_id: None,
             source: PlayerKind::Ytmusic,
         }
     }

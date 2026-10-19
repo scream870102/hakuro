@@ -74,6 +74,9 @@ pub struct Playback {
     pub can_skip_previous: bool,
     pub can_seek: bool,
     pub device_name: Option<String>,
+    pub device_id: Option<String>,
+    pub volume_percent: Option<u8>,
+    pub can_set_volume: bool,
     /// Which backend produced this sample. Part of the database key.
     pub source: PlayerKind,
 }
@@ -172,6 +175,19 @@ impl Player {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.seek(position_ms).await.map_err(Into::into),
             Backend::Ytmusic(client) => client.seek(position_ms).await,
+        }
+    }
+
+    pub async fn set_volume(
+        &self,
+        volume_percent: u8,
+        device_id: Option<String>,
+    ) -> Result<(), PlayerError> {
+        match self.backend.as_ref() {
+            Backend::Spotify(client) => client.set_volume(volume_percent, device_id.as_deref()).await.map_err(Into::into),
+            Backend::Ytmusic(_) => Err(PlayerError::Refused {
+                message: "Change volume in YouTube Music; its media session does not expose volume control.".into(),
+            }),
         }
     }
 }
