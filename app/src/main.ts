@@ -4,11 +4,14 @@
  * line moves smoothly instead of stepping once every 1.5 s.
  */
 
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { activeLine, emptySample, formatTime, positionAt, type Sample } from "./clock";
+import { createDeck, type CubeFace } from "./deck";
+import { createPalette, type Command } from "./palette";
 
 interface Cue {
   time_ms: number;
@@ -110,9 +113,6 @@ const element = <T extends HTMLElement>(id: string): T => {
 const ui = {
   trackName: element("track-name"),
   trackArtist: element("track-artist"),
-  albumArt: element<HTMLImageElement>("album-art"),
-  backdropA: element("backdrop-a"),
-  backdropB: element("backdrop-b"),
   sourceBadge: element<HTMLButtonElement>("source-badge"),
   statusText: element("status-text"),
   lyrics: element("lyrics"),
@@ -127,6 +127,10 @@ const ui = {
   previous: element<HTMLButtonElement>("previous"),
   playPause: element<HTMLButtonElement>("play-pause"),
   next: element<HTMLButtonElement>("next"),
+  barPrevious: element<HTMLButtonElement>("bar-prev"),
+  barNext: element<HTMLButtonElement>("bar-next"),
+  lineNow: element("line-now"),
+  lineTotal: element("line-total"),
   follow: element<HTMLInputElement>("follow"),
   pin: element<HTMLButtonElement>("pin"),
   mode: element<HTMLButtonElement>("mode-toggle"),
@@ -155,13 +159,14 @@ const state = {
   canSeek: false,
   isPlaying: false,
   albumArt: null as string | null,
-  /** Which backdrop layer currently shows the artwork. */
-  frontLayer: ui.backdropA,
   /** Suppresses auto-scroll briefly after the reader scrolls by hand. */
   manualScrollUntil: 0,
   notice: "",
   statusNotice: "",
 };
+
+const deck = createDeck({ seekBy });
+const lineNumber = (index: number) => String(index + 1).padStart(2, "0");
 
 // ---------------------------------------------------------------- rendering
 
@@ -189,6 +194,7 @@ function dismissNotice() {
 function renderTrackName() {
   const alternate = state.matchedTitle && state.matchedTitle !== state.trackName;
   ui.trackName.textContent = state.trackName + (alternate ? ` (${state.matchedTitle})` : "");
+  deck.setTitle(state.trackName === "No track playing" ? "" : state.trackName);
 }
 
 function clearLyrics(placeholder: string) {
@@ -202,6 +208,8 @@ function clearLyrics(placeholder: string) {
   state.cueTimes = [];
   state.highlighted = -1;
   state.synced = false;
+  ui.lineNow.textContent = "--";
+  ui.lineTotal.textContent = "--";
   ui.sourceBadge.textContent = "Lyrics source ▾";
   ui.lyricsEmpty.textContent = placeholder;
   ui.lyricsEmpty.hidden = false;
@@ -211,17 +219,18 @@ function clearLyrics(placeholder: string) {
 function showAlbumArt(url: string | null) {
   if (url === state.albumArt) return;
   state.albumArt = url;
+  // The cover is the cube's front face (and the record's label).
+  deck.setCover(url);
+}
 
-  ui.albumArt.classList.toggle("is-loaded", Boolean(url));
-  if (url) ui.albumArt.src = url;
-  else ui.albumArt.removeAttribute("src");
-
-  // Cross-fade between the two layers so the background never flashes black.
-  const incoming = state.frontLayer === ui.backdropA ? ui.backdropB : ui.backdropA;
-  incoming.style.backgroundImage = url ? `url("${url}")` : "none";
-  incoming.classList.toggle("is-visible", Boolean(url));
-  state.frontLayer.classList.remove("is-visible");
-  state.frontLayer = incoming;
+/** New lyrics drop in line by line; the class goes again so later slams are not masked. */
+let dropTimer = 0;
+function dropIn() {
+  ui.lyricsList.classList.remove("drop");
+  void ui.lyricsList.offsetWidth;
+  ui.lyricsList.classList.add("drop");
+  clearTimeout(dropTimer);
+  dropTimer = window.setTimeout(() => ui.lyricsList.classList.remove("drop"), 1200);
 }
 
 function renderLyrics(event: LyricsEvent) {
@@ -253,8 +262,12 @@ function renderLyrics(event: LyricsEvent) {
       const span = document.createElement("span");
       span.className = "lyric-word";
       span.textContent = word.text;
+      // The highlighter wipe repeats the word over itself.
+      span.dataset.t = word.text;
       return span;
     });
+    line.style.setProperty("--i", String(index));
+    if (spans.length) line.classList.add("line--words");
     if (spans.length) line.append(...spans);
     else line.textContent = text || " ";
     state.wordSpans.push(spans);
@@ -272,6 +285,8 @@ function renderLyrics(event: LyricsEvent) {
   ui.sourceBadge.textContent = `${event.source} · ${event.synced ? "Synced" : "Plain"}${state.manual ? " · Manual" : ""}`;
   ui.sourceBadge.className = event.synced ? "badge badge--synced" : "badge";
   ui.sourceBadge.hidden = false;
+  if (event.synced) ui.lineTotal.textContent = String(rows.length).padStart(2, "0");
+  dropIn();
   setNotice(event.partial ? "Some lyrics sources were unavailable." : "");
   updateTranslationLayout();
 }
@@ -286,15 +301,29 @@ function highlight(index: number) {
   });
 
   const current = state.lines[index];
+  ui.lineNow.textContent = current ? lineNumber(index) : "--";
   if (current) {
     current.classList.add("is-active");
-    if (ui.follow.checked && performance.now() > state.manualScrollUntil) {
-      // Centre the line rather than merely bringing it into view.
-      const target = current.offsetTop - ui.lyrics.clientHeight / 2 + current.clientHeight / 2;
-      ui.lyrics.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+    if (centre(current, "smooth") && state.highlighted >= 0 && index === state.highlighted + 1) {
+      // Only the song moving on by itself throws shards; seeks stay quiet.
+      deck.lineChanged(current);
     }
   }
   state.highlighted = index;
+}
+
+/** Centre a line rather than merely bringing it into view, unless the reader has taken over. */
+function centre(line: HTMLElement, behavior: ScrollBehavior) {
+  if (!ui.follow.checked || performance.now() <= state.manualScrollUntil) return false;
+  const target = line.offsetTop - ui.lyrics.clientHeight / 2 + line.clientHeight / 2;
+  ui.lyrics.scrollTo({ top: Math.max(0, target), behavior });
+  return true;
+}
+
+/** A mode switch or a resize moves every line; put the one being sung back in the middle. */
+function recentre() {
+  const current = state.lines[state.highlighted];
+  if (current) centre(current, "instant");
 }
 
 function frame() {
@@ -320,10 +349,20 @@ function frame() {
     highlight(index);
     state.wordSpans[index]?.forEach((span, wordIndex) => {
       const word = state.cues[index].words![wordIndex];
-      span.classList.toggle("is-singing", position >= word.start_ms && position < word.end_ms);
+      const singing = position >= word.start_ms && position < word.end_ms;
+      span.classList.toggle("is-singing", singing);
       span.classList.toggle("is-sung", position >= word.end_ms);
+      if (singing) span.style.setProperty("--p", `${(((position - word.start_ms) / Math.max(1, word.end_ms - word.start_ms)) * 100).toFixed(1)}%`);
     });
+    // Line-timed lyrics show how far through the line the song is.
+    const line = state.lines[index];
+    if (line) {
+      const start = state.cueTimes[index];
+      const end = state.cueTimes[index + 1] ?? duration;
+      line.style.setProperty("--lp", (end > start ? Math.min(1, Math.max(0, (position - start) / (end - start))) : 0).toFixed(3));
+    }
   }
+  deck.tick(now);
   requestAnimationFrame(frame);
 }
 
@@ -505,14 +544,12 @@ void appWindow.onFocusChanged(({ payload: focused }) => {
   applyClickThrough();
 });
 
-// Compact keeps the header, three lines and the scrubber. These numbers mirror
-// `body.is-compact` in the stylesheet, so the window can never be dragged
-// smaller than the three lines the mode promises.
+// Compact keeps the header, the cube beside three lines, and the bar. These
+// numbers mirror `body.is-compact` in the stylesheet, so the window can never be
+// dragged smaller than the three lines the mode promises.
 const COMPACT_MIN_WIDTH = 340;
-// Header only: chrome (32px), art (34px), volume (24px), two gaps (8px)
-// and bottom padding (6px), with a little slack. The scrubber costs nothing extra
-// because compact lifts it into the chrome row.
-const COMPACT_CHROME = 108;
+// Chrome (32px) and bar (34px) rows, their two hairlines, and a little slack.
+const COMPACT_CHROME = 72;
 const FULL_MIN_WIDTH = 520;
 const FULL_MIN_HEIGHT = 460;
 
@@ -594,7 +631,10 @@ element("win-close").addEventListener("click", () => void appWindow.close());
 async function syncMaximized() {
   document.body.classList.toggle("is-maximized", await appWindow.isMaximized());
 }
-window.addEventListener("resize", () => void syncMaximized());
+window.addEventListener("resize", () => {
+  void syncMaximized();
+  recentre();
+});
 
 // --------------------------------------------------------------- transport
 
@@ -604,6 +644,26 @@ ui.previous.addEventListener("click", () => void send("previous_track"));
 ui.reload.addEventListener("click", () => void send("reload_lyrics"));
 element("refresh-playback").addEventListener("click", () => void send("refresh_playback"));
 ui.reconnect.addEventListener("click", () => void send("connect"));
+// Compact's skip buttons are the cube's, moved to the bar.
+ui.barPrevious.addEventListener("click", () => ui.previous.click());
+ui.barNext.addEventListener("click", () => ui.next.click());
+
+/** Seek relative to where the song is now: the record's spin and the palette. */
+function seekBy(deltaMs: number) {
+  if (!state.canSeek || state.sample.durationMs <= 0) return;
+  const now = performance.now();
+  const positionMs = Math.round(Math.min(state.sample.durationMs, Math.max(0, positionAt(state.sample, now) + deltaMs)));
+  state.sample = { ...state.sample, positionMs, receivedAt: now };
+  void send("seek", { positionMs });
+}
+
+/** The same input/change pair a key press on the volume slider makes. */
+function nudgeVolume(delta: number) {
+  if (ui.volume.disabled) return;
+  ui.volume.value = String(Math.max(0, Math.min(100, Number(ui.volume.value) + delta)));
+  ui.volume.dispatchEvent(new Event("input"));
+  ui.volume.dispatchEvent(new Event("change"));
+}
 
 let config: Config | undefined;
 let draft: Settings;
@@ -616,6 +676,13 @@ const DIALS = [
 ] as const;
 
 const dialValue = (id: string) => Number(element<HTMLInputElement>(id).value);
+
+/** The slider track fills up to the thumb; CSS cannot read a range's value. */
+function paintRange(input: HTMLInputElement) {
+  const min = Number(input.min);
+  const max = Number(input.max);
+  input.style.setProperty("--p", `${((Number(input.value) - min) / (max - min)) * 100}%`);
+}
 
 /**
  * Show the panel's numbers on the window behind it, for whichever mode is on.
@@ -634,6 +701,7 @@ for (const dial of DIALS) {
   const input = element<HTMLInputElement>(dial.input);
   input.addEventListener("input", () => {
     element(dial.output).textContent = `${input.value}${dial.unit}`;
+    paintRange(input);
     previewWindowStyle();
   });
 }
@@ -688,6 +756,7 @@ function applyConfig(value: Config) {
   ui.follow.checked = value.settings.followLyrics;
 
   const { compact } = value.settings;
+  const switched = document.body.classList.contains("is-compact") !== compact;
   document.body.classList.toggle("is-compact", compact);
   ui.mode.setAttribute("aria-pressed", String(compact));
   ui.mode.title = compact ? "Full mode" : "Compact mode";
@@ -695,6 +764,7 @@ function applyConfig(value: Config) {
     compact ? value.settings.compactOpacity : value.settings.opacity,
     compact ? value.settings.compactLyricSize : value.settings.lyricSize,
   );
+  if (switched) recentre();
   void applyWindowBounds(value.settings);
   setPinned(value.settings.alwaysOnTop);
 }
@@ -762,6 +832,7 @@ async function openSettings() {
     for (const dial of DIALS) {
       element<HTMLInputElement>(dial.input).value = String(draft[dial.key]);
       element(dial.output).textContent = `${draft[dial.key]}${dial.unit}`;
+      paintRange(element<HTMLInputElement>(dial.input));
     }
     element<HTMLSelectElement>("settings-click-through").value = draft.clickThrough;
     element("storage-info").textContent = `Data folder: ${value.dataDir} · Cached songs: ${value.storedTracks}`;
@@ -1027,6 +1098,8 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
     sourceDialog.close();
     if (searchDialog.open) closeSearch();
     state.requestedSource = "";
+    // A new song spins the cube; its cover goes on while the front faces away.
+    if (state.trackId && trackId) deck.trackChanged();
   }
   state.trackId = trackId;
   ui.sourceBadge.disabled = !payload.hasTrack || !config;
@@ -1041,10 +1114,13 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
   state.isPlaying = payload.isPlaying;
   state.canSeek = payload.hasTrack && payload.canSeek;
   document.body.classList.toggle("is-playing", payload.isPlaying);
+  deck.setPlaying(payload.isPlaying);
 
   ui.playPause.disabled = !payload.hasTrack;
   ui.next.disabled = !payload.hasTrack || !payload.canSkipNext;
   ui.previous.disabled = !payload.hasTrack || !payload.canSkipPrevious;
+  ui.barNext.disabled = ui.next.disabled;
+  ui.barPrevious.disabled = ui.previous.disabled;
   ui.scrubber.classList.toggle("is-disabled", !state.canSeek);
   ui.scrubber.setAttribute("aria-disabled", String(!state.canSeek));
 
@@ -1091,6 +1167,92 @@ const statusReady = listen<StatusEvent>("status", ({ payload }) => {
   if (!ui.reconnect.hidden) wake();
 });
 
+// ------------------------------------------------------------ command palette
+
+/** Shown in Settings and the palette; Tauri reads it from the bundle. */
+let appVersion = "";
+const showTranslations = element<HTMLInputElement>("show-translations");
+const onOff = (on: boolean) => ({ text: on ? "ON" : "OFF", on });
+const usable = (button: HTMLButtonElement) => () => !button.disabled;
+const turn = (face: CubeFace, label: string, hint: string, words: string): Command =>
+  ({ group: "CUBE", icon: "■", label: `Turn cube: ${label}`, hint, words, run: () => deck.turnTo(face) });
+
+// Most commands click the control that already does the job, so the palette can
+// never disagree with the window about what a command means.
+const COMMANDS: Command[] = [
+  {
+    group: "PLAYBACK", icon: () => (state.isPlaying ? "❚❚" : "▶"),
+    label: () => (state.isPlaying ? "Pause" : "Play"), hint: () => (state.isPlaying ? "暫停" : "播放"),
+    words: "toggle play pause", enabled: usable(ui.playPause), run: () => ui.playPause.click(),
+  },
+  { group: "PLAYBACK", icon: "»", label: "Next track", hint: "下一首", words: "skip", enabled: usable(ui.next), run: () => ui.next.click() },
+  { group: "PLAYBACK", icon: "«", label: "Previous track", hint: "上一首", words: "skip back", enabled: usable(ui.previous), run: () => ui.previous.click() },
+  { group: "PLAYBACK", icon: "→", label: "Forward 10 seconds", hint: "快轉 10 秒", words: "seek", enabled: () => state.canSeek, run: () => seekBy(10_000) },
+  { group: "PLAYBACK", icon: "←", label: "Back 10 seconds", hint: "倒轉 10 秒", words: "seek rewind", enabled: () => state.canSeek, run: () => seekBy(-10_000) },
+  { group: "PLAYBACK", icon: "+", label: "Volume up", hint: "音量 +5", words: "louder", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(5) },
+  { group: "PLAYBACK", icon: "−", label: "Volume down", hint: "音量 −5", words: "quieter", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(-5) },
+  { group: "PLAYBACK", icon: "↺", label: "Refresh playback", hint: "重新整理播放狀態", words: "sync", run: () => element("refresh-playback").click() },
+  { group: "PLAYBACK", icon: "!", label: "Retry connection", hint: "重新連線", words: "reconnect", visible: () => !ui.reconnect.hidden, run: () => ui.reconnect.click() },
+  { group: "LYRICS", icon: "↧", label: "Follow lyrics", hint: "自動跟隨歌詞", words: "scroll auto", state: () => onOff(ui.follow.checked), enabled: () => !ui.follow.disabled, run: () => ui.follow.click() },
+  {
+    group: "LYRICS", icon: "文", label: "Show translations", hint: "顯示翻譯", words: "translation bilingual",
+    state: () => onOff(showTranslations.checked),
+    run: () => {
+      showTranslations.checked = !showTranslations.checked;
+      showTranslations.dispatchEvent(new Event("change"));
+    },
+  },
+  { group: "LYRICS", icon: "⌕", label: "Find lyrics…", hint: "搜尋歌詞", words: "search match", enabled: usable(ui.search), run: () => ui.search.click() },
+  { group: "LYRICS", icon: "⇄", label: "Lyrics source…", hint: "歌詞來源", words: "provider", enabled: usable(ui.sourceBadge), run: () => ui.sourceBadge.click() },
+  { group: "LYRICS", icon: "↻", label: "Reload lyrics", hint: "重新載入歌詞", words: "refresh download", enabled: usable(ui.reload), run: () => ui.reload.click() },
+  { group: "WINDOW", icon: "◱", label: "Compact mode", hint: "精簡模式", words: "mini small", state: () => onOff(document.body.classList.contains("is-compact")), enabled: usable(ui.mode), run: () => ui.mode.click() },
+  { group: "WINDOW", icon: "▲", label: "Keep on top", hint: "置頂", words: "pin always", state: () => onOff(ui.pin.getAttribute("aria-pressed") === "true"), enabled: usable(ui.pin), run: () => ui.pin.click() },
+  { group: "WINDOW", icon: "≡", label: "Settings…", hint: () => (appVersion ? `設定 · v${appVersion}` : "設定"), words: "preferences options version 版本", run: () => element("settings-open").click() },
+  { group: "WINDOW", icon: "_", label: "Minimize", hint: "最小化", words: "hide", run: () => element("win-minimize").click() },
+  { group: "WINDOW", icon: "□", label: () => (document.body.classList.contains("is-maximized") ? "Restore" : "Maximize"), hint: "最大化", words: "maximize restore full", run: () => element("win-maximize").click() },
+  turn("front", "Cover", "方塊轉到封面", "front"),
+  turn("right", "Volume", "方塊轉到音量", "right dial skip"),
+  turn("back", "Lyric tools", "方塊轉到歌詞工具", "back source find"),
+  turn("left", "Window tools", "方塊轉到視窗工具", "left follow pin"),
+];
+
+/** Typing a fragment of the lyrics finds the line; picking it seeks there. */
+function lyricHits(query: string) {
+  if (!state.synced) return [];
+  const hits = [];
+  for (const [index, cue] of state.cues.entries()) {
+    const text = cue.text.trim();
+    if (!text) continue;
+    if (!text.toLowerCase().includes(query) && !(cue.translation ?? "").toLowerCase().includes(query)) continue;
+    hits.push({
+      number: index + 1,
+      text,
+      translation: cue.translation ?? "",
+      time: formatTime(cue.time_ms),
+      run: () => {
+        if (!state.canSeek) return;
+        state.manualScrollUntil = 0;
+        void send("seek", { positionMs: cue.time_ms });
+      },
+    });
+    if (hits.length === 8) break;
+  }
+  return hits;
+}
+
+const palette = createPalette({ commands: COMMANDS, lyrics: lyricHits, lyricsTitle: () => state.trackName });
+const paletteDialog = element<HTMLDialogElement>("palette");
+element("cmdk-open").addEventListener("click", () => palette.open());
+dismissOnClickAway(paletteDialog, () => paletteDialog.close());
+
+async function showVersion() {
+  try {
+    appVersion = await getVersion();
+    element("app-version").textContent = `v${appVersion}`;
+    palette.setVersion(appVersion);
+  } catch { /* outside Tauri there is no bundle to ask; the dash stays */ }
+}
+
 requestAnimationFrame(frame);
 
 // Connect only once the listeners above exist, so no status is emitted into the
@@ -1099,6 +1261,7 @@ async function start() {
   try {
     await Promise.all([playbackReady, lyricsReady, statusReady, clickThroughReady]);
     void syncMaximized();
+    void showVersion();
     applyConfig(await invoke<Config>("get_config"));
     // Only Spotify needs anything typed in before it can connect.
     if (config!.settings.player === "spotify" && !config!.settings.clientId) {

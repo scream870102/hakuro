@@ -7,19 +7,31 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <!-- Album art, blurred and scaled, sits behind everything and cross-fades on track change. -->
-    <div class="backdrop" aria-hidden="true">
-      <div class="backdrop__layer" id="backdrop-a"></div>
-      <div class="backdrop__layer" id="backdrop-b"></div>
-      <div class="backdrop__scrim"></div>
+    <!-- The poster behind everything: one acid band, the song title as an outline, grain. -->
+    <div class="bg" aria-hidden="true">
+      <div class="bg__band"></div>
+      <div class="bg__band bg__band--thin"></div>
+      <div class="bg__word" id="bg-word"></div>
+      <svg class="bg__shards" viewBox="0 0 940 760" preserveAspectRatio="xMidYMid slice">
+        <g fill="#000"><path d="M80 120l26 8-20 18z"/><path d="M300 90l14 22-24 2z"/><path d="M40 420l30-6-10 26z"/><path d="M330 470l18 4-12 14z"/></g>
+        <g class="bg__shards--accent"><path d="M520 70l10 16-18 0z"/><path d="M880 210l14 10-16 6z"/><path d="M610 690l20-4-6 16z"/><path d="M890 600l-12 14-6-16z"/></g>
+        <g fill="#3a3a3a"><path d="M700 130l18 6-12 12z"/><path d="M760 520l16-10 2 18z"/></g>
+      </svg>
+      <div class="bg__grain"></div>
     </div>
 
-    <header class="titlebar" data-tauri-drag-region="deep">
+    <header class="chrome" data-tauri-drag-region="deep">
       <!-- Native chrome is off, so the window's own controls live here. Buttons
            block dragging by themselves, which is why the whole bar can be
-           "deep": the art and the track name drag the window, these do not. -->
+           "deep": the brand and the status drag the window, these do not. -->
+      <div class="brand"><span class="brand__mark">H</span><span class="brand__name">HAKURO</span></div>
+      <span class="status" id="status-text">Connecting…</span>
+      <button class="cmdk" id="cmdk-open" type="button" title="Command palette (Ctrl+K)"
+              aria-label="Command palette" aria-haspopup="dialog">
+        <b>›_</b><span>COMMANDS</span><kbd>CTRL</kbd><kbd>K</kbd>
+      </button>
+      <div class="chrome__spacer"></div>
       <div class="window-controls">
-        <span class="status" id="status-text">Connecting…</span>
         <button class="window-button" id="lyrics-search-open" type="button" disabled
                 title="Find lyrics" aria-label="Find lyrics" aria-haspopup="dialog">
           <svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="5" cy="5" r="3"/><path d="m7.3 7.3 3 3"/></svg>
@@ -50,6 +62,7 @@
             <path d="M3.6 1.4h4.8M5 1.4v2.8L3.4 6h5.2L7 4.2V1.4M6 6v3.2"/>
           </svg>
         </button>
+        <span class="window-controls__sep" aria-hidden="true"></span>
         <button class="window-button" id="win-minimize" type="button" title="Minimize" aria-label="Minimize">
           <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6h7"/></svg>
         </button>
@@ -61,72 +74,130 @@
           <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 2.6l6.8 6.8M9.4 2.6l-6.8 6.8"/></svg>
         </button>
       </div>
-
-      <div class="titlebar__meta">
-        <img class="titlebar__art" id="album-art" alt="" />
-        <div class="titlebar__text">
-          <h1 class="titlebar__track" id="track-name">No track playing</h1>
-          <p class="titlebar__artist" id="track-artist"></p>
-        </div>
-      </div>
-      <div class="titlebar__status">
-        <button class="badge" id="source-badge" disabled aria-haspopup="dialog">Lyrics source ▾</button>
-      </div>
-      <div class="volume-control" id="volume-control" title="Volume control is unavailable for this player or device">
-        <label for="volume">Volume</label>
-        <input id="volume" type="range" min="0" max="100" step="1" value="0" disabled aria-describedby="volume-value" />
-        <output id="volume-value" for="volume">—</output>
-      </div>
     </header>
 
-    <main class="stage">
-      <div class="lyrics" id="lyrics" tabindex="0">
-        <div class="lyrics__empty" id="lyrics-empty">Waiting for playback…</div>
-        <ol class="lyrics__list" id="lyrics-list"></ol>
-      </div>
-      <button class="notice" id="notice" type="button" hidden aria-live="polite"></button>
+    <main class="deck">
+      <section class="object-zone">
+        <!-- The controls live on a cube you can grab and turn: the cover on the
+             front (tap it to play or pause), volume and skip on the right, the
+             record on top, lyric and window tools round the back. -->
+        <div class="scene" id="scene">
+          <div class="glow" id="glow"></div>
+          <div class="shadow" id="shadow"></div>
+          <div class="cube" id="cube">
+            <div class="core"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="face face--top" data-face="top">
+              <div class="vinyl" id="vinyl" title="Click to play or pause · spin to seek">
+                <div class="disc" id="disc"><div class="disc__label"><img id="disc-art" alt="" draggable="false" /></div></div>
+                <div class="vinyl__sheen"></div><div class="vinyl__pin"></div>
+              </div>
+            </div>
+            <div class="face face--front" data-face="front" id="cover-face">
+              <img class="cover cover--base" id="album-art" alt="" draggable="false" />
+              <img class="cover cover--peek" id="cover-peek" alt="" draggable="false" />
+              <div class="cover-empty"><span>H</span><small>NO COVER</small></div>
+              <div class="cover-shade"></div>
+              <i class="lens"></i>
+              <!-- The face takes the pointer (a tap toggles, a drag turns the cube);
+                   this button is the same control for the keyboard. -->
+              <button class="cover-hit" id="play-pause" type="button" disabled
+                      title="Play or pause" aria-label="Play or pause"></button>
+            </div>
+            <div class="face face--right" data-face="right">
+              <span class="face__label">02 VOLUME</span>
+              <div class="spill"></div>
+              <div class="dial" id="volume-control" title="Volume control is unavailable for this player or device">
+                <div class="dial__ticks"></div><div class="dial__ring"></div><div class="dial__cap"></div>
+                <div class="dial__read">
+                  <output id="volume-value" for="volume">—</output><small>VOL</small>
+                  <div class="skip">
+                    <button class="glow-btn" id="previous" type="button" disabled title="Previous track" aria-label="Previous track">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg>
+                    </button>
+                    <button class="glow-btn" id="next" type="button" disabled title="Next track" aria-label="Next track">
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg>
+                    </button>
+                  </div>
+                </div>
+                <!-- The dial is drawn; this range is the real control, for the keyboard and for main.ts. -->
+                <input class="dial__input" id="volume" type="range" min="0" max="100" step="1" value="0" disabled
+                       aria-label="Volume" aria-describedby="volume-value" />
+              </div>
+            </div>
+            <div class="face face--back" data-face="back">
+              <span class="face__label">03 LYRICS</span>
+              <div class="tools">
+                <button class="tool" type="button" data-proxy="source-badge">SOURCE <b>▾</b></button>
+                <button class="tool" type="button" data-proxy="lyrics-search-open">FIND <b>⌕</b></button>
+                <button class="tool" type="button" data-proxy="reload">RELOAD <b>↻</b></button>
+              </div>
+            </div>
+            <div class="face face--left" data-face="left">
+              <span class="face__label">04 WINDOW</span>
+              <div class="tools">
+                <button class="tool" type="button" data-proxy="follow" aria-pressed="true">FOLLOW <b>ON</b></button>
+                <button class="tool" type="button" data-proxy="pin" aria-pressed="false">PIN <b>TOP</b></button>
+                <button class="tool" type="button" data-proxy="mode-toggle" aria-pressed="false">MINI <b>◱</b></button>
+              </div>
+            </div>
+            <div class="face face--bottom" data-face="bottom"><span class="logo">H</span></div>
+          </div>
+          <div class="hint" id="cube-hint">DRAG THE CUBE TO TURN IT ↻</div>
+        </div>
+        <div class="meta">
+          <div class="meta__eyebrow">NOW PLAYING</div>
+          <h1 class="meta__title" id="track-name">No track playing</h1>
+          <p class="meta__artist" id="track-artist"></p>
+        </div>
+      </section>
+
+      <section class="lyrics-zone">
+        <div class="lyrics-head">
+          <button class="badge" id="source-badge" type="button" disabled aria-haspopup="dialog">Lyrics source ▾</button>
+          <span class="counter"><b id="line-now">--</b> / <span id="line-total">--</span></span>
+        </div>
+        <div class="lyrics" id="lyrics" tabindex="0">
+          <div class="lyrics__empty" id="lyrics-empty">Waiting for playback…</div>
+          <ol class="lyrics__list" id="lyrics-list"></ol>
+        </div>
+        <div class="shards" id="shards" aria-hidden="true"></div>
+        <button class="notice" id="notice" type="button" hidden aria-live="polite"></button>
+      </section>
     </main>
 
-    <footer class="controls">
+    <footer class="bar">
+      <span class="time" id="time-current">00:00</span>
       <div class="scrubber" id="scrubber" role="slider" aria-label="Seek"
            aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0">
-        <div class="scrubber__track">
-          <div class="scrubber__buffer"></div>
-          <div class="scrubber__fill" id="scrubber-fill"></div>
-          <div class="scrubber__knob" id="scrubber-knob"></div>
-        </div>
+        <div class="scrubber__track"><div class="scrubber__fill" id="scrubber-fill"></div></div>
+        <div class="scrubber__knob" id="scrubber-knob"></div>
       </div>
-
-      <div class="controls__row">
-        <span class="time" id="time-current">00:00</span>
-
-        <div class="transport">
-          <button class="transport__button" id="previous" disabled title="Previous track" aria-label="Previous track">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 6v12M19 6.5v11a.8.8 0 0 1-1.25.66l-8-5.5a.8.8 0 0 1 0-1.32l8-5.5A.8.8 0 0 1 19 6.5Z"/></svg>
-          </button>
-          <button class="transport__button transport__button--primary" id="play-pause" disabled title="Play or pause" aria-label="Play or pause">
-            <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-play"><path d="M8 5.5v13a.8.8 0 0 0 1.23.67l10-6.5a.8.8 0 0 0 0-1.34l-10-6.5A.8.8 0 0 0 8 5.5Z"/></svg>
-            <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-pause"><path d="M8 5h3v14H8zM13 5h3v14h-3z"/></svg>
-          </button>
-          <button class="transport__button" id="next" disabled title="Next track" aria-label="Next track">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 6v12M5 6.5v11a.8.8 0 0 0 1.25.66l8-5.5a.8.8 0 0 0 0-1.32l-8-5.5A.8.8 0 0 0 5 6.5Z"/></svg>
-          </button>
-        </div>
-
-        <span class="time" id="time-total">00:00</span>
-      </div>
-
-      <div class="controls__row controls__row--secondary">
-        <label class="toggle">
-          <input type="checkbox" id="follow" checked />
-          <span class="toggle__track"><span class="toggle__thumb"></span></span>
-          <span class="toggle__label">Follow lyrics</span>
+      <span class="time" id="time-total">00:00</span>
+      <!-- Compact only: the cube is too small there to hit the skip buttons on its side. -->
+      <button class="bar__skip" id="bar-prev" type="button" disabled title="Previous track" aria-label="Previous track">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg>
+      </button>
+      <button class="bar__skip" id="bar-next" type="button" disabled title="Next track" aria-label="Next track">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg>
+      </button>
+      <div class="bar__aside">
+        <label class="bar__btn bar__follow" title="Follow lyrics">
+          <input type="checkbox" id="follow" checked /><i></i><span>FOLLOW</span>
         </label>
-        <div class="controls__spacer"></div>
-        <button class="ghost-button" id="reload" disabled title="Download lyrics again, bypassing the cache">Refresh lyrics</button>
-        <button class="ghost-button" id="reconnect" hidden>Retry connection</button>
+        <button class="bar__btn" id="reload" type="button" disabled title="Download lyrics again, bypassing the cache">↻ RELOAD</button>
       </div>
+      <button class="bar__btn bar__btn--alert" id="reconnect" type="button" hidden>RETRY CONNECTION</button>
     </footer>
+
+    <dialog class="palette" id="palette" aria-label="Command palette">
+      <div class="pal__head"><span>COMMAND PALETTE</span><span id="pal-version">HAKURO</span></div>
+      <label class="pal__field"><b aria-hidden="true">›</b>
+        <input class="pal__input" id="pal-input" type="text" placeholder="Type a command or a lyric…"
+               autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="pal-list" />
+      </label>
+      <div class="pal__list" id="pal-list" role="listbox" aria-label="Commands"></div>
+      <div class="pal__foot"><span><kbd>↑↓</kbd> MOVE</span><span><kbd>ENTER</kbd> RUN</span><span><kbd>ESC</kbd> CLOSE</span></div>
+    </dialog>
 
     <dialog id="source-dialog" aria-labelledby="source-title">
       <h2 id="source-title">Source for this song</h2>
@@ -138,7 +209,7 @@
       <p id="source-error" role="alert"></p>
       <div class="dialog-actions">
         <button class="ghost-button" id="source-cancel">Cancel</button>
-        <button class="ghost-button" id="source-save">Apply</button>
+        <button class="ghost-button ghost-button--go" id="source-save">Apply</button>
       </div>
     </dialog>
 
@@ -150,7 +221,7 @@
         <input id="lyrics-query" type="text" required maxlength="300" autocomplete="off" />
         <label for="lyrics-search-source">Search source</label>
         <select id="lyrics-search-source"></select>
-        <div class="dialog-actions"><button class="ghost-button" id="lyrics-search-submit" type="submit">Search</button></div>
+        <div class="dialog-actions"><button class="ghost-button ghost-button--go" id="lyrics-search-submit" type="submit">Search</button></div>
       </form>
       <p id="lyrics-search-status" role="status" aria-live="polite"></p>
       <ol id="lyrics-candidates" class="lyrics-candidates" aria-label="Matching songs"></ol>
@@ -162,13 +233,17 @@
       <div class="dialog-actions lyrics-match-actions">
         <button class="ghost-button" id="lyrics-match-clear" type="button" disabled>Restore automatic</button>
         <button class="ghost-button" id="lyrics-search-close" type="button">Close</button>
-        <button class="ghost-button" id="lyrics-match-apply" type="button" disabled>Use these lyrics</button>
+        <button class="ghost-button ghost-button--go" id="lyrics-match-apply" type="button" disabled>Use these lyrics</button>
       </div>
     </dialog>
 
     <dialog id="settings-dialog" aria-labelledby="settings-title">
       <form id="settings-form">
-        <h2 id="settings-title">Hakuro settings</h2>
+        <div class="dialog-head">
+          <h2 id="settings-title"><small>HAKURO / PREFERENCES</small>Settings</h2>
+          <div class="version"><span>VERSION</span><b id="app-version">—</b></div>
+        </div>
+        <h3>Player</h3>
         <label for="settings-player">Player</label>
         <select id="settings-player">
           <option value="spotify">Spotify</option>
@@ -185,9 +260,9 @@
         <ol id="source-order" class="source-order"></ol>
         <h3>Colors</h3>
         <div class="color-settings">
-          <label>Buttons and controls <input id="color-accent" type="color" /></label>
-          <label>Current lyric <input id="color-active" type="color" /></label>
-          <label>Past lyrics <input id="color-past" type="color" /></label>
+          <label><input id="color-accent" type="color" /> Buttons and controls</label>
+          <label><input id="color-active" type="color" /> Current lyric</label>
+          <label><input id="color-past" type="color" /> Past lyrics</label>
         </div>
         <h3>Window</h3>
         <label class="range-setting">
@@ -225,7 +300,7 @@
         <p id="settings-error" role="alert"></p>
         <div class="dialog-actions">
           <button class="ghost-button" id="settings-cancel" type="button">Cancel</button>
-          <button class="ghost-button" id="settings-save" type="submit">Save settings</button>
+          <button class="ghost-button ghost-button--go" id="settings-save" type="submit">Save settings</button>
         </div>
       </form>
     </dialog>

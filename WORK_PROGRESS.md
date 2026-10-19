@@ -1,6 +1,20 @@
 # hakuro session recovery
 
-## Active task — 2026-10-19 lyric search, word timing and translations
+## Active task — 2026-10-19 Cube Deck redesign, v1.3.0
+
+Goal: replace the interface with design concept A (Cube Deck, `design/concepts/a-cube.html`), bump to 1.3.0, commit, and build a local installer for the user to test.
+Acceptance:
+- [x] Prototype: compact "HAKURO" readable (solid header background); verified by screenshot at 560x250 and 1100x700.
+- [x] App: cube with cover on the front (colour = playing, tap toggles, lens previews), volume dial with skip under VOL, record on top, tool faces; compact puts skip in the bar.
+- [x] Command palette (Ctrl+K) runs real commands and jumps to lyric lines; settings shows the version from `getVersion()`.
+- [x] Every existing element id and behaviour kept; frontend tests updated/extended; `npm test`, `npm run build`, `cargo test` pass.
+- [x] Version 1.3.0 in tauri.conf.json, Cargo.toml/lock, package.json/lock.
+- [x] Committed (no push/tag); NSIS installer built.
+Known: user's stored accent is #df498a (custom), so only the default for new installs changed (#1db954 -> #e6ff1f). No SFX in the app: a lyrics window playing over music should not add sounds, and it would need a new setting.
+Decisions: gestures in `deck.ts` end as clicks on the real controls (or input/change on the hidden volume range), so main.ts keeps one path per command. Cover colour follows the confirmed play state, not the tap. Record spin seeks once on release (10 s per turn). Fonts bundled via @fontsource 5.3.0 (Noto Sans JP variable adds ~5 MB). COMPACT_CHROME 108 -> 72 (32px chrome + 34px bar + hairlines + slack).
+Verification: headless Chrome against the built dist with a stub Tauri bridge (scratchpad `tauri-stub.js`): full 940x760, minimum 520x460, compact 460x198/258, palette, settings, lens, tap/flood, drag-to-turn. No interactive WebView2 desktop test by the assistant.
+
+## Previous completed task — 2026-10-19 lyric search, word timing and translations
 
 Goal: keep the existing Spotify companion integration while adding manual lyric search/preview/binding, stronger automatic fallback, word timing and provider-supplied bilingual lyrics.
 Scope update: user additionally requested volume control. Add a Spotify active-device volume slider using the existing playback-control scope; SMTC/unsupported devices remain disabled without altering system master volume.

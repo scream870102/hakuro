@@ -92,7 +92,7 @@ pub struct SourcePreference {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Theme {
-    /// Controls: the follow toggle, the scrubber, the synced badge.
+    /// Controls: the cube's glow, the scrubber, the poster band.
     pub accent: String,
     /// The lyric line currently being sung.
     pub active_line: String,
@@ -103,7 +103,7 @@ pub struct Theme {
 impl Default for Theme {
     fn default() -> Self {
         Self {
-            accent: "#1db954".into(),
+            accent: "#e6ff1f".into(),
             active_line: "#f4f6f5".into(),
             past_line: "#3e4040".into(),
         }

@@ -23,6 +23,7 @@ const appWindow = vi.hoisted(() => ({
   scaleFactor: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => appWindow }));
+vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(async () => "1.3.0") }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (name: string, callback: (event: { payload: unknown }) => void) => {
     bridge.listeners.set(name, callback);
@@ -720,6 +721,9 @@ it("steps the secondary controls aside once nothing is happening", async () => {
   }
 });
 
+/** Compact's chrome and bar rows with their hairlines; mirrors COMPACT_CHROME. */
+const CHROME = 72;
+
 const lastSize = (fn: { mock: { calls: unknown[][] } }) => {
   const calls = fn.mock.calls;
   const call = calls[calls.length - 1][0] as { width: number; height: number };
@@ -777,12 +781,13 @@ it("never lets compact be dragged below three lines of lyrics", async () => {
   await import("./main");
   await flush();
 
-  // Three lines of (30px * 1.32 line-height + 18px padding), plus the header.
+  // Three lines of (30px * 1.32 line-height + 18px padding), plus the chrome
+  // and bar rows.
   const lines = Math.ceil(3 * (30 * 1.32 + 18));
-  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: lines + 108 });
+  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: lines + CHROME });
   // Nothing remembers the window size between launches, so a stored compact
   // mode has to shrink the window itself or it reopens at full size.
-  expect(lastSize(appWindow.setSize)).toEqual({ width: 460, height: lines + 108 });
+  expect(lastSize(appWindow.setSize)).toEqual({ width: 460, height: lines + CHROME });
   playback("song-a", 1, 1500);
   bridge.listeners.get("lyrics")!({ payload: {
     generation: 1, trackId: "song-a", source: "NetEase", synced: true,
@@ -791,11 +796,11 @@ it("never lets compact be dragged below three lines of lyrics", async () => {
   } });
   await flush();
   // Reserve the translated line-height AND its 4px top margin for each row.
-  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: Math.ceil(3 * (30 * (1.32 + 0.65 * 1.4) + 18 + 4)) + 108 });
+  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: Math.ceil(3 * (30 * (1.32 + 0.65 * 1.4) + 18 + 4)) + CHROME });
   el<HTMLInputElement>("show-translations").checked = false;
   el("show-translations").dispatchEvent(new Event("change"));
   await flush();
-  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: lines + 108 });
+  expect(lastSize(appWindow.setMinSize)).toEqual({ width: 340, height: lines + CHROME });
 });
 
 it("gives the roomy size back when compact is switched off", async () => {
@@ -814,4 +819,162 @@ it("gives the roomy size back when compact is switched off", async () => {
   el("mode-toggle").click();
   await flush();
   expect(lastSize(appWindow.setSize)).toEqual({ width: 940, height: 760 });
+});
+
+// ---------------------------------------------------------------- cube deck
+
+const press = (target: Element, type: string, x = 0, y = 0) =>
+  target.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y }));
+
+it("toggles playback from a tap on the cover, but not from a drag that turns the cube", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, false);
+  const cover = document.querySelector(".cover-shade")!;
+
+  press(cover, "pointerdown", 100, 100);
+  press(cover, "pointerup", 102, 101);
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("play", undefined);
+
+  bridge.invoke.mockClear();
+  press(cover, "pointerdown", 100, 100);
+  press(cover, "pointermove", 160, 110);
+  press(cover, "pointerup", 160, 110);
+  await flush();
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "play" || command === "pause")).toBe(false);
+});
+
+it("colours the cover while playing and leaves a tap without a track doing nothing", async () => {
+  await import("./main");
+  await flush();
+  const cover = document.querySelector(".cover-shade")!;
+  press(cover, "pointerdown", 100, 100);
+  press(cover, "pointerup", 100, 100);
+  await flush();
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "play")).toBe(false);
+
+  playback("song-a", 1, 0, true);
+  // The first state is shown as it is; later changes flood in over a frame or two.
+  expect(el("cover-face").classList.contains("is-color")).toBe(true);
+});
+
+it("turns the volume dial into input and one change, like dragging the slider", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, false, { volumePercent: 40, canSetVolume: true });
+  const dial = el("volume-control");
+  // jsdom lays nothing out, so the dial's centre is the origin: a quarter turn
+  // clockwise from the right-hand side is a quarter of the 133-point sweep.
+  press(dial, "pointerdown", 10, 0);
+  press(dial, "pointermove", 0, 10);
+  expect(el("volume-value").textContent).toBe("73%");
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "set_volume")).toBe(false);
+  press(dial, "pointerup", 0, 10);
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("set_volume", { volumePercent: 73 });
+});
+
+it("mirrors the skip buttons into the bar for compact mode", async () => {
+  await import("./main");
+  await flush();
+  expect(el<HTMLButtonElement>("bar-next").disabled).toBe(true);
+  playback("song-a", 1, 0, true);
+  expect(el<HTMLButtonElement>("bar-next").disabled).toBe(false);
+  el("bar-next").click();
+  el("bar-prev").click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("next_track", undefined);
+  expect(bridge.invoke).toHaveBeenCalledWith("previous_track", undefined);
+});
+
+it("lets the tool faces stand in for the controls they name", async () => {
+  await import("./main");
+  await flush();
+  const tool = (proxy: string) => document.querySelector<HTMLButtonElement>(`.tool[data-proxy="${proxy}"]`)!;
+  tool("pin").click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("save_settings", { incoming: { ...initial().settings, alwaysOnTop: true } });
+  runFrame();
+  expect(tool("pin").getAttribute("aria-pressed")).toBe("true");
+  expect(tool("reload").disabled).toBe(true);
+});
+
+// ------------------------------------------------------------ command palette
+
+const key = (target: EventTarget, init: KeyboardEventInit) =>
+  target.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }));
+function typeInPalette(text: string) {
+  const input = el<HTMLInputElement>("pal-input");
+  input.value = text;
+  input.dispatchEvent(new Event("input"));
+  return input;
+}
+
+it("opens the command palette with Ctrl+K and runs the best match on Enter", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, true);
+  key(window, { key: "k", ctrlKey: true });
+  expect(el<HTMLDialogElement>("palette").open).toBe(true);
+
+  key(typeInPalette("next"), { key: "Enter" });
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("next_track", undefined);
+  expect(el<HTMLDialogElement>("palette").open).toBe(false);
+
+  // Chinese names find commands too.
+  key(window, { key: "k", ctrlKey: true });
+  key(typeInPalette("精簡"), { key: "Enter" });
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("save_settings", { incoming: { ...initial().settings, compact: true } });
+});
+
+it("jumps to a lyric line found by its words, and refuses commands that cannot run", async () => {
+  await import("./main");
+  await flush();
+  key(window, { key: "k", ctrlKey: true });
+  key(typeInPalette("next track"), { key: "Enter" });
+  // No track: the command is listed but does nothing, and the palette stays open.
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "next_track")).toBe(false);
+  expect(el<HTMLDialogElement>("palette").open).toBe(true);
+  el<HTMLDialogElement>("palette").close();
+
+  playback("song-a", 1, 0, true);
+  bridge.listeners.get("lyrics")!({ payload: {
+    generation: 1, trackId: "song-a", source: "LRCLIB", synced: true, text: "", partial: false, requested: "",
+    matchedTitle: "", cues: [{ time_ms: 1000, text: "Hello <b>world</b>" }, { time_ms: 42000, text: "止まらない鼓動" }],
+  } });
+  key(window, { key: "k", ctrlKey: true });
+  typeInPalette("鼓動");
+  const row = el("pal-list").querySelector(".pal__item.is-sel")!;
+  expect(row.textContent).toContain("止まらない鼓動");
+  expect(row.querySelector("mark")?.textContent).toBe("鼓動");
+  key(el("pal-input"), { key: "Enter" });
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("seek", { positionMs: 42000 });
+
+  // Lyric text is shown as text, never parsed as markup.
+  key(window, { key: "k", ctrlKey: true });
+  typeInPalette("world");
+  expect(el("pal-list").querySelector("b")).toBeNull();
+  expect(el("pal-list").textContent).toContain("Hello <b>world</b>");
+});
+
+it("leaves Enter alone while an input method is still composing", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, true);
+  key(window, { key: "k", ctrlKey: true });
+  key(typeInPalette("next"), { key: "Enter", isComposing: true });
+  await flush();
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "next_track")).toBe(false);
+});
+
+it("shows the app version in settings and the palette", async () => {
+  await import("./main");
+  await flush();
+  await flush();
+  expect(el("app-version").textContent).toBe("v1.3.0");
+  expect(el("pal-version").textContent).toBe("HAKURO v1.3.0");
 });
