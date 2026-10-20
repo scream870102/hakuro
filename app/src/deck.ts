@@ -378,6 +378,8 @@ export function createDeck(options: {
 
   function setLayout(layout: { compact: boolean; stretched: boolean }) {
     compact = layout.compact;
+    shardLayer.hidden = compact && !layout.stretched;
+    if (shardLayer.hidden) shardLayer.replaceChildren();
     const home = compact ? leftFace : rightFace;
     if (dial.parentElement !== home) home.append(dial);
     // Compact's lid takes the top; stretched, the record turns up at the right end.
@@ -594,6 +596,7 @@ export function createDeck(options: {
     }
   }
   function lineChanged(line: HTMLElement) {
+    if (shardLayer.hidden) return;
     const zone = shardLayer.getBoundingClientRect();
     const box = line.getBoundingClientRect();
     if (!zone.width) return;

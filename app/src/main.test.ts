@@ -968,6 +968,63 @@ it("gives the roomy size back when compact is switched off", async () => {
 
 // ---------------------------------------------------------------- cube deck
 
+it("keeps lyric shards off while compact lyrics are hidden, clears active shards, and restores the effect when visible", async () => {
+  bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, compact: true } };
+    if (command === "save_settings") return { ...initial(), settings: args!.incoming };
+  });
+  const shards = el("shards");
+  const animate = vi.fn(() => ({ onfinish: null } as unknown as Animation));
+  shards.animate = animate;
+  vi.spyOn(shards, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 940, height: 760 } as DOMRect);
+  const append = shards.append.bind(shards);
+  vi.spyOn(shards, "append").mockImplementation((...nodes) => {
+    for (const node of nodes) if (node instanceof HTMLElement) node.animate = animate;
+    append(...nodes);
+  });
+  await import("./main");
+  await flush();
+  playback();
+  bridge.listeners.get("lyrics")!({ payload: {
+    generation: 1, trackId: "spotify:song-a", source: "LRCLIB", synced: true, text: "", partial: false, requested: "",
+    cues: Array.from({ length: 7 }, (_, index) => ({ time_ms: index * 1000, text: `Line ${index}` })),
+  } });
+  const advance = (ms: number) => { playback("song-a", 1, ms); runFrame(); };
+  advance(0);
+  advance(1000);
+  expect(shards.childElementCount).toBe(0);
+  expect(animate).not.toHaveBeenCalled();
+
+  el("compact-lyrics").click();
+  await flush();
+  advance(2000);
+  expect(shards.hidden).toBe(false);
+  expect(shards.childElementCount).toBeGreaterThan(0);
+  el("compact-lyrics").click();
+  await flush();
+  expect(shards.hidden).toBe(true);
+  expect(shards.childElementCount).toBe(0);
+  advance(3000);
+  expect(shards.childElementCount).toBe(0);
+
+  el("mode-toggle").click();
+  await flush();
+  advance(4000);
+  expect(shards.hidden).toBe(false);
+  expect(shards.childElementCount).toBeGreaterThan(0);
+  el("mode-toggle").click();
+  await flush();
+  expect(shards.hidden).toBe(true);
+  expect(shards.childElementCount).toBe(0);
+  advance(5000);
+  expect(shards.childElementCount).toBe(0);
+  el("compact-lyrics").click();
+  await flush();
+  advance(6000);
+  expect(shards.hidden).toBe(false);
+  expect(shards.childElementCount).toBeGreaterThan(0);
+});
+
 const press = (target: Element, type: string, x = 0, y = 0) =>
   target.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y }));
 

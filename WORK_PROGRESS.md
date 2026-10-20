@@ -1,5 +1,21 @@
 # hakuro session recovery
 
+## 1.5.3 compact lyric shards, Script initialization and design guide — 2026-10-20
+
+Goal: suppress lyric shards while compact lyrics are hidden, initialize this project with agent-skills' Script rules, document the current design conventions, and release 1.5.3 locally.
+Scope: continue the previous local release workflow (commit, tag, installer; no push). This is a hotfix plus documentation, so work stays in the current checkout. No plan-mode approval/export, worktree-pool operation or Obsidian operation is requested; no project-specific configuration for those features is needed.
+Plan: verify installed local rules; add a regression for hidden lyrics and clear existing shards on layout changes; document actual tokens, components and interaction rules with source links; verify tests/browser behavior; synchronize all version fields, package and commit/tag.
+Acceptance:
+- [x] Run C:/Projects/agent-skills/others/install-into.ps1 -Type script -Destination C:/Projects/hakuro; sync -Check passes and all generated personal files are git-ignored.
+- [x] Collapsed compact mode generates no lyric shards and immediately removes existing ones; expanded compact/full mode keep the lyric effect.
+- [x] design/DESIGN_GUIDELINES.md documents current design rules and is discoverable from README.
+- [x] Version fields agree on 1.5.3; relevant checks pass; local installer, commit and v1.5.3 tag exist; no push.
+Known: clean tracked checkout at start. Codebase-memory/Serena tools are unavailable in this session; scoped reads cover the relevant small file set. Root cause: deck.lineChanged() has no compact-lyrics visibility guard, and compact's fixed lyrics-zone overlay stays mounted for notices/shards even with its lyrics panel closed.
+Verification: initialization wrote AGENTS.override.md (6119 bytes) and installed local-rules/ plus CLAUDE.local.md; .git/info/exclude contains all three paths. The repository has no committed AGENTS.md, so the installer's local-rules-only warning is expected.
+Verification: the new regression first failed on the original code with 12 shards while hidden. After the three-line visibility/cleanup fix, all 130 frontend tests pass; TypeScript/Vite production build passes; Cargo reports 141 passed / 13 ignored. Real Edge against the production bundle confirms zero hidden shards, immediate cleanup, 12 shards after both Full/expanded transitions, and no shards with reduced motion; no browser exceptions. Evidence: app/node_modules/.cache/hakuro-153/results.json and compact-*.png. Browser playback/Tauri APIs are simulated; no real player account or installed-app interaction was exercised.
+Documentation: design/DESIGN_GUIDELINES.md records tokens, type, Full/Compact face placement, shared button styles, lyrics/translation layout, motion visibility, child windows and scoped acceptance checks, with 12 verified source links; README links to it.
+Delivery: all six version entries are 1.5.3. Tauri/NSIS packaging passed; executable and installer both report FileVersion/ProductVersion 1.5.3. Installer: app/src-tauri/target/release/bundle/nsis/Hakuro_1.5.3_x64-setup.exe (9,734,789 bytes; SHA256 14ae7c55a0f1f734db7a57e69e0764526e9539666eb80424bcd2a6be9b6e3f77). The local v1.5.3 tag identifies the release commit; Git is the authoritative commit/tag record. No push. Personal initialization files remain ignored. No requested work remains.
+
 ## 1.5.2 UI follow-up, startup update notification and local release — 2026-10-20
 
 Goal: finish the interrupted Claude changes for the user's eight items, verify, commit and tag 1.5.2, and build a local Windows installer. Do not push.
