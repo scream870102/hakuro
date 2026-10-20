@@ -54,6 +54,10 @@ const HIGHEST_HZ: f32 = 14_000.0;
 /// nothing, louder than the ceiling is a full tile.
 const FLOOR_DB: f32 = -52.0;
 const CEILING_DB: f32 = -12.0;
+/// Loopback can be very quiet at comfortable headphone volumes. Lift only the
+/// analysis signal, with a cap so near-silence is never normalized to full scale.
+const TARGET_PEAK: f32 = 0.25;
+const MAX_ANALYSIS_GAIN: f32 = 32.0;
 /// Music carries less energy the higher it goes. Lifting each octave by this
 /// much keeps the treble tiles moving instead of the bass drowning them.
 const TILT_DB_PER_OCTAVE: f32 = 3.5;
@@ -390,9 +394,21 @@ impl Analyser {
     }
 
     fn push<T: Copy>(&mut self, samples: &[T], channels: usize, to_f32: impl Fn(T) -> f32) {
+        // Surround devices often pad stereo music with silent channels. Count
+        // occupied channels per packet, not per sample (a zero crossing is sound).
+        let active_channels = (0..channels)
+            .filter(|&channel| {
+                samples
+                    .iter()
+                    .skip(channel)
+                    .step_by(channels)
+                    .any(|value| to_f32(*value) != 0.0)
+            })
+            .count()
+            .max(1) as f32;
         for frame in samples.chunks_exact(channels) {
             let sum: f32 = frame.iter().map(|value| to_f32(*value)).sum();
-            self.ring[self.head] = sum / channels as f32;
+            self.ring[self.head] = sum / active_channels;
             self.head = (self.head + 1) % FFT_SIZE;
         }
     }
@@ -407,8 +423,14 @@ impl Analyser {
     /// Analyse what is in the ring now.
     fn levels(&mut self, rate: f32) -> [u8; BANDS] {
         self.quiet = 0;
+        let peak = self
+            .ring
+            .iter()
+            .map(|sample| sample.abs())
+            .fold(0.0f32, f32::max);
+        let gain = (TARGET_PEAK / peak.max(1e-9)).clamp(1.0, MAX_ANALYSIS_GAIN);
         let mut re: Vec<f32> = (0..FFT_SIZE)
-            .map(|index| self.ring[(self.head + index) % FFT_SIZE] * self.window[index])
+            .map(|index| self.ring[(self.head + index) % FFT_SIZE] * self.window[index] * gain)
             .collect();
         let mut im = vec![0.0; FFT_SIZE];
         fft(&mut re, &mut im);
@@ -567,6 +589,53 @@ mod tests {
         from_int.push(&stereo, 2, |value| f32::from(value) / 32_768.0);
         let (a, b) = (from_float.levels(RATE), from_int.levels(RATE));
         assert!(a.iter().zip(b).all(|(a, b)| a.abs_diff(b) <= 2));
+    }
+
+    #[test]
+    fn quiet_music_survives_silent_surround_channels() {
+        // The INZONE H5 supplies eight channels, but stereo music occupies two.
+        for hz in [80.0, 440.0, 1_000.0, 6_000.0] {
+            let mono = tone(hz, 0.003);
+            let surround: Vec<f32> = mono
+                .iter()
+                .flat_map(|&sample| [sample, sample, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+                .collect();
+            let mut original = Analyser::new();
+            original.push(&mono, 1, |value| value);
+            let mut padded = Analyser::new();
+            padded.push(&surround, 8, |value| value);
+            let (a, b) = (original.levels(RATE), padded.levels(RATE));
+            assert!(b[band_of(hz)] > 40, "{hz} Hz stays invisible: {b:?}");
+            assert_eq!(a, b, "silent channels must not attenuate {hz} Hz");
+        }
+    }
+
+    #[test]
+    fn surround_only_audio_is_not_discarded() {
+        let mono = tone(440.0, 0.003);
+        let surround: Vec<f32> = mono
+            .iter()
+            .flat_map(|&sample| [0.0, 0.0, 0.0, 0.0, sample, sample, 0.0, 0.0])
+            .collect();
+        let mut analyser = Analyser::new();
+        analyser.push(&surround, 8, |value| value);
+        assert!(analyser.levels(RATE)[band_of(440.0)] > 40);
+    }
+
+    #[test]
+    fn quiet_input_gain_does_not_turn_silence_or_tiny_noise_into_music() {
+        let mut analyser = Analyser::new();
+        for hz in [80.0, 440.0, 1_000.0, 6_000.0] {
+            analyser.push(&tone(hz, 1e-7), 1, |value| value);
+            assert_eq!(analyser.levels(RATE), [0; BANDS]);
+        }
+        analyser.push(&tone(440.0, 0.003), 1, |value| value);
+        assert!(analyser.levels(RATE)[band_of(440.0)] > 40);
+        analyser.push_silence(FFT_SIZE);
+        for _ in 0..120 {
+            analyser.levels(RATE);
+        }
+        assert_eq!(analyser.levels(RATE), [0; BANDS]);
     }
 
     #[test]

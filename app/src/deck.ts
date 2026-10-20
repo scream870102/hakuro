@@ -428,8 +428,7 @@ export function createDeck(options: {
     options.endSeek(event.type === "pointerup" && moved >= 0.08 && Math.abs(turned) > 0.05);
     if (event.type !== "pointerup") return;
     // One seek for the whole gesture: the player is a network call away.
-    if (moved < 0.08) togglePlayback();
-    else if (Math.abs(turned) > 0.05) {
+    if (moved >= 0.08 && Math.abs(turned) > 0.05) {
       thump(0.4, Math.sign(turned));
     }
   }

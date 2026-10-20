@@ -1028,6 +1028,25 @@ it("keeps lyric shards off while compact lyrics are hidden, clears active shards
 const press = (target: Element, type: string, x = 0, y = 0) =>
   target.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y }));
 
+it.each([false, true])("ignores a tap on the disc while retaining the playback button (playing: %s)", async (playing) => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 10000, playing);
+  const vinyl = el("vinyl");
+  bridge.invoke.mockClear();
+  press(vinyl, "pointerdown", 10, 0);
+  press(vinyl, "pointerup", 10, 0);
+  vinyl.click();
+  await flush();
+  expect(bridge.invoke.mock.calls.some(([command]) => ["play", "pause", "seek"].includes(command))).toBe(false);
+  expect(vinyl.title).toBe("Spin to seek");
+  expect(vinyl.classList.contains("is-held")).toBe(false);
+
+  el("play-pause").click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith(playing ? "pause" : "play", undefined);
+});
+
 it.each([false, true])("previews turntable time and lyrics through playback polls, then seeks once on release (compact: %s)", async (compact) => {
   await import("./main");
   await flush();

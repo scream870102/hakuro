@@ -1,5 +1,44 @@
 # hakuro session recovery
 
+## 1.5.4 low-volume wave and disc click - 2026-10-20
+
+Goal: make the wave respond to this machine's quiet multichannel audio,
+remove play/pause from clicks on the disc face, and release 1.5.4.
+Known: INZONE H5 loopback supplies 8 channels with only the front two active;
+low-level samples fall below the fixed analyser threshold. Disc seek and the
+separate cover/playback controls should remain usable.
+Open questions: none.
+Plan: add audio regressions, avoid attenuation from silent channel padding and
+apply bounded analysis-only gain; remove the disc toggle handler with a click/
+seek regression; run audio/frontend tests, build, and recheck real loopback.
+Acceptance:
+- [x] Quiet stereo music in an eight-channel stream produces nonzero bands;
+  silent padding does not attenuate it, and silence/tiny noise remain still.
+- [x] Disc clicks no longer toggle playback; disc seeking and other playback
+  controls retain their behavior.
+- [x] Relevant tests, production frontend build, and independent review pass;
+  report live-capture results and any unverified installed-app behavior.
+- [x] Synchronize all six version entries to 1.5.4 and build the local NSIS
+  installer. Commit and push to origin/main are the final delivery steps;
+  Git is the authoritative record of their result and commit identity.
+Scope update: user explicitly requested 1.5.4, commit/push, and local NSIS.
+No user settings or installed-app changes requested.
+Verification: audio regression tests failed on the original analyser.
+After the fix, Rust has 144 passed / 13 ignored; frontend has 132 passed.
+The real INZONE H5 default endpoint now produces nonzero values in all 16
+bands (35, 47, 139, 180, 191, 194, 178, 182, 132, 116, 126, 184, 200, 104, 66, 38)
+over 59/60 capture ticks. No output volume or routing settings were changed.
+All six version entries are 1.5.4. TypeScript/Vite production build and NSIS
+packaging passed. Independent review passed audio behavior, disc interactions,
+version synchronization, and scope; `git diff --check` is clean.
+Delivery: `app/src-tauri/target/release/bundle/nsis/Hakuro_1.5.4_x64-setup.exe`,
+9,734,499 bytes; SHA256
+`fa1e8bcc6ee2d589cd7914bd932ccd83cc1602c5d0abdc07ea74010a95273a3f`.
+Both the installer and release executable report FileVersion/ProductVersion
+1.5.4. The running installed app was not replaced or instrumented; UI interaction
+coverage uses frontend integration tests, while capture was exercised against
+the real default output. No settings were changed.
+
 ## 1.5.3 compact lyric shards, Script initialization and design guide — 2026-10-20
 
 Goal: suppress lyric shards while compact lyrics are hidden, initialize this project with agent-skills' Script rules, document the current design conventions, and release 1.5.3 locally.
@@ -445,3 +484,34 @@ Next, if it is ever wanted: the deferred browser-tab problem. Every tab shares
 one application id, so media in another tab can be followed by mistake. A cheap
 first filter would be to ignore a session with no album and a length over about
 fifteen minutes, which is what a video looks like and a song does not.
+
+## 2026-10-20 — INZONE H5 stationary sound wave diagnosis
+
+Goal: determine why music is audible on this machine while the wave stays still.
+Scope: read-only audio diagnostics; no app behavior or user settings changed.
+
+- [x] Confirm the monitored endpoint: default render/eConsole is INZONE H5 - Game,
+  endpoint `{ffb6df79-cf19-4c45-82d4-411816392860}`, Float32 / 48 kHz / 8 channels.
+- [x] Check raw samples, packet flags, and downmix: valid non-silent packets;
+  only channels 1 and 2 contain signal. This is not an empty capture.
+- [x] Reproduce the all-zero bands and compare analysis on identical samples.
+  The device reports volume scalar 0.16 / -27.71222 dB. One measured run:
+  channel peaks 0.009758208 and 0.009301493, remaining six zero;
+  averaged mono peak 0.00154653. Original bands and front-stereo-only bands
+  both remain all zero. Front stereo multiplied by 32 *inside the diagnostic
+  analyser only* produces nonzero bands (maximum 167/255).
+- [x] Verify no source/config changes: the diagnostic program lives in
+  `%TEMP%/hakuro-audio-probe-20261020`; it uses a copy of the current analyser
+  and only reads endpoint volume and captures loopback audio.
+
+Conclusion: capture works, but this signal is below the fixed visualizer
+threshold; averaging eight channels further attenuates two-channel music.
+Multiple connected devices are not the cause demonstrated by these measurements.
+Relevant implementation: `app/src-tauri/src/visualizer.rs` (FLOOR_DB at line 55,
+channel averaging at lines 393-395). A production fix has not been applied.
+The diagnostic x32 multiplier is an experiment, not a proposed universal gain.
+Next implementation work, if requested: handle low-level input and multichannel
+downmix, with regression coverage for this measured case and true silence.
+Installed Hakuro's UI was not instrumented, so additional UI conditions are not
+excluded. The existing live test passing only establishes that capture opens;
+its printed bands must also be inspected.
