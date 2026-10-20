@@ -1,13 +1,16 @@
 /**
  * The cube deck: the controls live on an object you can grab and turn. The
  * album cover is the front (tap it to play or pause; its colour is the play
- * state), volume and skip are on the right, the record is on top, and lyric
- * and window tools are round the back.
+ * state; skip sits at its edges while the pointer is over it), volume is on the
+ * right, the record is on top with the queue at its centre, and lyric and
+ * window tools are round the back.
  *
  * Nothing here talks to the backend. Every gesture ends as a click on one of the
  * real controls, or as input/change on the volume range, so main.ts keeps one
  * code path for each command and the tests keep exercising it.
  */
+
+import type { Pose } from "./floor";
 
 /** Semi-implicit spring; good enough for UI wobble. */
 class Spring {
@@ -48,6 +51,8 @@ export interface Deck {
   turnTo(face: CubeFace): void;
   /** Compact moves the dial round to the left face; a stretched cube rests turned nearer to face-on. */
   setLayout(layout: { compact: boolean; stretched: boolean }): void;
+  /** How the cube is turned right now, sway included; the floor turns with it. */
+  pose(): Pose;
 }
 
 const NORMALS: Record<string, [number, number, number]> = {
@@ -111,6 +116,17 @@ export function stretchedHeight(edge: number, length: number) {
   return 2 * (reach + BOB);
 }
 
+/**
+ * The turns the floor has to fit at rest: facing front or back, swaying. A
+ * stretched cube turned end-on points its floor at the reader too; that rare
+ * turn may run past compact's window rather than make the window far taller.
+ */
+export function restPoses(stretched: boolean): Pose[] {
+  const rest = stretched ? STRETCHED_REST : { x: REST_X, y: REST_Y };
+  return [FACE_TURN.front, FACE_TURN.back].flatMap((turn) =>
+    [-SWAY, 0, SWAY].map((sway) => ({ tilt: rest.x, yaw: rest.y + turn + sway })));
+}
+
 export function createDeck(options: {
   beginSeek(): void;
   previewSeek(ms: number): void;
@@ -156,6 +172,7 @@ export function createDeck(options: {
   const parY = new Spring(0, 40, 12);
   let glowLevel = 0.25;
   let last = 0;
+  let sway = 0;
 
   function thump(power = 1, dir = 0) {
     squash.kick(-3.4 * power);
@@ -218,9 +235,14 @@ export function createDeck(options: {
       ly.snap(ly.target);
     }
   }
-  coverBox.addEventListener("pointerenter", () => { lensOn = true; });
+  // Over the skip buttons the pointer means skip, not play or pause.
+  const overSkip = (event: PointerEvent) => event.target instanceof Element && Boolean(event.target.closest(".cover-skip"));
+  coverBox.addEventListener("pointerenter", (event) => { lensOn = !overSkip(event); });
   coverBox.addEventListener("pointerleave", () => { lensOn = false; });
-  coverBox.addEventListener("pointermove", aimLens);
+  coverBox.addEventListener("pointermove", (event) => {
+    lensOn = !overSkip(event);
+    aimLens(event);
+  });
   coverBox.addEventListener("pointerdown", (event) => {
     aimLens(event);
     lens.kick(4);
@@ -369,7 +391,8 @@ export function createDeck(options: {
     Math.atan2(event.clientY - centre.cy, event.clientX - centre.cx);
 
   vinyl.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
+    // The queue button at its centre is a button, not a grip on the record.
+    if (event.button !== 0 || (event.target as Element).closest("button")) return;
     const box = vinyl.getBoundingClientRect();
     scratch = { cx: box.left + box.width / 2, cy: box.top + box.height / 2, a: 0, moved: 0, turned: 0 };
     scratch.a = angleOf(event, scratch);
@@ -498,7 +521,9 @@ export function createDeck(options: {
   // ------------------------------------------------------- tool faces
 
   // Each tool is a stand-in for a real control elsewhere in the window: a press
-  // clicks that control, and the tool mirrors its state.
+  // clicks that control, and the tool mirrors its state. One marked
+  // data-follow-hidden also disappears with its control (a player without
+  // shuffle), and data-mode carries a control's state beyond on and off.
   const tools = [...cube.querySelectorAll<HTMLButtonElement>(".tool")].map((tool) => ({
     tool,
     target: byId<HTMLInputElement | HTMLButtonElement>(tool.dataset.proxy!),
@@ -517,6 +542,9 @@ export function createDeck(options: {
   function toolsFrame() {
     for (const { tool, target, label } of tools) {
       tool.disabled = target.disabled;
+      if (tool.hasAttribute("data-follow-hidden")) tool.hidden = target.hidden;
+      const mode = target.dataset.mode;
+      if (mode !== undefined && tool.dataset.mode !== mode) tool.dataset.mode = mode;
       let pressed: string | null = null;
       if (target instanceof HTMLInputElement) {
         pressed = String(target.checked);
@@ -587,7 +615,7 @@ export function createDeck(options: {
     const still = drag || calm();
     const t = now / 1000;
     const bob = still ? 0 : Math.sin(t * 1.3) * BOB;
-    const sway = still ? 0 : Math.sin(t * 0.7) * SWAY;
+    sway = still ? 0 : Math.sin(t * 0.7) * SWAY;
     const sy = squash.value;
     const sxz = 1 + (1 - sy) * 0.55;
     cube.style.transform = `translate3d(0, ${(lift.value + bob).toFixed(2)}px, 0) rotateX(${rx.value.toFixed(2)}deg) rotateY(${(ry.value + sway).toFixed(2)}deg) scale3d(${sxz.toFixed(3)}, ${sy.toFixed(3)}, ${sxz.toFixed(3)})`;
@@ -637,5 +665,6 @@ export function createDeck(options: {
     },
     turnTo,
     setLayout,
+    pose: () => ({ tilt: rx.value, yaw: ry.value + sway }),
   };
 }

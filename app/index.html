@@ -79,8 +79,9 @@
     <main class="deck">
       <section class="object-zone">
         <!-- The controls live on a cube you can grab and turn: the cover on the
-             front (tap it to play or pause), volume and skip on the right, the
-             record on top, lyric and window tools round the back. -->
+             front (tap it to play or pause; skip waits at its edges), volume on
+             the right, the record on top with the queue at its centre, lyric and
+             window tools round the back. -->
         <div class="scene" id="scene">
           <div class="glow" id="glow"></div>
           <div class="shadow" id="shadow"></div>
@@ -90,10 +91,16 @@
               <div class="vinyl" id="vinyl" title="Click to play or pause · spin to seek">
                 <div class="disc" id="disc"><div class="disc__label"><img id="disc-art" alt="" draggable="false" /></div></div>
                 <div class="vinyl__sheen"></div><div class="vinyl__pin"></div>
+                <!-- The queue, at the record's centre once the pointer is over it. -->
+                <button class="vinyl__queue" id="queue-open" type="button" disabled
+                        title="Queue" aria-label="Show the queue" aria-haspopup="dialog">
+                  <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M3 6h13M3 11h13M3 16h8"/><path class="icon-solid" d="M16 14.5v6l5-3z"/></svg>
+                </button>
               </div>
-              <!-- Compact only: the lid takes the record's place. The transport and
-                   the window's switches sit over the cover; once the cube stretches,
-                   the song and how far through it is sit beside them. -->
+              <!-- Compact only: the lid takes the record's place. The window's
+                   switches and the queue's sit over the cover (skip and play are on
+                   the cover itself); once the cube stretches, the song and how far
+                   through it is sit beside them. -->
               <div class="lid">
                 <div class="lid__row">
                   <button class="tool tool--icon" type="button" data-proxy="compact-lyrics"
@@ -110,18 +117,17 @@
                   </button>
                 </div>
                 <div class="lid__row">
-                  <button class="tool tool--icon tool--glow" type="button" data-proxy="previous"
-                          title="Previous track" aria-label="Previous track">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg>
+                  <button class="tool tool--icon tool--mode" type="button" data-proxy="queue-open"
+                          title="Queue" aria-label="Show the queue">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M3 6h13M3 11h13M3 16h8"/><path class="icon-solid" d="M16 14.5v6l5-3z"/></svg>
                   </button>
-                  <button class="tool tool--icon tool--glow tool--play" type="button" data-proxy="play-pause"
-                          title="Play or pause" aria-label="Play or pause">
-                    <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.8v14.4a.8.8 0 0 0 1.22.68l11.3-7.2a.8.8 0 0 0 0-1.36L8.22 4.12A.8.8 0 0 0 7 4.8Z"/></svg>
-                    <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5h4v15H6zM14 4.5h4v15h-4z"/></svg>
+                  <button class="tool tool--icon tool--mode" type="button" data-proxy="shuffle" data-follow-hidden hidden
+                          title="Shuffle" aria-label="Shuffle" aria-pressed="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M3 7h3c2.5 0 3.7 1.4 5 3.6l1.6 2.8C14 15.6 15.4 17 18 17h3M18 14l3 3-3 3M3 17h3c1.5 0 2.5-.5 3.4-1.5M21 7h-3c-1.5 0-2.6.5-3.5 1.5M18 4l3 3-3 3"/></svg>
                   </button>
-                  <button class="tool tool--icon tool--glow" type="button" data-proxy="next"
-                          title="Next track" aria-label="Next track">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg>
+                  <button class="tool tool--icon tool--mode" type="button" data-proxy="repeat" data-follow-hidden hidden
+                          title="Repeat" aria-label="Repeat" aria-pressed="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6H20M17 3l3 3-3 3M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5H4M7 21l-3-3 3-3"/></svg>
                   </button>
                 </div>
               </div>
@@ -148,7 +154,17 @@
                      this button is the same control for the keyboard. -->
                 <button class="cover-hit" id="play-pause" type="button" disabled
                         title="Play or pause" aria-label="Play or pause"></button>
+                <!-- Skip waits at the cover's edges, shown while the pointer is over it. -->
+                <button class="cover-skip cover-skip--previous glow-btn" id="previous" type="button" disabled
+                        title="Previous track" aria-label="Previous track">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg>
+                </button>
+                <button class="cover-skip cover-skip--next glow-btn" id="next" type="button" disabled
+                        title="Next track" aria-label="Next track">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg>
+                </button>
               </div>
+              <div class="spill"></div>
               <!-- Compact only: the cube stretches sideways and the lyrics move in here. -->
               <div class="face__lyrics" id="cube-lyrics"></div>
             </div>
@@ -159,14 +175,6 @@
                 <div class="dial__ticks"></div><div class="dial__ring"></div><div class="dial__cap"></div>
                 <div class="dial__read">
                   <output id="volume-value" for="volume">—</output><small>VOL</small>
-                  <div class="skip">
-                    <button class="glow-btn" id="previous" type="button" disabled title="Previous track" aria-label="Previous track">
-                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg>
-                    </button>
-                    <button class="glow-btn" id="next" type="button" disabled title="Next track" aria-label="Next track">
-                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg>
-                    </button>
-                  </div>
                 </div>
                 <!-- The dial is drawn; this range is the real control, for the keyboard and for main.ts. -->
                 <input class="dial__input" id="volume" type="range" min="0" max="100" step="1" value="0" disabled
@@ -234,6 +242,15 @@
         <div class="scrubber__knob" id="scrubber-knob"></div>
       </div>
       <span class="time" id="time-total">00:00</span>
+      <!-- Hidden for a player that cannot report them (ytmdesktop2). -->
+      <button class="bar__mode" id="shuffle" type="button" hidden disabled
+              title="Shuffle" aria-label="Shuffle" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M3 7h3c2.5 0 3.7 1.4 5 3.6l1.6 2.8C14 15.6 15.4 17 18 17h3M18 14l3 3-3 3M3 17h3c1.5 0 2.5-.5 3.4-1.5M21 7h-3c-1.5 0-2.6.5-3.5 1.5M18 4l3 3-3 3"/></svg>
+      </button>
+      <button class="bar__mode" id="repeat" type="button" hidden disabled data-mode="off"
+              title="Repeat: off" aria-label="Repeat: off" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6H20M17 3l3 3-3 3M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5H4M7 21l-3-3 3-3"/></svg>
+      </button>
       <button class="bar__play" id="bar-play" type="button" disabled title="Play" aria-label="Play">
         <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.8v14.4a.8.8 0 0 0 1.22.68l11.3-7.2a.8.8 0 0 0 0-1.36L8.22 4.12A.8.8 0 0 0 7 4.8Z"/></svg>
         <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5h4v15H6zM14 4.5h4v15h-4z"/></svg>

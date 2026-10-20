@@ -1,8 +1,8 @@
 //! YouTube Music by way of ytmdesktop2's local API.
 //!
-//! The system media session only carries what the player shows — a title and a
-//! credit, both in the reader's language — so lyrics for it have to be found by
-//! searching. ytmdesktop2 (github.com/Venipa/ytmdesktop2) plays YouTube Music in
+//! A system media session only carries what the player shows — a title and a
+//! credit, both in the reader's language — so lyrics for it would have to be
+//! found by searching. ytmdesktop2 (github.com/Venipa/ytmdesktop2) plays YouTube Music in
 //! its own window and serves what its player knows on 127.0.0.1, including the
 //! exact video id, and that id is what YouTube Music's own lyrics are fetched by.
 //!
@@ -14,6 +14,11 @@
 //! * `GET /track` and `GET /track/state` answer `null` when nothing is loaded;
 //!   progress and duration are seconds.
 //! * `POST /track/volume` without a volume answers the current one unchanged.
+//! * `GET /nav/queue` lists the whole queue, played songs included, as
+//!   `{index, videoId?, title?}`: no artist, length or picture, and no marker
+//!   for the playing one. It is read from the page, so it hangs while nothing
+//!   is loaded. Nothing in the API plays a queued song, and shuffle and repeat
+//!   can only be toggled blind, so those are left alone.
 //! * Pairing: `POST /auth/requestcode` gives a code that ytmdesktop2 lists under
 //!   Settings → API & Integrations → Authentication; `POST /auth/request` then
 //!   waits until the reader approves (ytmdesktop2 gives up after 30 s) and
@@ -27,7 +32,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use crate::player::{Playback, PlayerError, PlayerKind};
+use crate::player::{Playback, PlayerError, PlayerKind, Queue, QueueItem};
 use crate::token_store;
 
 pub const DEFAULT_PORT: u16 = 13091;
@@ -306,6 +311,20 @@ impl Ytmdesktop {
         })
     }
 
+    /// The songs after the playing one, by title only. Read-only: ytmdesktop2
+    /// has no way to play one of them.
+    pub async fn queue(&self) -> Result<Queue, PlayerError> {
+        // From ytmdesktop2's own memory; the queue is asked of the page, which
+        // would only hang if nothing is loaded.
+        let track = self.get("/track").await?;
+        let playing = sample(&Value::Null, &track, None);
+        if !playing.has_track {
+            return Ok(Queue::default());
+        }
+        let answer = self.get("/nav/queue").await?;
+        Ok(parse_queue(&answer, &playing.video_ids))
+    }
+
     async fn command(&self, path: &str, body: Value) -> Result<(), PlayerError> {
         self.send(self.post(path).json(&body)).await.map(|_| ())
     }
@@ -441,7 +460,47 @@ fn sample(state: &Value, track: &Value, volume: Option<u8>) -> Playback {
         device_id: None,
         volume_percent: volume,
         can_set_volume: volume.is_some(),
+        shuffle: None,
+        repeat: None,
+        can_shuffle: false,
+        can_repeat_context: false,
+        can_repeat_track: false,
         source: PlayerKind::Ytmdesktop2,
+    }
+}
+
+/// The songs after the playing one, which is found by its video id or its
+/// album counterpart's. When it cannot be found, the whole queue is shown
+/// rather than a guess at where it stands.
+fn parse_queue(answer: &Value, playing: &[String]) -> Queue {
+    let items: Vec<(&str, &str)> = answer["items"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .map(|item| {
+                    (
+                        item["videoId"].as_str().unwrap_or_default(),
+                        item["title"].as_str().unwrap_or_default().trim(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let current = items
+        .iter()
+        .position(|(id, _)| !id.is_empty() && playing.iter().any(|known| known == id));
+    let after = current.map_or(0, |index| index + 1);
+    Queue {
+        now: None,
+        upcoming: items[after..]
+            .iter()
+            .filter(|(_, title)| !title.is_empty())
+            .map(|(_, title)| QueueItem {
+                title: title.to_string(),
+                ..Default::default()
+            })
+            .collect(),
+        can_jump: false,
     }
 }
 
@@ -605,6 +664,66 @@ mod tests {
             Some("https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg"),
             "the largest thumbnail when ytmdesktop2 has not picked one"
         );
+    }
+
+    #[test]
+    fn the_queue_starts_after_the_playing_song_or_its_counterpart() {
+        let answer = json!({"items": [
+            {"index": 0, "videoId": "aaaaaaaaaaa", "title": "Played"},
+            {"index": 1, "videoId": "lYBUbBu4W08", "title": "Playing"},
+            {"index": 2, "videoId": "bbbbbbbbbbb", "title": " Next "},
+            {"index": 3},
+            {"index": 4, "videoId": "ccccccccccc", "title": "Later"}
+        ], "count": 5, "storeHooked": true});
+        let playing = ["dQw4w9WgXcQ".to_string(), "lYBUbBu4W08".to_string()];
+        let queue = parse_queue(&answer, &playing);
+        let titles: Vec<_> = queue.upcoming.iter().map(|item| item.title.as_str()).collect();
+        assert_eq!(titles, ["Next", "Later"], "a sparse entry is left out");
+        assert!(!queue.can_jump);
+        assert!(queue.upcoming.iter().all(|item| item.uri.is_empty()));
+
+        let lost = parse_queue(&answer, &["zzzzzzzzzzz".to_string()]);
+        assert_eq!(lost.upcoming.len(), 4, "not found: the whole queue");
+        assert_eq!(parse_queue(&json!({"items": [], "storeHooked": false}), &playing), Queue::default());
+    }
+
+    #[test]
+    fn a_queue_is_asked_of_the_page_only_while_a_song_is_loaded() {
+        let (base, seen) = fake(|request: &Seen| match request.path.as_str() {
+            "/" => (200, root(false)),
+            "/track" => (200, track().to_string()),
+            "/nav/queue" => (
+                200,
+                json!({"items": [
+                    {"index": 0, "videoId": "dQw4w9WgXcQ", "title": "Never Gonna Give You Up"},
+                    {"index": 1, "videoId": "bbbbbbbbbbb", "title": "Next"}
+                ]})
+                .to_string(),
+            ),
+            _ => (404, "{}".into()),
+        });
+        run(async {
+            let client = Ytmdesktop::connect_to(base, DEFAULT_PORT, |_| panic!("open API"))
+                .await
+                .unwrap();
+            let queue = client.queue().await.unwrap();
+            assert_eq!(queue.upcoming.len(), 1);
+            assert_eq!(queue.upcoming[0].title, "Next");
+        });
+        assert!(seen.lock().unwrap().iter().any(|r| r.path == "/nav/queue" && r.method == "GET"));
+
+        let (base, seen) = fake(|request: &Seen| match request.path.as_str() {
+            "/" => (200, root(false)),
+            "/track" => (200, "null".into()),
+            _ => (500, "{}".into()),
+        });
+        run(async {
+            let client = Ytmdesktop::connect_to(base, DEFAULT_PORT, |_| panic!("open API"))
+                .await
+                .unwrap();
+            assert_eq!(client.queue().await.unwrap(), Queue::default());
+        });
+        assert!(!seen.lock().unwrap().iter().any(|r| r.path == "/nav/queue"));
     }
 
     #[test]

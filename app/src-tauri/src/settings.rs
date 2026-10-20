@@ -160,6 +160,11 @@ pub struct Settings {
     /// Lyric type size in pixels, per mode.
     pub lyric_size: u8,
     pub compact_lyric_size: u8,
+    /// The tile floor that ripples with the sound under the cube, per mode.
+    /// Compact's window grows to hold it, so a reader may want it in one mode
+    /// and not the other.
+    pub wave_full: bool,
+    pub wave_compact: bool,
 }
 
 /// Type-size bounds, shared by the two sliders. The floor stays readable at a
@@ -194,6 +199,8 @@ impl Default for Settings {
             compact_opacity: 85,
             lyric_size: 26,
             compact_lyric_size: 18,
+            wave_full: true,
+            wave_compact: true,
         }
     }
 }
@@ -516,7 +523,7 @@ pub(crate) mod tests {
             .any(|source| source.id == "youtube_music"));
         let spotify = settings.lyric_order(PlayerKind::Spotify);
         assert_eq!(spotify, ["netease", "petitlyrics", "musixmatch", "qqmusic"]);
-        let youtube = settings.lyric_order(PlayerKind::Ytmusic);
+        let youtube = settings.lyric_order(PlayerKind::Ytmdesktop2);
         assert_eq!(youtube[0], "youtube_music");
         assert_eq!(&youtube[1..], spotify);
         assert_ne!(
@@ -526,11 +533,6 @@ pub(crate) mod tests {
         assert!(!available_providers(PlayerKind::Spotify)
             .iter()
             .any(|(id, _)| *id == "youtube_music"));
-        assert_eq!(
-            available_providers(PlayerKind::Ytmusic)[0].0,
-            "youtube_music"
-        );
-        assert_eq!(settings.lyric_order(PlayerKind::Ytmdesktop2), youtube);
         assert_eq!(
             available_providers(PlayerKind::Ytmdesktop2)[0].0,
             "youtube_music"
@@ -553,6 +555,41 @@ pub(crate) mod tests {
         let older: Settings = serde_json::from_str(r#"{"player":"ytmdesktop2"}"#).unwrap();
         assert_eq!(older.player, PlayerKind::Ytmdesktop2);
         assert_eq!(older.ytmd_port, 13091);
+    }
+
+    /// The system media session player is gone. A file that still chooses it
+    /// must not fail to parse, which would reset every other choice too.
+    #[test]
+    fn a_file_choosing_the_retired_media_session_keeps_everything_else() {
+        with_temp_data_dir(|folder| {
+            std::fs::write(
+                folder.join(SETTINGS_FILE),
+                r#"{"player":"ytmusic","clientId":"abc123","ytmdPort":20000,
+                    "compact":true,"lyricSize":30,"waveCompact":false}"#,
+            )
+            .unwrap();
+            let loaded = load();
+            assert_eq!(loaded.player, PlayerKind::Ytmdesktop2);
+            assert_eq!(loaded.client_id, "abc123");
+            assert_eq!(loaded.ytmd_port, 20000);
+            assert!(loaded.compact && !loaded.wave_compact);
+            assert_eq!(loaded.lyric_size, 30);
+
+            save(&loaded).unwrap();
+            let text = std::fs::read_to_string(folder.join(SETTINGS_FILE)).unwrap();
+            assert!(text.contains("\"ytmdesktop2\"") && !text.contains("ytmusic"));
+        });
+    }
+
+    #[test]
+    fn the_wave_is_on_in_both_modes_until_turned_off_in_one() {
+        let older: Settings = serde_json::from_str(r#"{"compact":true}"#).unwrap();
+        assert!(older.wave_full && older.wave_compact);
+        let chosen: Settings =
+            serde_json::from_str(r#"{"waveFull":true,"waveCompact":false}"#).unwrap();
+        assert!(chosen.wave_full && !chosen.wave_compact);
+        let text = serde_json::to_string(&chosen).unwrap();
+        assert!(text.contains("\"waveCompact\":false"));
     }
 
     /// Disabling everything must not mean "never fetch lyrics again".

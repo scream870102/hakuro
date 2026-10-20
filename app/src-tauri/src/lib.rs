@@ -2,9 +2,9 @@
 //! interface calls.
 //!
 //! Two playback sources are supported and exactly one is live: Spotify over its
-//! Web API, or YouTube Music through the Windows system media session. The
-//! choice is a setting, and changing it drops the old connection so the poll
-//! loop below ends and a new one starts.
+//! Web API, or YouTube Music through ytmdesktop2's local API. The choice is a
+//! setting, and changing it drops the old connection so the poll loop below
+//! ends and a new one starts.
 //!
 //! The backend owns every network call and pushes events to the frontend; the
 //! frontend owns only presentation and the sub-second position extrapolation
@@ -19,9 +19,9 @@ mod player;
 mod providers;
 mod settings;
 mod shortcuts;
-mod smtc;
 mod spotify;
 mod token_store;
+mod visualizer;
 mod youtube_music;
 mod ytmdesktop;
 
@@ -30,6 +30,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
@@ -37,14 +38,13 @@ use tokio::sync::RwLock;
 
 use db::Db;
 use lrc::Cue;
-use player::{Playback, Player, PlayerError, PlayerKind};
+use player::{Playback, Player, PlayerError, PlayerKind, Queue, QueueItem, Repeat};
 use providers::{LyricCandidate, LyricsResult, TrackQuery};
 use settings::Settings;
-use smtc::Smtc;
 use spotify::Spotify;
 use ytmdesktop::Ytmdesktop;
 
-/// The system media session is local and free to ask, so it is polled briskly.
+/// ytmdesktop2 is local and free to ask, so it is polled briskly.
 const LOCAL_POLL_INTERVAL: Duration = Duration::from_millis(1500);
 /// Spotify counts every request against a daily quota. While a song plays the
 /// frontend extrapolates the position, so a sample only has to catch changes
@@ -164,6 +164,7 @@ struct AppState {
     shortcuts: std::sync::RwLock<shortcuts::Active>,
     shortcut_warning: std::sync::RwLock<String>,
     db: Db,
+    visualizer: visualizer::Visualizer,
 }
 
 impl AppState {
@@ -177,6 +178,7 @@ impl AppState {
             shortcuts: std::sync::RwLock::new(shortcuts::Active::new()),
             shortcut_warning: std::sync::RwLock::new(String::new()),
             db: Db::open(),
+            visualizer: visualizer::Visualizer::default(),
         }
     }
 
@@ -326,8 +328,7 @@ async fn clear_lyrics_cache(state: State<'_, AppState>) -> Result<ConfigPayload,
 /// Connect to whichever source the settings name.
 ///
 /// Spotify resumes from its cached session and falls back to browser
-/// authorization; YouTube Music has nothing to authorize, so it only has to
-/// reach the system media session.
+/// authorization; ytmdesktop2 resumes its pairing or asks for one.
 #[tauri::command]
 async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let _connecting = state.session.connecting.lock().await;
@@ -343,9 +344,6 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
         "",
     );
 
-    if settings.player == PlayerKind::Ytmusic {
-        return connect_ytmusic(&app, &state).await;
-    }
     if settings.player == PlayerKind::Ytmdesktop2 {
         return connect_ytmdesktop2(&app, &state, settings.ytmd_port).await;
     }
@@ -413,27 +411,6 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
     emit_status(&app, "connected", "Connected", notice);
 
     start_polling(&app, &state).await;
-    Ok(())
-}
-
-/// YouTube Music needs no sign-in: the system media session is either there or
-/// Windows refuses, and the only lasting warning is the lyric database.
-async fn connect_ytmusic(app: &AppHandle, state: &State<'_, AppState>) -> Result<(), String> {
-    let client = match Smtc::connect().await {
-        Ok(client) => Arc::new(client),
-        Err(error) => {
-            emit_status(app, "error", "Connection failed", error.to_string());
-            return Err(error.to_string());
-        }
-    };
-    // The reader may have switched back to Spotify while Windows was answering.
-    if state.settings.read().await.player != PlayerKind::Ytmusic {
-        return Err("The player changed while connecting. Connect again.".into());
-    }
-    let notice = state.db.warning().unwrap_or_default().to_string();
-    *state.session.player.write().await = Some(Player::ytmusic(client));
-    emit_status(app, "connected", "Connected", notice);
-    start_polling(app, state).await;
     Ok(())
 }
 
@@ -629,9 +606,9 @@ fn poll_delay(playback: &Playback) -> Duration {
 
 /// A key that survives restarts, so the database can be read back next session.
 ///
-/// The source is part of the key. It has to be: YouTube Music has no track id
-/// at all, so its key is title and length — exactly the shape Spotify falls back
-/// to — and without a prefix the two would read each other's cached lyrics.
+/// The source is part of the key. It has to be: a song without a track id is
+/// keyed by title and length, a shape any source can reach, and without a
+/// prefix two sources would read each other's cached lyrics.
 fn track_key(playback: &Playback) -> String {
     if !playback.has_track {
         return String::new();
@@ -653,7 +630,7 @@ fn lyric_query(playback: &Playback) -> TrackQuery {
         artists: playback
             .artists
             .iter()
-            .flat_map(|name| smtc::split_artists(name))
+            .flat_map(|name| matching::split_artists(name))
             .collect(),
         album: playback.album.clone(),
         duration_ms: playback.duration_ms,
@@ -665,12 +642,11 @@ fn lyric_query(playback: &Playback) -> TrackQuery {
     }
 }
 
-fn lyric_cache_key(player: PlayerKind, requested: &str, order: &[String]) -> String {
-    match (player, requested) {
-        // Re-evaluate native Plain answers once under the synced-first policy.
-        (PlayerKind::Ytmusic, "") => format!("auto:ytm-sync-v2:{}", order.join(",")),
-        (PlayerKind::Ytmusic, "youtube_music") => "youtube_music:sync-v2".into(),
-        (_, "") => format!("auto:{}", order.join(",")),
+/// An automatic answer is only valid for the order that produced it; a pinned
+/// one is the pinned source's.
+fn lyric_cache_key(requested: &str, order: &[String]) -> String {
+    match requested {
+        "" => format!("auto:{}", order.join(",")),
         _ => requested.to_string(),
     }
 }
@@ -729,7 +705,7 @@ async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
 
     let order = state.settings.read().await.lyric_order(playback.source);
     // An automatic answer is only valid for the order that produced it.
-    let cache_key = lyric_cache_key(playback.source, &requested, &order);
+    let cache_key = lyric_cache_key(&requested, &order);
     if let Some(cached) = state.db.lyrics(&key, &cache_key) {
         emit_lyrics(app, generation, &key, &requested, cached, false);
         return;
@@ -1072,6 +1048,65 @@ async fn seek(position_ms: i64, state: State<'_, AppState>) -> Result<(), String
 }
 
 #[tauri::command]
+async fn set_shuffle(on: bool, state: State<'_, AppState>) -> Result<(), String> {
+    with_client(&state, |client| async move { client.set_shuffle(on).await }).await
+}
+
+#[tauri::command]
+async fn set_repeat(repeat: Repeat, state: State<'_, AppState>) -> Result<(), String> {
+    with_client(&state, |client| async move { client.set_repeat(repeat).await }).await
+}
+
+/// The playing song and what follows, for the queue window. The playing song
+/// is the last sample's when there is one: it carries the artist and picture
+/// that ytmdesktop2's queue leaves out.
+#[tauri::command]
+async fn get_queue(state: State<'_, AppState>) -> Result<Queue, String> {
+    let client = state
+        .session
+        .player
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| "Not connected to a player".to_string())?;
+    let mut queue = client.queue().await.map_err(|error| error.to_string())?;
+    if let Some(playing) = state
+        .session
+        .current_playback
+        .read()
+        .await
+        .as_ref()
+        .filter(|sample| sample.has_track && sample.source == client.kind())
+    {
+        queue.now = Some(QueueItem {
+            title: playing.name.clone(),
+            artists: playing.artists.clone(),
+            duration_ms: playing.duration_ms,
+            art: playing.album_art.clone(),
+            uri: queue.now.map(|now| now.uri).unwrap_or_default(),
+        });
+    }
+    Ok(queue)
+}
+
+/// Play a queued song. `position` is where the window listed it.
+#[tauri::command]
+async fn jump_queue(uri: String, position: usize, state: State<'_, AppState>) -> Result<(), String> {
+    with_client(&state, |client| async move { client.jump(&uri, position).await }).await
+}
+
+/// Stream the speakers' band levels to the tile floor until `stop_wave`.
+#[tauri::command]
+fn start_wave(levels: Channel<Vec<u8>>, state: State<'_, AppState>) {
+    state.visualizer.start(levels);
+}
+
+#[tauri::command]
+fn stop_wave(state: State<'_, AppState>) {
+    state.visualizer.stop();
+}
+
+#[tauri::command]
 async fn set_volume(volume_percent: u8, state: State<'_, AppState>) -> Result<(), String> {
     if volume_percent > 100 {
         return Err("Volume must be between 0 and 100.".into());
@@ -1095,7 +1130,7 @@ mod tests {
 
     #[test]
     fn the_lyric_lookup_wants_a_joint_credit_whole_and_apart() {
-        // YouTube Music in Chinese, through SMTC: one credit, shown as it is.
+        // YouTube Music in Chinese: one credit, shown as it is.
         let credit = Playback {
             name: "Title".into(),
             artists: vec!["The Chainsmokers\u{548c}Coldplay".into()],
@@ -1142,27 +1177,15 @@ mod tests {
     }
 
     #[test]
-    fn synced_policy_refreshes_only_native_ytm_cache_keys() {
+    fn an_automatic_answer_is_cached_per_order_and_a_pinned_one_per_source() {
         let order = vec!["youtube_music".into(), "lrclib".into()];
-        assert_eq!(
-            lyric_cache_key(PlayerKind::Spotify, "", &["lrclib".into()]),
-            "auto:lrclib"
-        );
-        assert_eq!(
-            lyric_cache_key(PlayerKind::Ytmusic, "", &order),
-            "auto:ytm-sync-v2:youtube_music,lrclib"
-        );
-        assert_eq!(
-            lyric_cache_key(PlayerKind::Ytmusic, "youtube_music", &order),
-            "youtube_music:sync-v2"
-        );
-        assert_eq!(
-            lyric_cache_key(PlayerKind::Ytmusic, "lrclib", &order),
-            "lrclib"
-        );
+        assert_eq!(lyric_cache_key("", &["lrclib".into()]), "auto:lrclib");
+        assert_eq!(lyric_cache_key("", &order), "auto:youtube_music,lrclib");
+        assert_eq!(lyric_cache_key("youtube_music", &order), "youtube_music");
+        assert_eq!(lyric_cache_key("lrclib", &order), "lrclib");
         assert_ne!(
-            lyric_cache_key(PlayerKind::Ytmusic, "", &order),
-            lyric_cache_key(PlayerKind::Ytmusic, "", &["youtube_music".into()])
+            lyric_cache_key("", &order),
+            lyric_cache_key("", &["youtube_music".into()])
         );
     }
 
@@ -1193,6 +1216,11 @@ mod tests {
             device_id: Some("device-1".into()),
             volume_percent: Some(50),
             can_set_volume: true,
+            shuffle: Some(false),
+            repeat: Some(Repeat::Context),
+            can_shuffle: true,
+            can_repeat_context: true,
+            can_repeat_track: true,
             source: PlayerKind::Spotify,
         }
     }
@@ -1214,7 +1242,7 @@ mod tests {
         sample.has_track = false;
         assert_eq!(poll_delay(&sample), SPOTIFY_STOPPED_INTERVAL);
 
-        sample.source = PlayerKind::Ytmusic;
+        sample.source = PlayerKind::Ytmdesktop2;
         assert_eq!(poll_delay(&sample), LOCAL_POLL_INTERVAL);
     }
 
@@ -1250,6 +1278,11 @@ mod tests {
             "deviceId",
             "volumePercent",
             "canSetVolume",
+            "shuffle",
+            "repeat",
+            "canShuffle",
+            "canRepeatContext",
+            "canRepeatTrack",
             "generation",
         ] {
             assert!(object.contains_key(key), "missing key: {key}");
@@ -1397,10 +1430,10 @@ mod tests {
     fn the_same_song_on_each_source_gets_its_own_database_key() {
         let mut spotify = playback();
         spotify.track_id = String::new();
-        let mut ytmusic = spotify.clone();
-        ytmusic.source = PlayerKind::Ytmusic;
-        assert_eq!(track_key(&ytmusic), "ytm:Title|180000");
-        assert_ne!(track_key(&spotify), track_key(&ytmusic));
+        let mut ytmd = spotify.clone();
+        ytmd.source = PlayerKind::Ytmdesktop2;
+        assert_eq!(track_key(&ytmd), "ytmd2:Title|180000");
+        assert_ne!(track_key(&spotify), track_key(&ytmd));
     }
 
     /// Read-only: needs ytmdesktop2 running with its API on the default port
@@ -1542,7 +1575,13 @@ pub fn run() {
             next_track,
             previous_track,
             set_volume,
-            seek
+            seek,
+            set_shuffle,
+            set_repeat,
+            get_queue,
+            jump_queue,
+            start_wave,
+            stop_wave
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

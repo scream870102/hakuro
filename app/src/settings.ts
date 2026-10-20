@@ -189,7 +189,7 @@ function renderSourceOrder() {
   });
 }
 
-/** Each player shows only its own setup; the media session has none. */
+/** Each player shows only its own setup. */
 function showPlayerSettings(player: PlayerKind) {
   element("spotify-settings").hidden = player !== "spotify";
   element("ytmd-settings").hidden = player !== "ytmdesktop2";
@@ -220,6 +220,8 @@ function fill(value: Config) {
   element<HTMLInputElement>("color-active").value = draft.theme.activeLine;
   element<HTMLInputElement>("color-past").value = draft.theme.pastLine;
   element<HTMLInputElement>("settings-follow").checked = draft.followLyrics;
+  element<HTMLInputElement>("settings-wave-full").checked = draft.waveFull;
+  element<HTMLInputElement>("settings-wave-compact").checked = draft.waveCompact;
   for (const dial of DIALS) {
     element<HTMLInputElement>(dial.input).value = String(draft[dial.key]);
     element(dial.output).textContent = `${draft[dial.key]}${dial.unit}`;
@@ -260,6 +262,8 @@ element("settings-form").addEventListener("submit", async (event) => {
     pastLine: element<HTMLInputElement>("color-past").value,
   };
   draft.followLyrics = element<HTMLInputElement>("settings-follow").checked;
+  draft.waveFull = element<HTMLInputElement>("settings-wave-full").checked;
+  draft.waveCompact = element<HTMLInputElement>("settings-wave-compact").checked;
   for (const dial of DIALS) draft[dial.key] = dialValue(dial.input);
   draft.clickThrough = element<HTMLSelectElement>("settings-click-through").value as ClickThrough;
   try {

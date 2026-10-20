@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "children",
-  "description": "Capability for the palette and panel windows the main window opens",
-  "windows": ["palette", "settings", "search", "source"],
+  "description": "Capability for the palette, panel and queue windows the main window opens",
+  "windows": ["palette", "settings", "search", "source", "queue"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

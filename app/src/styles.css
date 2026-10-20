@@ -111,6 +111,13 @@ body.is-maximized .icon-maximize { display: none; }
 
 .deck { display: grid; grid-template-columns: var(--object-width) minmax(0, 1fr); min-height: 0; }
 .object-zone { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; min-height: 0; padding: 0 0 20px 26px; }
+/* The tile floor (wave.ts), behind the cube and the song's name; it never takes the pointer. */
+.wave { position: absolute; left: 0; top: 0; pointer-events: none; }
+/* Full mode: the floor's ends fade out at the window's edge and under the lyrics (FADE in wave.ts). */
+.wave--fade {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+          mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
 .scene { position: relative; display: grid; place-items: center; min-height: 0; perspective: max(1500px, calc(var(--s) * 7)); cursor: grab; touch-action: none; }
 .scene.is-dragging { cursor: grabbing; }
 .shadow {
@@ -175,6 +182,10 @@ body.is-maximized .icon-maximize { display: none; }
 .glow-btn.hit { animation: hit .5s cubic-bezier(.2, 1.8, .4, 1); }
 .glow-btn:disabled { opacity: .25; filter: none; }
 
+/* Line icons drawn on a 24-unit grid: the queue, shuffle and repeat. */
+.icon-line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.icon-line .icon-solid { fill: currentColor; stroke: none; }
+
 /* front: the album cover, full bleed, and its colour is the play state - colour
    while playing, grey when paused. The lens under the pointer previews the other
    state; a tap toggles playback and the confirmed state floods the cover. */
@@ -211,6 +222,19 @@ body.is-maximized .icon-maximize { display: none; }
 }
 .cover-hit { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; }
 .cover-hit:focus-visible { outline-offset: -6px; }
+/* Skip waits at the cover's edges and shows while the pointer is over the
+   cover; anywhere else on it, a tap plays or pauses. (Scoped to the cover so
+   it outranks .glow-btn:disabled, which would show it before the first track.) */
+.cover-box .cover-skip {
+  position: absolute; top: 50%; width: calc(var(--s) * .2); padding: calc(var(--s) * .045);
+  border-radius: 50%; background: rgb(0 0 0 / .55); translate: 0 -50%;
+  opacity: 0; pointer-events: none;
+}
+.cover-skip--previous { left: 5%; }
+.cover-skip--next { right: 5%; }
+.cover-box:hover .cover-skip, .cover-skip:focus-visible { opacity: 1; pointer-events: auto; }
+.cover-box:hover .cover-skip:disabled { opacity: .25; }
+.scene.is-dragging .cover-skip { opacity: 0; }
 
 /* right: a big volume dial; the skip buttons sit in its middle, just under VOL */
 .face--right .face__label { left: 50%; top: auto; bottom: 6%; translate: -50% 0; }
@@ -243,8 +267,6 @@ body.is-maximized .icon-maximize { display: none; }
 .dial__read { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; pointer-events: none; }
 .dial__read output { font: calc(var(--s) * .13)/1 var(--display); color: var(--ink); }
 .dial__read small { font: 700 calc(var(--s) * .036)/1.6 var(--mono); letter-spacing: .2em; color: var(--ink-3); }
-.dial .skip { display: flex; justify-content: center; gap: calc(var(--s) * .05); margin-top: calc(var(--s) * .035); pointer-events: auto; }
-.dial .skip .glow-btn { width: calc(var(--s) * .11); }
 .dial.bump { animation: bump .35s cubic-bezier(.2, 1.8, .4, 1); }
 /* Visually hidden but focusable: arrow keys move it, the dial follows. */
 .dial__input { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; opacity: 0; pointer-events: none; }
@@ -259,6 +281,18 @@ body.is-maximized .icon-maximize { display: none; }
 .disc__label img:not([src]) { display: none; }
 .vinyl__sheen { position: absolute; inset: 0; border-radius: 50%; pointer-events: none; background: conic-gradient(from 30deg, transparent 0 6%, rgb(255 255 255 / .1) 11%, transparent 17% 50%, rgb(255 255 255 / .08) 61%, transparent 67%); }
 .vinyl__pin { position: absolute; left: 50%; top: 50%; width: 5%; height: 5%; border-radius: 50%; background: #d8d8d2; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px #000; }
+/* The queue, over the label once the pointer is on the record. */
+.vinyl__queue {
+  position: absolute; left: 50%; top: 50%; display: grid; place-items: center; width: 32%; aspect-ratio: 1;
+  border-radius: 50%; background: rgb(0 0 0 / .78); color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 calc(var(--s) * .08) var(--accent-glow);
+  translate: -50% -50%; opacity: 0; cursor: pointer;
+  transition: opacity .18s, background .15s, color .15s, scale .14s cubic-bezier(.3, 1.6, .5, 1);
+}
+.vinyl__queue svg { width: 48%; }
+.vinyl:hover .vinyl__queue:not(:disabled), .vinyl__queue:focus-visible { opacity: 1; }
+.vinyl__queue:hover:not(:disabled) { background: var(--accent); color: #000; }
+.vinyl__queue:active:not(:disabled) { scale: .86; }
 
 /* back + left: tool faces, each one a stand-in for a real control */
 .tools { display: grid; gap: calc(var(--s) * .05); width: 76%; padding-top: 8%; }
@@ -450,6 +484,27 @@ body.hide-translations .lyric-translation { display: none; }
 .bar__play .icon-pause, body.is-playing .bar__play .icon-play { display: none; }
 body.is-playing .bar__play .icon-pause { display: block; }
 
+/* Shuffle and repeat, beside play; lit in the accent while on. */
+.bar__mode {
+  position: relative; display: grid; place-items: center; align-self: stretch; width: 46px; flex-shrink: 0;
+  border-left: 1px solid var(--line); color: var(--ink-3);
+  transition: background .15s, color .15s, transform .14s cubic-bezier(.3, 1.6, .5, 1);
+}
+.bar__mode svg { width: 18px; height: 18px; }
+.bar__mode[aria-pressed="true"] { color: var(--accent); filter: drop-shadow(0 0 4px var(--accent-glow)); }
+.bar__mode:hover:not(:disabled) { background: var(--accent); color: #000; filter: none; }
+.bar__mode:active:not(:disabled) { transform: scale(.84); }
+.bar__mode:disabled { opacity: .3; }
+/* Bordered blocks sit flush; the bar's gap only spaces the times. */
+.bar__mode:not([hidden]) + .bar__mode, .bar__mode:not([hidden]) + .bar__play { margin-left: -16px; }
+/* Repeat one song: a small 1 on the icon. */
+.bar__mode[data-mode="track"]::after, .tool--mode[data-mode="track"]::after {
+  content: "1"; position: absolute; padding: 0 2px; background: var(--accent); color: #000;
+  font: 700 8px/1.3 var(--mono);
+}
+.bar__mode[data-mode="track"]::after { right: 8px; top: 10px; }
+.bar__mode[data-mode="track"]:hover::after { background: #000; color: var(--accent); }
+
 body.shake { animation: shake .28s linear; }
 
 /* ---------- compact ---------- */
@@ -470,14 +525,15 @@ body.is-compact .hint,
 body.is-compact .lyrics-head,
 body.is-compact .face__label,
 body.is-compact .vinyl,
-body.is-compact .face--left .tools,
-body.is-compact .dial .skip {
+body.is-compact .face--left .tools {
   display: none;
 }
 body.is-compact .deck { grid-template-columns: minmax(0, 1fr); }
-body.is-compact .object-zone { grid-template-rows: minmax(0, 1fr); padding: 0; }
+/* With the floor on, the window has more room below the cube than above, so
+   the cube moves up out of the floor's way (--floor-shift, from main.ts). */
+body.is-compact .object-zone { grid-template-rows: minmax(0, 1fr); padding: 0 0 var(--floor-shift, 0px); }
 /* The empty glass around the cube moves the window; the cube itself still turns. */
-body.is-compact .scene { cursor: move; }
+body.is-compact .scene, body.is-compact .object-zone { cursor: move; }
 body.is-compact .cube { cursor: grab; }
 body.is-compact .scene.is-dragging .cube { cursor: grabbing; }
 body.is-compact .shadow { top: calc(50% + var(--s) * .7); }
@@ -500,6 +556,14 @@ body.is-compact .lyrics { mask-image: linear-gradient(transparent, #000 8%, #000
    the cube is sized for always fit. */
 body.is-compact .lyrics__list { padding-right: 14%; }
 body.is-compact .line { padding-left: 0; }
+/* Fit original + translation into a plain row's budget at every compact size
+   (12–44px); hiding translations restores the reader's original type size. */
+body.is-compact:not(.hide-translations) .line:has(> .lyric-translation) {
+  padding-block: 3px;
+  font-size: calc(var(--lyric-size) * .8);
+  line-height: 1.1;
+}
+body.is-compact .lyric-translation { margin-top: 2px; font-size: .75em; line-height: 1.1; }
 body.is-compact .line--seekable::before { display: none; }
 body.is-compact .line.is-active { scale: 1.12; }
 body.is-compact .line.is-active::after { left: 0; width: calc(100% * var(--lp, 0)); }
@@ -512,14 +576,10 @@ body.is-compact .lid {
 .lid__row { display: flex; align-items: center; gap: calc(var(--s) * .05); }
 .tool--icon { justify-content: center; width: calc(var(--s) * .22); height: calc(var(--s) * .2); padding: 0; }
 .tool--icon svg { width: 44%; fill: none; stroke: currentColor; stroke-width: 1.3; stroke-linecap: square; }
-.tool--glow { border-color: transparent; color: var(--accent); filter: drop-shadow(0 0 2px var(--accent)) drop-shadow(0 0 calc(var(--s) * .05) var(--accent-glow)); }
-.tool--glow svg { width: 72%; fill: currentColor; stroke: none; }
-.tool--glow:hover:not(:disabled) { border-color: transparent; color: var(--accent); filter: drop-shadow(0 0 3px var(--accent)) drop-shadow(0 0 calc(var(--s) * .09) var(--accent)) brightness(1.1); }
-.tool--glow:disabled { opacity: .25; filter: none; }
-.tool--play { width: calc(var(--s) * .28); height: calc(var(--s) * .28); }
-.tool--play svg { width: 86%; }
-.tool--play .icon-pause, body.is-playing .tool--play .icon-play { display: none; }
-body.is-playing .tool--play .icon-pause { display: block; }
+/* The queue, shuffle and repeat, in the lid's front row. */
+.tool--mode { position: relative; }
+.tool--mode svg { width: 54%; stroke-width: 2; stroke-linecap: round; }
+.tool--mode[data-mode="track"]::after { right: -4px; top: -5px; }
 .tool--full:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 /* Beside the switches once the cube stretches: the song, and how far through it is. */
 body.is-compact .lid__meta {

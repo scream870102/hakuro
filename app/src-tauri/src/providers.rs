@@ -723,7 +723,7 @@ async fn automatic_search(
     if source != "youtube_music" || first.as_ref().is_ok_and(|result| !result.is_empty()) {
         return first;
     }
-    // SMTC may expose an MV's translated metadata rather than the album song's
+    // A player may expose an MV's translated metadata rather than the album song's
     // localized title/artist. Search videos only after Songs gave no usable lyrics,
     // sharing the original deadline and the same recording identity safeguards.
     let videos = tokio::time::timeout_at(
@@ -1471,8 +1471,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "public YouTube Music regression for the user's SMTC music-video metadata"]
-    async fn live_youtube_smtc_music_video_lyrics() {
+    #[ignore = "public YouTube Music regression for music-video metadata the user saw"]
+    async fn live_youtube_music_video_lyrics() {
         let query = TrackQuery {
             track: "Just a Sunny Day for You".into(),
             artists: vec!["YORUSHIKA".into()],
@@ -1485,7 +1485,7 @@ mod tests {
             &client().unwrap(),
             &crate::musixmatch::Session::new(),
             &query,
-            &crate::settings::Settings::default().lyric_order(crate::player::PlayerKind::Ytmusic),
+            &crate::settings::Settings::default().lyric_order(crate::player::PlayerKind::Ytmdesktop2),
         )
         .await;
         eprintln!(
@@ -1509,11 +1509,11 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "public YouTube Music regression for a credit joined in the reader's language"]
-    async fn live_youtube_smtc_localized_joint_credit() {
-        // What SMTC reported for owTWCbq_nSk with YouTube Music in Chinese.
+    async fn live_youtube_localized_joint_credit() {
+        // The credit owTWCbq_nSk carried with YouTube Music in Chinese.
         let query = TrackQuery {
             track: "Something Just Like This".into(),
-            artists: crate::smtc::split_artists("The Chainsmokers\u{548c}Coldplay"),
+            artists: crate::matching::split_artists("The Chainsmokers\u{548c}Coldplay"),
             album: "Something Just Like This".into(),
             duration_ms: 247_641,
             spotify_id: None,
@@ -1523,7 +1523,7 @@ mod tests {
             &client().unwrap(),
             &crate::musixmatch::Session::new(),
             &query,
-            &crate::settings::Settings::default().lyric_order(crate::player::PlayerKind::Ytmusic),
+            &crate::settings::Settings::default().lyric_order(crate::player::PlayerKind::Ytmdesktop2),
         )
         .await;
         eprintln!(
@@ -1619,7 +1619,7 @@ mod tests {
     #[test]
     fn a_credit_joined_in_the_readers_language_matches_its_artists_listed_apart() {
         let mut query = query();
-        query.artists = crate::smtc::split_artists("First\u{548c}Guest");
+        query.artists = crate::matching::split_artists("First\u{548c}Guest");
         let mut native = candidate("Abc_def-123");
         native.source = "youtube_music".into();
         native.artists = vec!["First".into(), "Guest".into()];

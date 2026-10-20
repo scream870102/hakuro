@@ -30,6 +30,8 @@ const initial = () => ({
     compactOpacity: 85,
     lyricSize: 26,
     compactLyricSize: 18,
+    waveFull: true,
+    waveCompact: false,
     shortcuts: SHORTCUT_ACTIONS.map(([action]) => ({ action, accelerator: "", global: false, ...DEFAULT_SHORTCUTS.find((item) => item.action === action) })),
   },
   providers: [{ id: "lrclib", label: "LRCLIB" }, { id: "musixmatch", label: "Musixmatch" }],
@@ -71,6 +73,11 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
   el<HTMLInputElement>("color-active").value = "#fedcba";
   el<HTMLInputElement>("color-past").value = "#112233";
   el<HTMLInputElement>("settings-follow").checked = false;
+  // The floor's two switches start from what is stored, one per mode.
+  expect(el<HTMLInputElement>("settings-wave-full").checked).toBe(true);
+  expect(el<HTMLInputElement>("settings-wave-compact").checked).toBe(false);
+  el<HTMLInputElement>("settings-wave-full").checked = false;
+  el<HTMLInputElement>("settings-wave-compact").checked = true;
   const enabled = el("source-order").querySelector("input")!;
   enabled.checked = false;
   enabled.dispatchEvent(new Event("change"));
@@ -92,24 +99,11 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
     compactOpacity: 85,
     lyricSize: 26,
     compactLyricSize: 18,
+    waveFull: false,
+    waveCompact: true,
     shortcuts: initial().settings.shortcuts,
   } });
   expect(win.close).toHaveBeenCalled();
-});
-
-it("hides the Spotify setup when the player is switched to YouTube Music, and saves the choice", async () => {
-  // Spotify is the stored choice, so its setup starts visible.
-  expect(el("spotify-settings").hidden).toBe(false);
-  const player = el<HTMLSelectElement>("settings-player");
-  player.value = "ytmusic";
-  player.dispatchEvent(new Event("change"));
-  // YouTube Music has nothing to sign in to, so the Client ID stops being asked for.
-  expect(el("spotify-settings").hidden).toBe(true);
-
-  submit();
-  await flush();
-  const saved = bridge.invoke.mock.calls.find(([command]) => command === "save_settings")!;
-  expect((saved[1] as { incoming: { player: string } }).incoming.player).toBe("ytmusic");
 });
 
 it("asks ytmdesktop2 for its port only, and saves the player with the port", async () => {

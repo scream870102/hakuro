@@ -10,8 +10,8 @@ export default defineConfig(() => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // The palette and the panels (settings, Find lyrics, lyrics source) are
-  // windows of their own, each a page.
+  // The palette, the panels (settings, Find lyrics, lyrics source) and the
+  // queue are windows of their own, each a page.
   build: {
     rollupOptions: {
       input: {
@@ -20,6 +20,7 @@ export default defineConfig(() => ({
         settings: "settings.html",
         search: "search.html",
         source: "source.html",
+        queue: "queue.html",
       },
     },
   },

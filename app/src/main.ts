@@ -12,13 +12,16 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { activeLine, emptySample, formatTime, positionAt, type Sample } from "./clock";
 import { applyTheme, SEARCH_TRANSLATIONS, SETTINGS_PREVIEW, type ClickThrough, type Config, type Settings, type WindowStylePreview } from "./config";
-import { createDeck, stretchedHeight, type CubeFace } from "./deck";
+import { createDeck, restPoses, stretchedHeight, type CubeFace } from "./deck";
+import { floorExtent } from "./floor";
+import { createModes, nextRepeat, REPEAT_NAMES, repeatLabel, shuffleLabel, type Modes, type Repeat } from "./modes";
 import {
   describeCommands, PALETTE_CLOSED, PALETTE_READY, PALETTE_RUN, PALETTE_SHOW,
   type Command, type PaletteAction, type PaletteSnapshot,
 } from "./palette";
-import { CHILD_WINDOW, created, openPanel, placeOverMain } from "./windows";
+import { CHILD_WINDOW, created, openPanel, placeBesideMain, placeOverMain } from "./windows";
 import { DEFAULT_SHORTCUTS, shortcutFromEvent, shortcutLabel } from "./shortcuts";
+import { createWave } from "./wave";
 
 interface Cue {
   time_ms: number;
@@ -46,6 +49,12 @@ interface PlaybackEvent {
   canSetVolume?: boolean;
   deviceName: string | null;
   deviceId?: string | null;
+  /** Null when the player cannot report them (ytmdesktop2). */
+  shuffle?: boolean | null;
+  repeat?: Repeat | null;
+  canShuffle?: boolean;
+  canRepeatContext?: boolean;
+  canRepeatTrack?: boolean;
   generation: number;
 }
 
@@ -92,6 +101,10 @@ const ui = {
   playPause: element<HTMLButtonElement>("play-pause"),
   next: element<HTMLButtonElement>("next"),
   barPlay: element<HTMLButtonElement>("bar-play"),
+  shuffle: element<HTMLButtonElement>("shuffle"),
+  repeat: element<HTMLButtonElement>("repeat"),
+  queueOpen: element<HTMLButtonElement>("queue-open"),
+  scene: element("scene"),
   lineNow: element("line-now"),
   lineTotal: element("line-total"),
   follow: element<HTMLInputElement>("follow"),
@@ -143,6 +156,15 @@ const state = {
 
 let seekPreview: { start: number; position: number } | null = null;
 const deck = createDeck({ beginSeek, previewSeek, endSeek, dragWindow: () => void appWindow.startDragging() });
+/** The cube's column: the floor is drawn across it, and compact's glass is all of it. */
+const objectZone = ui.scene.parentElement!;
+const wave = createWave({
+  zone: objectZone,
+  scene: ui.scene,
+  cube: element("cube"),
+  pose: () => deck.pose(),
+  fitted: () => !document.body.classList.contains("is-compact"),
+});
 const lineNumber = (index: number) => String(index + 1).padStart(2, "0");
 
 // ---------------------------------------------------------------- rendering
@@ -346,6 +368,7 @@ function frame() {
     }
   }
   deck.tick(now);
+  wave.draw(now);
   requestAnimationFrame(frame);
 }
 
@@ -357,7 +380,7 @@ async function send(command: string, args?: Record<string, unknown>) {
     setNotice("");
   } catch (error) {
     // The player's own refusal text, e.g. Spotify's Premium or no-active-device
-    // message, or a transport button the media session does not offer.
+    // message, or ytmdesktop2 waiting for its page to load.
     setNotice(String(error));
   }
 }
@@ -380,9 +403,7 @@ function renderVolume() {
   ui.volume.setAttribute("aria-valuetext", value === null ? "Unavailable" : `${value}%`);
   ui.volumeControl.title = volumeSupported
     ? config?.settings.player === "ytmdesktop2" ? "ytmdesktop2 player volume" : "Spotify active device volume"
-    : config?.settings.player === "ytmusic"
-      ? "YouTube Music does not expose volume control through Windows media sessions"
-      : "Volume control is unavailable for this player or device";
+    : "Volume control is unavailable for this player or device";
 }
 
 function resetVolume() {
@@ -531,28 +552,44 @@ void appWindow.onFocusChanged(({ payload: focused }) => {
 // Compact is the cube alone on clear glass. Its edge fits three lines of lyrics
 // for when it stretches, and the window leaves the cube room to turn: as tall as
 // the stretched cube stands end-on, stretched or not, so the lyrics only ever
-// widen it. The stylesheet reads the edge and the stretch from --compact-s and --lw.
+// widen it. With the wave on it also holds the floor, which reaches further
+// below the cube than above, so the cube moves up by --floor-shift. The
+// stylesheet reads the edge and the stretch from --compact-s and --lw.
 const COMPACT_MIN_EDGE = 150;
 const FULL_MIN_WIDTH = 520;
 const FULL_MIN_HEIGHT = 460;
 
-/** The cube's edge, how far the lyrics stretch it, and the window around both. */
-function compactGeometry(lyricSize: number, stretched: boolean) {
-  const translated = document.body.classList.contains("has-translations");
-  const lines = 3 * (translated ? lyricSize * 2.23 + 22 : lyricSize * 1.32 + 18);
+/**
+ * The cube's edge, how far the lyrics stretch it, and the window around both.
+ * Sized for original-only rows. Translated rows use smaller type to fit the
+ * same space, so songs and the translation switch never resize the window.
+ */
+function compactGeometry(lyricSize: number, stretched: boolean, floor: boolean) {
+  const lines = 3 * (lyricSize * 1.32 + 18);
   const edge = Math.max(COMPACT_MIN_EDGE, Math.ceil(lines + 16));
   const stretch = Math.round(edge * 1.9);
-  // The plain cube stands well under this at its own rest. Plus the pin's glow
-  // round the edges, top and bottom.
-  const height = Math.ceil(stretchedHeight(edge, edge + stretch)) + 24;
-  return { edge, stretch, size: new LogicalSize(2 * edge + (stretched ? stretch : 0), height) };
+  // The plain cube stands well under this at its own rest.
+  const cube = stretchedHeight(edge, edge + stretch) / 2;
+  let above = cube;
+  let below = cube;
+  let half = edge + (stretched ? stretch / 2 : 0);
+  if (floor) {
+    // The floor's height counts stretched or not, like the cube's.
+    for (const long of [false, true]) {
+      const extent = floorExtent(edge, long ? edge + stretch : edge, 1, restPoses(long));
+      above = Math.max(above, extent.above);
+      below = Math.max(below, extent.below);
+      if (long === stretched) half = Math.max(half, extent.left, extent.right);
+    }
+  }
+  // Plus the pin's glow round the edges, top and bottom.
+  const height = Math.ceil(above + below) + 24;
+  const width = Math.ceil(2 * half);
+  return { edge, stretch, shift: Math.round(below - above), size: new LogicalSize(width, height) };
 }
 
 function updateTranslationLayout() {
-  const visible = state.showTranslations;
-  document.body.classList.toggle("hide-translations", !visible);
-  document.body.classList.toggle("has-translations", visible && state.cues.some((cue) => Boolean(cue.translation)));
-  if (config?.settings.compact) void applyWindowBounds(config.settings);
+  document.body.classList.toggle("hide-translations", !state.showTranslations);
 }
 
 /** The full-mode size to come back to, remembered at the moment of switching. */
@@ -568,10 +605,11 @@ async function applyWindowBounds(settings: Settings) {
   appliedCompact = compact;
 
   if (compact) {
-    const { edge, stretch, size } = compactGeometry(settings.compactLyricSize, settings.compactLyrics);
+    const { edge, stretch, shift, size } = compactGeometry(settings.compactLyricSize, settings.compactLyrics, settings.waveCompact);
     const root = document.documentElement.style;
     root.setProperty("--compact-s", `${edge}px`);
     root.setProperty("--lw", `${stretch}px`);
+    root.setProperty("--floor-shift", `${shift}px`);
     // Nothing remembers the window size between launches, so a stored compact
     // mode has to size the window itself, and full mode needs a size to return to.
     if (first || switched) {
@@ -606,6 +644,13 @@ ui.mode.addEventListener("click", () => {
 ui.compactLyrics.addEventListener("change", () => {
   if (!config) return;
   void patchSettings({ compactLyrics: ui.compactLyrics.checked }, ui.compactLyrics);
+});
+
+// The floor below compact's cube lies outside the scene; its glass moves the window too.
+objectZone.addEventListener("pointerdown", (event) => {
+  if (event.button === 0 && event.target === objectZone && document.body.classList.contains("is-compact")) {
+    void appWindow.startDragging();
+  }
 });
 
 ui.pin.addEventListener("click", () => {
@@ -666,6 +711,27 @@ function endSeek(commit: boolean) {
   void send("seek", { positionMs: preview.position });
 }
 
+// Shuffle and repeat, in the bar and (through it) on compact's lid.
+const modes = createModes(renderModes, (error) => setNotice(error ?? ""));
+
+function renderModes(current: Readonly<Modes>) {
+  ui.shuffle.hidden = current.shuffle === null;
+  ui.shuffle.disabled = !current.canShuffle;
+  ui.shuffle.setAttribute("aria-pressed", String(current.shuffle === true));
+  ui.shuffle.title = shuffleLabel(current.shuffle === true);
+  ui.shuffle.setAttribute("aria-label", ui.shuffle.title);
+  const repeat = current.repeat ?? "off";
+  ui.repeat.hidden = current.repeat === null;
+  ui.repeat.disabled = nextRepeat(current) === null;
+  ui.repeat.dataset.mode = repeat;
+  ui.repeat.setAttribute("aria-pressed", String(repeat !== "off"));
+  ui.repeat.title = repeatLabel(repeat);
+  ui.repeat.setAttribute("aria-label", ui.repeat.title);
+}
+
+ui.shuffle.addEventListener("click", () => modes.toggleShuffle());
+ui.repeat.addEventListener("click", () => modes.cycleRepeat());
+
 /** Seek relative to where the song is now, from the palette. */
 function seekBy(deltaMs: number) {
   if (!state.canSeek || state.sample.durationMs <= 0) return;
@@ -695,7 +761,9 @@ function applyConfig(value: Config) {
   commandButton.title = commandHint ? `Commands (${commandHint})` : "Commands";
   if (changedPlayer) resetVolume();
   applyTheme(value.settings.theme);
+  wave.setAccent(value.settings.theme.accent);
   ui.follow.checked = value.settings.followLyrics;
+  ui.queueOpen.disabled = false;
 
   const { compact } = value.settings;
   const stretched = compact && value.settings.compactLyrics;
@@ -715,7 +783,21 @@ function applyConfig(value: Config) {
   if (switched) recentre();
   void applyWindowBounds(value.settings);
   setPinned(value.settings.alwaysOnTop);
+  updateWave();
 }
+
+/** The floor shows in whichever mode has it on, and only while the window can be seen. */
+let minimized = false;
+function updateWave() {
+  const settings = config?.settings;
+  const wanted = settings ? (settings.compact ? settings.waveCompact : settings.waveFull) : false;
+  wave.setActive(wanted && !minimized && document.visibilityState !== "hidden");
+}
+document.addEventListener("visibilitychange", updateWave);
+void appWindow.onResized(async () => {
+  minimized = await appWindow.isMinimized();
+  updateWave();
+});
 
 /** The two per-mode dials, applied together because both come from one mode. */
 function setWindowStyle(opacity: number, lyricSize: number) {
@@ -792,9 +874,45 @@ function openSource() {
 ui.search.addEventListener("click", openSearch);
 ui.sourceBadge.addEventListener("click", openSource);
 
+// The queue opens beside the window rather than over it, and the same button
+// closes it again.
+const QUEUE_WIDTH = 400;
+const QUEUE_HEIGHT = 620;
+let queueOpening = false;
+
+async function toggleQueue() {
+  if (queueOpening) return;
+  queueOpening = true;
+  try {
+    const open = await WebviewWindow.getByLabel("queue");
+    if (open) {
+      await open.close();
+      return;
+    }
+    const place = await placeBesideMain(QUEUE_WIDTH, QUEUE_HEIGHT);
+    await created(new WebviewWindow("queue", {
+      ...CHILD_WINDOW,
+      ...place,
+      url: "queue.html",
+      title: "Hakuro Queue",
+      resizable: false,
+      // The sheet leans back in its own light; the window around it is clear.
+      transparent: true,
+      shadow: false,
+    }));
+  } catch (error) {
+    setNotice(String(error));
+  } finally {
+    queueOpening = false;
+  }
+}
+
+ui.queueOpen.addEventListener("click", () => void toggleQueue());
+
 function setTranslations(visible: boolean) {
   state.showTranslations = visible;
   updateTranslationLayout();
+  recentre();
 }
 
 const translationsReady = listen<boolean>(SEARCH_TRANSLATIONS, ({ payload }) => setTranslations(payload));
@@ -840,6 +958,7 @@ ui.follow.addEventListener("change", () => {
 
 const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
   receiveVolume(payload);
+  modes.receive(payload);
   // The backend's own key, verbatim: lyric events carry it and the source and
   // match commands check it, so a key rebuilt here would never match theirs.
   const trackId = payload.hasTrack ? payload.trackKey : "";
@@ -939,6 +1058,16 @@ const COMMANDS: Command[] = [
   { id: "seekBackward", group: "PLAYBACK", icon: "←", label: "Back 10 seconds", hint: "倒轉 10 秒", words: "seek rewind", enabled: () => state.canSeek, run: () => seekBy(-10_000) },
   { id: "volumeUp", group: "PLAYBACK", icon: "+", label: "Volume up", hint: "音量 +5", words: "louder", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(5) },
   { id: "volumeDown", group: "PLAYBACK", icon: "−", label: "Volume down", hint: "音量 −5", words: "quieter", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(-5) },
+  { group: "PLAYBACK", icon: "≣", label: "Queue…", hint: "播放佇列", words: "up next queue list", enabled: usable(ui.queueOpen), run: () => ui.queueOpen.click() },
+  {
+    group: "PLAYBACK", icon: "⤨", label: "Shuffle", hint: "隨機播放", words: "random shuffle",
+    state: () => onOff(modes.current.shuffle === true), visible: () => !ui.shuffle.hidden, enabled: usable(ui.shuffle), run: () => ui.shuffle.click(),
+  },
+  {
+    group: "PLAYBACK", icon: "⟲", label: "Repeat", hint: "循環播放", words: "repeat loop one all",
+    state: () => ({ text: REPEAT_NAMES[modes.current.repeat ?? "off"].toUpperCase(), on: (modes.current.repeat ?? "off") !== "off" }),
+    visible: () => !ui.repeat.hidden, enabled: usable(ui.repeat), run: () => ui.repeat.click(),
+  },
   { group: "PLAYBACK", icon: "↺", label: "Refresh playback", hint: "重新整理播放狀態", words: "sync", run: () => element("refresh-playback").click() },
   { group: "PLAYBACK", icon: "!", label: "Retry connection", hint: "重新連線", words: "reconnect", visible: () => !ui.reconnect.hidden, run: () => ui.reconnect.click() },
   { id: "followLyrics", group: "LYRICS", icon: "↧", label: "Follow lyrics", hint: "自動跟隨歌詞", words: "scroll auto", state: () => onOff(ui.follow.checked), enabled: () => !ui.follow.disabled, run: () => ui.follow.click() },
@@ -953,10 +1082,20 @@ const COMMANDS: Command[] = [
   { id: "alwaysOnTop", group: "WINDOW", icon: "▲", label: "Keep on top", hint: "置頂", words: "pin always", state: () => onOff(ui.pin.getAttribute("aria-pressed") === "true"), enabled: usable(ui.pin), run: () => ui.pin.click() },
   { id: "clickThrough", group: "WINDOW", icon: "◇", label: "Click-through", hint: "滑鼠穿透", words: "mouse ignore", state: () => onOff(config?.settings.clickThrough === "always"), run: toggleClickThrough },
   { id: "settings", group: "WINDOW", icon: "≡", label: "Settings…", hint: () => (appVersion ? `設定 · v${appVersion}` : "設定"), words: "preferences options version 版本", run: () => element("settings-open").click() },
+  {
+    group: "WINDOW", icon: "≈", label: "Sound wave in full mode", hint: "波動：完整模式", words: "wave visualizer floor ripple audio",
+    state: () => onOff(config?.settings.waveFull ?? false), enabled: () => Boolean(config),
+    run: () => void patchSettings({ waveFull: !config!.settings.waveFull }),
+  },
+  {
+    group: "WINDOW", icon: "≈", label: "Sound wave in compact mode", hint: "波動：精簡模式", words: "wave visualizer floor ripple audio mini",
+    state: () => onOff(config?.settings.waveCompact ?? false), enabled: () => Boolean(config),
+    run: () => void patchSettings({ waveCompact: !config!.settings.waveCompact }),
+  },
   { group: "WINDOW", icon: "_", label: "Minimize", hint: "最小化", words: "hide", run: () => element("win-minimize").click() },
   { group: "WINDOW", icon: "□", label: () => (document.body.classList.contains("is-maximized") ? "Restore" : "Maximize"), hint: "最大化", words: "maximize restore full", run: () => element("win-maximize").click() },
   turn("front", "Cover", "方塊轉到封面", "front"),
-  turn("right", "Volume", "方塊轉到音量", "right dial skip"),
+  turn("right", "Volume", "方塊轉到音量", "right dial"),
   turn("back", "Lyric tools", "方塊轉到歌詞工具", "back source find"),
   turn("left", "Window tools", "方塊轉到視窗工具", "left follow pin"),
 ];

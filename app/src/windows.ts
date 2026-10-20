@@ -1,6 +1,7 @@
 /**
- * The palette and the panels (settings, Find lyrics, lyrics source) are windows
- * of their own, so a small main window (compact above all) never cramps them.
+ * The palette, the panels (settings, Find lyrics, lyrics source) and the queue
+ * are windows of their own, so a small main window (compact above all) never
+ * cramps them.
  * All are owned by the main window: on Windows an owned window always sits
  * above its owner, a pinned one included, hides while the owner is minimized
  * and closes with it.
@@ -13,34 +14,62 @@ export interface Placement { x: number; y: number; width: number; height: number
 
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 
+/** The main window and its monitor's work area, in logical pixels. */
+async function mainFrame() {
+  const main = getCurrentWindow();
+  const [scale, position, size, monitor] = await Promise.all([
+    main.scaleFactor(), main.outerPosition(), main.outerSize(), currentMonitor(),
+  ]);
+  const frame = {
+    left: position.x / scale,
+    top: position.y / scale,
+    width: size.width / scale,
+    height: size.height / scale,
+  };
+  const area = monitor && {
+    left: monitor.workArea.position.x / scale,
+    top: monitor.workArea.position.y / scale,
+    width: monitor.workArea.size.width / scale,
+    height: monitor.workArea.size.height / scale,
+  };
+  return { frame, area };
+}
+
+/** Shrink to the work area and move inside it, rounded to whole pixels. */
+function keepInside(place: Placement, area: Awaited<ReturnType<typeof mainFrame>>["area"]): Placement {
+  if (!area) return place;
+  const width = Math.min(place.width, area.width);
+  const height = Math.min(place.height, area.height);
+  const x = clamp(place.x, area.left, area.left + area.width - width);
+  const y = clamp(place.y, area.top, area.top + area.height - height);
+  return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+}
+
 /**
  * Where a child window of this size goes, in logical pixels: centred across the
  * main window, `drop` of the spare height down from its top edge (never above
  * it), and moved or shrunk as needed to stay inside the monitor's work area.
  */
 export async function placeOverMain(width: number, height: number, drop: number): Promise<Placement> {
-  const main = getCurrentWindow();
-  const [scale, position, size, monitor] = await Promise.all([
-    main.scaleFactor(), main.outerPosition(), main.outerSize(), currentMonitor(),
-  ]);
-  const left = position.x / scale;
-  const top = position.y / scale;
-  const mainWidth = size.width / scale;
-  const mainHeight = size.height / scale;
-  let x = left + (mainWidth - width) / 2;
-  let y = top + Math.max(0, (mainHeight - height) * drop);
-  if (!monitor) return { x, y, width, height };
+  const { frame, area } = await mainFrame();
+  const x = frame.left + (frame.width - width) / 2;
+  const y = frame.top + Math.max(0, (frame.height - height) * drop);
+  return area ? keepInside({ x, y, width, height }, area) : { x, y, width, height };
+}
 
-  const area = monitor.workArea;
-  const areaLeft = area.position.x / scale;
-  const areaTop = area.position.y / scale;
-  const areaWidth = area.size.width / scale;
-  const areaHeight = area.size.height / scale;
-  width = Math.min(width, areaWidth);
-  height = Math.min(height, areaHeight);
-  x = clamp(x, areaLeft, areaLeft + areaWidth - width);
-  y = clamp(y, areaTop, areaTop + areaHeight - height);
-  return { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) };
+/**
+ * Beside the main window rather than over it, so the cube stays in view:
+ * to its right, or to its left when the right edge of the screen is too
+ * close, level with its middle. With room on neither side it overlaps.
+ */
+export async function placeBesideMain(width: number, height: number, gap = 8): Promise<Placement> {
+  const { frame, area } = await mainFrame();
+  const right = frame.left + frame.width + gap;
+  const left = frame.left - gap - width;
+  let x = right;
+  if (area && right + width > area.left + area.width && left >= area.left) x = left;
+  const y = frame.top + (frame.height - height) / 2;
+  return area ? keepInside({ x, y, width, height }, area) : { x, y, width, height };
 }
 
 /** Options every child window shares: frameless and dark like the main window, owned by it. */

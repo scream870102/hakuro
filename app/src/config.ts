@@ -7,11 +7,10 @@ import type { ShortcutBinding } from "./shortcuts";
 
 export type ClickThrough = "off" | "auto" | "always";
 /**
- * Which player Hakuro follows. Exactly one is live at a time. "ytmusic" is YouTube
- * Music as the Windows media session reports it; "ytmdesktop2" is the ytmdesktop2
- * app's local API, which names the exact song.
+ * Which player Hakuro follows. Exactly one is live at a time. "ytmdesktop2" is
+ * YouTube Music through the ytmdesktop2 app's local API, which names the exact song.
  */
-export type PlayerKind = "spotify" | "ytmusic" | "ytmdesktop2";
+export type PlayerKind = "spotify" | "ytmdesktop2";
 
 export interface Theme { accent: string; activeLine: string; pastLine: string }
 
@@ -34,6 +33,9 @@ export interface Settings {
   compactOpacity: number;
   lyricSize: number;
   compactLyricSize: number;
+  /** The tile floor that ripples with the sound under the cube, per mode. */
+  waveFull: boolean;
+  waveCompact: boolean;
   shortcuts: ShortcutBinding[];
 }
 

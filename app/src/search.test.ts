@@ -101,10 +101,10 @@ it("searches, safely previews metadata and saves the chosen match, then closes",
 
 it("offers the active YouTube Music player's native lyrics without a source toggle and carries its ID through binding", async () => {
   const config = initial();
-  config.settings.player = "ytmusic";
+  config.settings.player = "ytmdesktop2";
   config.providers.push({ id: "youtube_music", label: "YouTube Music" });
   bridge.invoke.mockResolvedValueOnce(config);
-  await open({ track: "ytm:Song A|123000" });
+  await open({ track: "ytmd2:Song A|123000" });
   const select = el<HTMLSelectElement>("lyrics-search-source");
   expect(Array.from(select.options).map((option) => option.value)).toEqual(["youtube_music", "lrclib"]);
   expect(select.value).toBe("youtube_music");
@@ -113,35 +113,35 @@ it("offers the active YouTube Music player's native lyrics without a source togg
   submitSearch("Song A Artist");
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("search_lyrics", {
-    trackId: "ytm:Song A|123000", query: "Song A Artist", source: "youtube_music",
+    trackId: "ytmd2:Song A|123000", query: "Song A Artist", source: "youtube_music",
   });
   bridge.invoke.mockResolvedValueOnce({ ...preview, source: "YouTube Music" });
   el("lyrics-candidates").querySelector("button")!.click();
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("preview_lyric_candidate", { trackId: "ytm:Song A|123000", candidate: native });
+  expect(bridge.invoke).toHaveBeenCalledWith("preview_lyric_candidate", { trackId: "ytmd2:Song A|123000", candidate: native });
   el("lyrics-match-apply").click();
   await flush();
-  expect(bridge.invoke).toHaveBeenCalledWith("apply_lyric_match", { trackId: "ytm:Song A|123000", candidate: native });
+  expect(bridge.invoke).toHaveBeenCalledWith("apply_lyric_match", { trackId: "ytmd2:Song A|123000", candidate: native });
 });
 
 it("preserves enabled fallback-source order after native lyrics", async () => {
   const config = initial();
-  config.settings.player = "ytmusic";
+  config.settings.player = "ytmdesktop2";
   config.settings.sources = [{ id: "qqmusic", enabled: true }, { id: "netease", enabled: false }, { id: "lrclib", enabled: true }];
   config.providers.push({ id: "qqmusic", label: "QQ Music" }, { id: "youtube_music", label: "YouTube Music" });
   bridge.invoke.mockResolvedValueOnce(config);
-  await open({ track: "ytm:Song A|123000" });
+  await open({ track: "ytmd2:Song A|123000" });
   expect(Array.from(el<HTMLSelectElement>("lyrics-search-source").options).map((option) => option.value))
     .toEqual(["youtube_music", "qqmusic", "lrclib"]);
 });
 
 it("offers native YouTube Music search even when all fallback sources are disabled", async () => {
   const config = initial();
-  config.settings.player = "ytmusic";
+  config.settings.player = "ytmdesktop2";
   config.settings.sources.forEach((source) => { source.enabled = false; });
   config.providers.push({ id: "youtube_music", label: "YouTube Music" });
   bridge.invoke.mockResolvedValueOnce(config);
-  await open({ track: "ytm:Song A|123000" });
+  await open({ track: "ytmd2:Song A|123000" });
   expect(Array.from(el<HTMLSelectElement>("lyrics-search-source").options).map((option) => option.value)).toEqual(["youtube_music"]);
   expect(el<HTMLButtonElement>("lyrics-search-submit").disabled).toBe(false);
 });

@@ -13,7 +13,7 @@ const bridge = vi.hoisted(() => ({
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
   focus: [] as ((event: { payload: boolean }) => void)[],
 }));
-vi.mock("@tauri-apps/api/core", () => ({ invoke: bridge.invoke }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: bridge.invoke, Channel: class { onmessage = () => {}; } }));
 const appWindow = vi.hoisted(() => ({
   setAlwaysOnTop: vi.fn(),
   setIgnoreCursorEvents: vi.fn(),
@@ -24,6 +24,8 @@ const appWindow = vi.hoisted(() => ({
   close: vi.fn(),
   isMaximized: vi.fn(),
   onFocusChanged: vi.fn(),
+  onResized: vi.fn(),
+  isMinimized: vi.fn(),
   setMinSize: vi.fn(),
   setSize: vi.fn(),
   innerSize: vi.fn(),
@@ -97,11 +99,12 @@ function runFrame() {
   callbacks[callbacks.length - 1][0](performance.now());
 }
 const flush = async () => { await new Promise((resolve) => setTimeout(resolve, 0)); };
-function playback(trackId = "song-a", generation = 1, progressMs = 0, isPlaying = false, volume: { volumePercent?: number | null; canSetVolume?: boolean; deviceName?: string | null; deviceId?: string | null } = {}) {
+/** `extra` carries the rest of the event: volume, shuffle and repeat. */
+function playback(trackId = "song-a", generation = 1, progressMs = 0, isPlaying = false, extra: Record<string, unknown> = {}) {
   bridge.listeners.get("playback")!({ payload: {
     trackId, generation, name: trackId, artists: ["Artist"], album: "Album", albumArt: null,
     durationMs: 100000, progressMs, isPlaying, hasTrack: true,
-    canSkipNext: true, canSkipPrevious: true, canSeek: true, deviceName: null, ...volume,
+    canSkipNext: true, canSkipPrevious: true, canSeek: true, deviceName: null, ...extra,
     // As the backend builds it: source-prefixed, falling back to name and length.
     trackKey: `spotify:${trackId || `${trackId}|100000`}`,
   } });
@@ -120,6 +123,7 @@ beforeEach(async () => {
   bridge.focus.length = 0;
   for (const fn of Object.values(appWindow)) fn.mockReset().mockResolvedValue(undefined);
   appWindow.isMaximized.mockResolvedValue(false);
+  appWindow.isMinimized.mockResolvedValue(false);
   appWindow.scaleFactor.mockResolvedValue(1);
   appWindow.innerSize.mockResolvedValue({ toLogical: () => ({ width: 940, height: 760 }) });
   appWindow.outerPosition.mockResolvedValue({ x: 100, y: 50 });
@@ -133,6 +137,8 @@ beforeEach(async () => {
   document.documentElement.innerHTML = html;
   vi.stubGlobal("requestAnimationFrame", vi.fn());
   HTMLElement.prototype.scrollTo = vi.fn();
+  // jsdom draws nothing; the floor then simply stays blank.
+  HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as never;
   bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
     if (command === "get_config") return initial();
     if (command === "save_settings") return { ...initial(), settings: args!.incoming };
@@ -157,7 +163,6 @@ it("highlights words from the playback clock across pause and seeks, displays tr
   expect(spans[0].classList.contains("is-singing")).toBe(true);
   expect(spans[1].classList.contains("is-singing")).toBe(false);
   expect(el("lyrics-list").querySelector(".lyric-translation")?.textContent).toBe("你好世界");
-  expect(document.body.classList.contains("has-translations")).toBe(true);
   runFrame(); // paused playback keeps the same word
   expect(spans[0].classList.contains("is-singing")).toBe(true);
   playback("song-a", 1, 2500);
@@ -174,7 +179,6 @@ it("highlights words from the playback clock across pause and seeks, displays tr
   expect(spans[1].classList.contains("is-sung")).toBe(false);
   bridge.listeners.get("search:translations")!({ payload: false });
   expect(document.body.classList.contains("hide-translations")).toBe(true);
-  expect(document.body.classList.contains("has-translations")).toBe(false);
   lyrics(1, "Old plain text");
   expect(el("lyrics-list").textContent).toBe("Old plain text");
   expect(el("source-badge").textContent).not.toContain("Manual");
@@ -253,18 +257,18 @@ it("disables unsupported volume and discards pending replies when the player cha
   el("settings-open").click();
   await flush();
   await flush();
-  // YouTube Music is saved in the settings window, which then closes.
+  // ytmdesktop2 is saved in the settings window, which then closes.
   bridge.invoke.mockImplementation(async (command: string) => {
-    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, player: "ytmusic" } };
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, player: "ytmdesktop2" } };
   });
   children.get("settings")!.events.get("tauri://destroyed")!({ payload: null });
   await flush();
-  playback("ytmusic:song-b", 2, 0, false, { volumePercent: null, canSetVolume: false });
+  playback("ytmd2:song-b", 2, 0, false, { volumePercent: null, canSetVolume: false });
   reject("Old Spotify error");
   await flush();
   expect(volume.disabled).toBe(true);
   expect(el("volume-value").textContent).toBe("—");
-  expect(el("volume-control").title).toContain("YouTube Music");
+  expect(el("volume-control").title).toContain("unavailable");
   expect(el("notice").textContent).not.toContain("Old Spotify error");
 });
 
@@ -363,7 +367,7 @@ it("opens settings as a window of its own, previews its dials and re-reads what 
 it("connects straight away on first run when the player needs no Client ID", async () => {
   bridge.invoke.mockImplementation(async (command: string) => {
     if (command === "get_config") {
-      return { ...initial(), settings: { ...initial().settings, player: "ytmusic", clientId: "" } };
+      return { ...initial(), settings: { ...initial().settings, player: "ytmdesktop2", clientId: "" } };
     }
   });
   await import("./main");
@@ -641,6 +645,8 @@ it("keeps play and pause in the bar, named for what a press does", async () => {
 
 /** Compact's cube edge for a lyric size: three lines plus slack, never under 150px. */
 const edgeFor = (line: number) => Math.max(150, Math.ceil(3 * line + 16));
+/** Translated rows shrink to fit this same original-only row budget. */
+const plainLine = (size: number) => size * 1.32 + 18;
 /** As tall as the cube stretched for the lyrics stands end-on, plus the pin's glow. */
 const heightFor = (edge: number) => Math.ceil(stretchedHeight(edge, edge + Math.round(edge * 1.9))) + 24;
 
@@ -701,9 +707,9 @@ it("sizes compact's window around a cube whose face fits three lines of lyrics",
   await import("./main");
   await flush();
 
-  // Three lines of (30px * 1.32 line-height + 18px padding) set the edge; the
-  // window is twice that wide, and tall enough for the stretched cube end-on.
-  const edge = edgeFor(30 * 1.32 + 18);
+  // Three original-only rows set the edge even with translations enabled.
+  // The window stays tall enough for the stretched cube end-on.
+  const edge = edgeFor(plainLine(30));
   expect(lastSize(appWindow.setMinSize)).toEqual({ width: 2 * edge, height: heightFor(edge) });
   // Nothing remembers the window size between launches, so a stored compact
   // mode has to size the window itself, and it stays the size the cube sets.
@@ -719,12 +725,61 @@ it("sizes compact's window around a cube whose face fits three lines of lyrics",
     cues: [{ time_ms: 1000, text: "Original", translation: "譯文" }],
   } });
   await flush();
-  // Reserve the translated line-height AND its 4px top margin for each row.
-  const translated = edgeFor(30 * (1.32 + 0.65 * 1.4) + 18 + 4);
-  expect(lastSize(appWindow.setSize)).toEqual({ width: 2 * translated, height: heightFor(translated) });
+  // Whether a song has translations or not, the window stays as it is.
+  playback("song-b", 2, 1500);
+  bridge.listeners.get("lyrics")!({ payload: {
+    generation: 2, trackId: "spotify:song-b", source: "LRCLIB", synced: true,
+    text: "Plain", partial: false, requested: "", cues: [{ time_ms: 1000, text: "Plain" }],
+  } });
+  await flush();
+  for (const call of appWindow.setSize.mock.calls) {
+    expect({ width: call[0].width, height: call[0].height }).toEqual({ width: 2 * edge, height: heightFor(edge) });
+  }
+  // Toggling translations changes the typography, without resizing the window.
+  const resizeCount = appWindow.setSize.mock.calls.length;
   bridge.listeners.get("search:translations")!({ payload: false });
   await flush();
+  expect(document.body.classList.contains("hide-translations")).toBe(true);
+  expect(document.documentElement.style.getPropertyValue("--compact-s")).toBe(`${edge}px`);
+  bridge.listeners.get("search:translations")!({ payload: true });
+  await flush();
+  expect(document.body.classList.contains("hide-translations")).toBe(false);
+  expect(appWindow.setSize).toHaveBeenCalledTimes(resizeCount);
   expect(lastSize(appWindow.setSize)).toEqual({ width: 2 * edge, height: heightFor(edge) });
+});
+
+it("makes compact's window taller for the floor and lifts the cube out of its way", async () => {
+  bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
+    if (command === "get_config") {
+      return { ...initial(), settings: { ...initial().settings, compact: true, waveCompact: true, waveFull: false } };
+    }
+    if (command === "save_settings") return { ...initial(), settings: args!.incoming };
+  });
+  await import("./main");
+  await flush();
+  const edge = edgeFor(plainLine(18));
+  const size = lastSize(appWindow.setSize);
+  expect(size.height).toBeGreaterThan(heightFor(edge));
+  expect(size.width).toBeGreaterThanOrEqual(2 * edge);
+  // The floor reaches further below the cube than above it.
+  expect(parseFloat(document.documentElement.style.getPropertyValue("--floor-shift"))).toBeGreaterThan(0);
+  // Compact has the floor on, so the backend is asked to listen.
+  const canvas = document.querySelector<HTMLCanvasElement>(".object-zone > canvas.wave")!;
+  expect(canvas.hidden).toBe(false);
+  expect(bridge.invoke).toHaveBeenCalledWith("start_wave", expect.objectContaining({ levels: expect.anything() }));
+
+  bridge.listeners.get("search:translations")!({ payload: false });
+  await flush();
+  expect(lastSize(appWindow.setSize)).toEqual(size);
+  bridge.listeners.get("search:translations")!({ payload: true });
+  await flush();
+  expect(lastSize(appWindow.setSize)).toEqual(size);
+
+  // Back in full mode, where it is off: it stops listening.
+  el("mode-toggle").click();
+  await flush();
+  expect(canvas.hidden).toBe(true);
+  expect(bridge.invoke).toHaveBeenCalledWith("stop_wave");
 });
 
 it("leaves the stretched cube room to stand end-on, where its near end looms", () => {
@@ -743,7 +798,7 @@ it("stretches the compact cube for the lyrics, remembers it, and moves the lyric
   });
   await import("./main");
   await flush();
-  const edge = edgeFor(18 * 1.32 + 18);
+  const edge = edgeFor(plainLine(18));
   expect(document.body.classList.contains("is-stretched")).toBe(false);
   expect(el("lyrics").parentElement).toBe(el("cube-lyrics"));
   // The dial follows the cube's faces round: the spine has the right one.
@@ -805,6 +860,9 @@ it("drags the window from compact's empty glass, but turns the cube everywhere e
   // On the cube itself a press still turns it rather than moving the window.
   document.querySelector(".cover-shade")!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
   expect(appWindow.startDragging).toHaveBeenCalledTimes(1);
+  // The glass round the floor, outside the scene, moves it too.
+  el("scene").parentElement!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+  expect(appWindow.startDragging).toHaveBeenCalledTimes(2);
 });
 
 it("keeps compact metadata current across track changes and clears it when playback stops", async () => {
@@ -988,29 +1046,127 @@ it("turns the volume dial into input and one change, like dragging the slider", 
   expect(bridge.invoke).toHaveBeenCalledWith("set_volume", { volumePercent: 73 });
 });
 
-it("puts the transport on compact's lid, with how far through the song is beside it", async () => {
+/** What Spotify reports: shuffle and repeat, and which of them it will take now. */
+const MODES = { shuffle: false, repeat: "off", canShuffle: true, canRepeatContext: true, canRepeatTrack: true };
+
+it("puts the queue, shuffle and repeat on compact's lid, skip on the cover, and the song's progress beside them", async () => {
   await import("./main");
   await flush();
   const lid = (proxy: string) => document.querySelector<HTMLButtonElement>(`.lid .tool[data-proxy="${proxy}"]`)!;
   runFrame();
-  expect(lid("next").disabled).toBe(true);
-  playback("song-a", 1, 50000, false);
+  // Nothing is known about shuffle or repeat yet, so they are not shown.
+  expect(lid("shuffle").hidden).toBe(true);
+  expect(lid("repeat").hidden).toBe(true);
+  expect(lid("queue-open").disabled).toBe(false);
+  expect(el<HTMLButtonElement>("next").disabled).toBe(true);
+  playback("song-a", 1, 50000, false, MODES);
   runFrame();
-  expect(lid("next").disabled).toBe(false);
+  expect(lid("shuffle").hidden).toBe(false);
+  expect(lid("repeat").hidden).toBe(false);
+  expect(el<HTMLButtonElement>("next").disabled).toBe(false);
+  expect(el("next").closest(".cover-box")).not.toBeNull();
   expect(el("lid-fill").style.width).toBe("50%");
   expect(el("lid-time").textContent).toBe("00:50");
   expect(el("lid-total").textContent).toBe("01:40");
-  lid("next").click();
-  lid("previous").click();
-  lid("play-pause").click();
+  el("next").click();
+  el("previous").click();
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("next_track", undefined);
   expect(bridge.invoke).toHaveBeenCalledWith("previous_track", undefined);
-  expect(bridge.invoke).toHaveBeenCalledWith("play", undefined);
 
-  lid("pin").click();
+  lid("shuffle").click();
+  lid("repeat").click();
   await flush();
-  expect(document.body.classList.contains("is-pinned")).toBe(true);
+  expect(bridge.invoke).toHaveBeenCalledWith("set_shuffle", { on: true });
+  expect(bridge.invoke).toHaveBeenCalledWith("set_repeat", { repeat: "context" });
+  runFrame();
+  expect(lid("shuffle").getAttribute("aria-pressed")).toBe("true");
+  expect(lid("repeat").dataset.mode).toBe("context");
+  // The bar has the same two, as the lid's stand-ins show them.
+  expect(el("shuffle").getAttribute("aria-pressed")).toBe("true");
+  expect(el("repeat").title).toBe("Repeat: all");
+});
+
+it("trusts a shuffle or repeat press over the poll that follows it, and takes it back if the player refuses", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, true, MODES);
+  el("repeat").click();
+  await flush();
+  // The poll the press woke still carries the old state; the press stands.
+  playback("song-a", 1, 500, true, MODES);
+  expect(el("repeat").dataset.mode).toBe("context");
+  // A song with nothing to repeat skips past "one" back to "off".
+  playback("song-a", 1, 1000, true, { ...MODES, repeat: "context", canRepeatTrack: false });
+  el("repeat").click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenLastCalledWith("set_repeat", { repeat: "off" });
+
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "set_shuffle") throw "Spotify Premium is required.";
+  });
+  el("shuffle").click();
+  await flush();
+  expect(el("shuffle").getAttribute("aria-pressed")).toBe("false");
+  expect(el("notice").textContent).toContain("Premium");
+  // Once the player has had time to change, what it reports wins again.
+  vi.spyOn(performance, "now").mockReturnValue(performance.now() + 10000);
+  playback("song-a", 1, 1500, true, { ...MODES, shuffle: true });
+  expect(el("shuffle").getAttribute("aria-pressed")).toBe("true");
+  vi.mocked(performance.now).mockRestore();
+});
+
+it("hides shuffle and repeat for a player that cannot report them", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, true, MODES);
+  expect(el("shuffle").hidden).toBe(false);
+  playback("ytmd2:song-a", 2, 0, true, { shuffle: null, repeat: null });
+  expect(el("shuffle").hidden).toBe(true);
+  expect(el("repeat").hidden).toBe(true);
+});
+
+it("opens the queue beside the window from the record, and the same button closes it", async () => {
+  await import("./main");
+  await flush();
+  expect(el("queue-open").closest(".vinyl")).not.toBeNull();
+  el("queue-open").click();
+  await flush();
+  await flush();
+  // Main is at 100,50 and 940 wide: the queue goes 8px to its right.
+  expect(children.get("queue")?.options).toMatchObject({
+    url: "queue.html", parent: "main", transparent: true, shadow: false, resizable: false,
+    x: 1048, width: 400, height: 620,
+  });
+  const close = vi.fn(async () => { children.delete("queue"); });
+  Object.assign(children.get("queue")!, { close });
+  el("queue-open").click();
+  await flush();
+  expect(close).toHaveBeenCalled();
+  expect(children.has("queue")).toBe(false);
+});
+
+it("lets the palette open the queue and switch the floor on and off for each mode", async () => {
+  bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, waveFull: true, waveCompact: true } };
+    if (command === "save_settings") return { ...initial(), settings: args!.incoming };
+  });
+  await import("./main");
+  await flush();
+  const snapshot = await openPalette();
+  const find = (label: string) => snapshot.commands.find((command) => command.label === label)!;
+  expect(find("Sound wave in full mode").state).toEqual({ text: "ON", on: true });
+  // Shuffle waits until the player says it has it.
+  expect(snapshot.commands.some((command) => command.label === "Shuffle")).toBe(false);
+  runInPalette({ command: find("Sound wave in compact mode").id });
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("save_settings", {
+    incoming: { ...initial().settings, waveFull: true, waveCompact: false },
+  });
+  runInPalette({ command: find("Queue…").id });
+  await flush();
+  await flush();
+  expect(children.has("queue")).toBe(true);
 });
 
 it("lets the tool faces stand in for the controls they name", async () => {

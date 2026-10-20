@@ -12,7 +12,6 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::smtc::Smtc;
 use crate::spotify::Spotify;
 use crate::ytmdesktop::Ytmdesktop;
 
@@ -22,23 +21,23 @@ use crate::ytmdesktop::Ytmdesktop;
 pub enum PlayerKind {
     #[default]
     Spotify,
-    /// Whatever the system media session reports, which is how a browser or the
-    /// desktop app exposes YouTube Music.
-    Ytmusic,
     /// YouTube Music in the ytmdesktop2 app, read through its local API, which
-    /// names the exact video rather than only its title.
+    /// names the exact video rather than only its title. "ytmusic" was the
+    /// system media session, which is gone; a settings file that still names
+    /// it follows YouTube Music here instead of failing to load at all.
+    #[serde(alias = "ytmusic")]
     Ytmdesktop2,
 }
 
 impl PlayerKind {
-    /// Prefixes the database key, so the two sources cannot read each other's
-    /// cached lyrics. They have to differ: YouTube Music has no track id, so its
-    /// key falls back to title and length, which Spotify also does when it has
-    /// no id of its own.
+    /// Prefixes the database key, so the sources cannot read each other's
+    /// cached lyrics. Spotify falls back to title and length when it has no id
+    /// of its own, which another source's key could otherwise equal. "ytm"
+    /// belonged to the retired system media session; it stays unused, so its
+    /// old rows are never read as a live source's.
     pub fn prefix(self) -> &'static str {
         match self {
             PlayerKind::Spotify => "sp",
-            PlayerKind::Ytmusic => "ytm",
             PlayerKind::Ytmdesktop2 => "ytmd2",
         }
     }
@@ -46,13 +45,11 @@ impl PlayerKind {
     pub fn label(self) -> &'static str {
         match self {
             PlayerKind::Spotify => "Spotify",
-            PlayerKind::Ytmusic => "YouTube Music",
             PlayerKind::Ytmdesktop2 => "ytmdesktop2",
         }
     }
 
-    /// Only Spotify needs a Client ID; the system media session needs nothing,
-    /// and ytmdesktop2 pairs by approval instead.
+    /// Only Spotify needs a Client ID; ytmdesktop2 pairs by approval instead.
     pub fn needs_client_id(self) -> bool {
         matches!(self, PlayerKind::Spotify)
     }
@@ -60,7 +57,28 @@ impl PlayerKind {
     /// Whether the song is playing on YouTube Music, whose own lyrics are then
     /// the closest match there is.
     pub fn plays_youtube_music(self) -> bool {
-        matches!(self, PlayerKind::Ytmusic | PlayerKind::Ytmdesktop2)
+        matches!(self, PlayerKind::Ytmdesktop2)
+    }
+}
+
+/// Spotify's three repeat states, named as its API names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Repeat {
+    Off,
+    /// The album or playlist starts over.
+    Context,
+    /// The one song plays again.
+    Track,
+}
+
+impl Repeat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Repeat::Off => "off",
+            Repeat::Context => "context",
+            Repeat::Track => "track",
+        }
     }
 }
 
@@ -94,15 +112,44 @@ pub struct Playback {
     pub device_id: Option<String>,
     pub volume_percent: Option<u8>,
     pub can_set_volume: bool,
+    /// Shuffle and repeat as the player reports them, or `None` when it cannot
+    /// say: ytmdesktop2 only toggles them blind, so the interface hides both
+    /// rather than show a state it would have to guess.
+    pub shuffle: Option<bool>,
+    pub repeat: Option<Repeat>,
+    pub can_shuffle: bool,
+    pub can_repeat_context: bool,
+    pub can_repeat_track: bool,
     /// Which backend produced this sample. Part of the database key.
     pub source: PlayerKind,
 }
 
+/// One song in the queue window.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueItem {
+    pub title: String,
+    pub artists: Vec<String>,
+    /// Zero when the player does not say.
+    pub duration_ms: i64,
+    pub art: Option<String>,
+    /// What `jump` takes to reach this song, or empty when it cannot.
+    pub uri: String,
+}
+
+/// The playing song and what follows it, as far as the player will tell.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Queue {
+    pub now: Option<QueueItem>,
+    pub upcoming: Vec<QueueItem>,
+    /// Whether a row can be played from the window.
+    pub can_jump: bool,
+}
+
 /// What can go wrong, in terms every backend shares.
 ///
-/// Spotify raises all of these; the system media session raises only the last
-/// two, because it has no sign-in to expire and no rate limit to hit;
-/// ytmdesktop2 raises all but the rate limit.
+/// Spotify raises all of these; ytmdesktop2 raises all but the rate limit.
 #[derive(Debug, thiserror::Error)]
 pub enum PlayerError {
     /// The cached session is gone or rejected: the reader has to authorize again.
@@ -128,7 +175,6 @@ static NEXT_SERIAL: AtomicU64 = AtomicU64::new(1);
 
 enum Backend {
     Spotify(Arc<Spotify>),
-    Ytmusic(Arc<Smtc>),
     Ytmdesktop2(Arc<Ytmdesktop>),
 }
 
@@ -142,10 +188,6 @@ pub struct Player {
 impl Player {
     pub fn spotify(client: Arc<Spotify>) -> Self {
         Self::wrap(Backend::Spotify(client))
-    }
-
-    pub fn ytmusic(client: Arc<Smtc>) -> Self {
-        Self::wrap(Backend::Ytmusic(client))
     }
 
     pub fn ytmdesktop2(client: Arc<Ytmdesktop>) -> Self {
@@ -162,7 +204,6 @@ impl Player {
     pub fn kind(&self) -> PlayerKind {
         match self.backend.as_ref() {
             Backend::Spotify(_) => PlayerKind::Spotify,
-            Backend::Ytmusic(_) => PlayerKind::Ytmusic,
             Backend::Ytmdesktop2(_) => PlayerKind::Ytmdesktop2,
         }
     }
@@ -170,7 +211,6 @@ impl Player {
     pub async fn playback(&self) -> Result<Playback, PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.playback().await.map_err(Into::into),
-            Backend::Ytmusic(client) => client.playback().await,
             Backend::Ytmdesktop2(client) => client.playback().await,
         }
     }
@@ -178,7 +218,6 @@ impl Player {
     pub async fn play(&self) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.play().await.map_err(Into::into),
-            Backend::Ytmusic(client) => client.play().await,
             Backend::Ytmdesktop2(client) => client.play().await,
         }
     }
@@ -186,7 +225,6 @@ impl Player {
     pub async fn pause(&self) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.pause().await.map_err(Into::into),
-            Backend::Ytmusic(client) => client.pause().await,
             Backend::Ytmdesktop2(client) => client.pause().await,
         }
     }
@@ -194,7 +232,6 @@ impl Player {
     pub async fn next(&self) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.next().await.map_err(Into::into),
-            Backend::Ytmusic(client) => client.next().await,
             Backend::Ytmdesktop2(client) => client.next().await,
         }
     }
@@ -202,7 +239,6 @@ impl Player {
     pub async fn previous(&self) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.previous().await.map_err(Into::into),
-            Backend::Ytmusic(client) => client.previous().await,
             Backend::Ytmdesktop2(client) => client.previous().await,
         }
     }
@@ -210,7 +246,6 @@ impl Player {
     pub async fn seek(&self, position_ms: i64) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.seek(position_ms).await.map_err(Into::into),
-            Backend::Ytmusic(client) => client.seek(position_ms).await,
             Backend::Ytmdesktop2(client) => client.seek(position_ms).await,
         }
     }
@@ -222,11 +257,46 @@ impl Player {
     ) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.set_volume(volume_percent, device_id.as_deref()).await.map_err(Into::into),
-            Backend::Ytmusic(_) => Err(PlayerError::Refused {
-                message: "Change volume in YouTube Music; its media session does not expose volume control.".into(),
-            }),
             Backend::Ytmdesktop2(client) => client.set_volume(volume_percent).await,
         }
+    }
+
+    pub async fn queue(&self) -> Result<Queue, PlayerError> {
+        match self.backend.as_ref() {
+            Backend::Spotify(client) => client.queue().await.map_err(Into::into),
+            Backend::Ytmdesktop2(client) => client.queue().await,
+        }
+    }
+
+    /// Play a song further down the queue, named by its `QueueItem::uri` and
+    /// the place the queue window showed it.
+    pub async fn jump(&self, uri: &str, position: usize) -> Result<(), PlayerError> {
+        match self.backend.as_ref() {
+            Backend::Spotify(client) => client.jump(uri, position).await.map_err(Into::into),
+            Backend::Ytmdesktop2(_) => Err(unsupported("Playing a queued song")),
+        }
+    }
+
+    pub async fn set_shuffle(&self, on: bool) -> Result<(), PlayerError> {
+        match self.backend.as_ref() {
+            Backend::Spotify(client) => client.set_shuffle(on).await.map_err(Into::into),
+            Backend::Ytmdesktop2(_) => Err(unsupported("Shuffle")),
+        }
+    }
+
+    pub async fn set_repeat(&self, repeat: Repeat) -> Result<(), PlayerError> {
+        match self.backend.as_ref() {
+            Backend::Spotify(client) => client.set_repeat(repeat).await.map_err(Into::into),
+            Backend::Ytmdesktop2(_) => Err(unsupported("Repeat")),
+        }
+    }
+}
+
+/// ytmdesktop2's API cannot report shuffle or repeat, nor play a queued song,
+/// so the interface hides those controls; this answers a caller that asks anyway.
+fn unsupported(what: &str) -> PlayerError {
+    PlayerError::Refused {
+        message: format!("{what} is not available with ytmdesktop2."),
     }
 }
 
@@ -238,8 +308,9 @@ mod tests {
     fn every_source_gets_its_own_cache_prefix() {
         let prefixes = [
             PlayerKind::Spotify.prefix(),
-            PlayerKind::Ytmusic.prefix(),
             PlayerKind::Ytmdesktop2.prefix(),
+            // The retired system media session's rows are still in old databases.
+            "ytm",
         ];
         for (index, prefix) in prefixes.iter().enumerate() {
             assert!(
@@ -252,35 +323,43 @@ mod tests {
     #[test]
     fn only_spotify_asks_for_a_client_id() {
         assert!(PlayerKind::Spotify.needs_client_id());
-        assert!(!PlayerKind::Ytmusic.needs_client_id());
         assert!(!PlayerKind::Ytmdesktop2.needs_client_id());
     }
 
     #[test]
-    fn both_youtube_music_players_offer_its_own_lyrics() {
-        assert!(PlayerKind::Ytmusic.plays_youtube_music());
+    fn the_youtube_music_player_offers_its_own_lyrics() {
         assert!(PlayerKind::Ytmdesktop2.plays_youtube_music());
         assert!(!PlayerKind::Spotify.plays_youtube_music());
     }
 
     #[test]
     fn the_stored_name_of_each_source_survives_a_round_trip() {
-        for kind in [
-            PlayerKind::Spotify,
-            PlayerKind::Ytmusic,
-            PlayerKind::Ytmdesktop2,
-        ] {
+        for kind in [PlayerKind::Spotify, PlayerKind::Ytmdesktop2] {
             let json = serde_json::to_string(&kind).unwrap();
             let back: PlayerKind = serde_json::from_str(&json).unwrap();
             assert_eq!(kind, back, "settings.json must reload the chosen source");
         }
         assert_eq!(
-            serde_json::to_string(&PlayerKind::Ytmusic).unwrap(),
-            "\"ytmusic\""
-        );
-        assert_eq!(
             serde_json::to_string(&PlayerKind::Ytmdesktop2).unwrap(),
             "\"ytmdesktop2\""
         );
+    }
+
+    #[test]
+    fn the_retired_media_session_choice_loads_as_ytmdesktop2() {
+        let kind: PlayerKind = serde_json::from_str("\"ytmusic\"").unwrap();
+        assert_eq!(kind, PlayerKind::Ytmdesktop2);
+    }
+
+    #[test]
+    fn repeat_states_use_spotifys_own_names() {
+        for (repeat, name) in [
+            (Repeat::Off, "off"),
+            (Repeat::Context, "context"),
+            (Repeat::Track, "track"),
+        ] {
+            assert_eq!(repeat.as_str(), name);
+            assert_eq!(serde_json::to_string(&repeat).unwrap(), format!("\"{name}\""));
+        }
     }
 }

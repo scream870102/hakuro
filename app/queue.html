@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hakuro Queue</title>
+    <link rel="stylesheet" href="/src/queue.css" />
+  </head>
+  <body>
+    <!-- A sheet leaning back beside the main window: an accent edge on its
+         right, the song playing now on top, what follows it below. -->
+    <div class="stage">
+      <div class="lean" id="queue-lean">
+        <div class="lean__edge" aria-hidden="true"></div>
+        <div class="queue" role="dialog" aria-labelledby="queue-title">
+          <header class="queue__head" data-tauri-drag-region="deep">
+            <div class="queue__titles">
+              <h1 id="queue-title">QUEUE</h1>
+              <p id="queue-sub">UP NEXT</p>
+            </div>
+            <!-- Only for a player that reports them (Spotify). -->
+            <button class="hb" id="queue-shuffle" type="button" hidden disabled
+                    title="Shuffle" aria-label="Shuffle" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h3c2.5 0 3.7 1.4 5 3.6l1.6 2.8C14 15.6 15.4 17 18 17h3M18 14l3 3-3 3M3 17h3c1.5 0 2.5-.5 3.4-1.5M21 7h-3c-1.5 0-2.6.5-3.5 1.5M18 4l3 3-3 3"/></svg>
+            </button>
+            <button class="hb" id="queue-repeat" type="button" hidden disabled data-mode="off"
+                    title="Repeat: off" aria-label="Repeat: off" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6H20M17 3l3 3-3 3M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5H4M7 21l-3-3 3-3"/></svg>
+            </button>
+            <button class="hb hb--close" id="panel-close" type="button" title="Close" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </header>
+
+          <section class="now" id="queue-now" hidden aria-label="Playing now">
+            <span class="art" id="now-art"></span>
+            <div class="now__text">
+              <div class="now__meta"><b>NOW</b><span id="now-time">00:00 / 00:00</span></div>
+              <div class="now__title" id="now-title"></div>
+              <div class="now__artist" id="now-artist"></div>
+              <div class="now__bar"><i id="now-fill"></i></div>
+            </div>
+          </section>
+
+          <div class="queue__label" id="queue-label" hidden>UP NEXT</div>
+          <ol class="queue__list" id="queue-list" aria-labelledby="queue-label"></ol>
+
+          <div class="queue__empty" id="queue-empty" hidden>
+            <div>
+              <div class="queue__empty-title">NO QUEUE</div>
+              <p id="queue-empty-text"></p>
+            </div>
+          </div>
+
+          <footer class="queue__foot">
+            <span id="queue-status" role="status"></span>
+            <button id="queue-refresh" type="button" title="Read the queue again">↻ REFRESH</button>
+          </footer>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/queue.ts"></script>
+  </body>
+</html>

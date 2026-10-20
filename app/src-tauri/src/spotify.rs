@@ -4,6 +4,9 @@
 //! https://developer.spotify.com/documentation/web-api/reference/get-information-about-the-users-current-playback
 //! https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback
 //! https://developer.spotify.com/documentation/web-api/reference/seek-to-position-in-currently-playing-track
+//! https://developer.spotify.com/documentation/web-api/reference/get-queue
+//! https://developer.spotify.com/documentation/web-api/reference/toggle-shuffle-for-users-playback
+//! https://developer.spotify.com/documentation/web-api/reference/set-repeat-mode-on-users-playback
 //!
 //! The redirect URI must use the literal loopback address: Spotify disallows
 //! `localhost` for new authorizations, so `http://127.0.0.1:8787/callback` it is.
@@ -17,7 +20,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
 
-use crate::player::{Playback, PlayerError, PlayerKind};
+use crate::player::{Playback, PlayerError, PlayerKind, Queue, QueueItem, Repeat};
 use crate::token_store;
 
 const REDIRECT_URI: &str = "http://127.0.0.1:8787/callback";
@@ -31,6 +34,9 @@ const TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
 const API_BASE: &str = "https://api.spotify.com/v1";
 /// The browser tab is opened by us; if nobody completes the form, stop waiting.
 const AUTH_TIMEOUT: Duration = Duration::from_secs(300);
+/// Spotify has no "play this queued song" call, so a jump skips forward one
+/// song at a time. A queue this deep is not one a reader scrolled to.
+const MAX_JUMP: usize = 50;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpotifyError {
@@ -347,6 +353,12 @@ impl Spotify {
             .unwrap_or(Value::Null);
         let allowed = |key: &str| !disallows.get(key).and_then(Value::as_bool).unwrap_or(false);
         let (volume_percent, can_set_volume) = volume_state(&data["device"]);
+        let repeat = match data["repeat_state"].as_str() {
+            Some("context") => Some(Repeat::Context),
+            Some("track") => Some(Repeat::Track),
+            Some("off") => Some(Repeat::Off),
+            _ => None,
+        };
 
         Ok(Playback {
             track_id: item
@@ -394,8 +406,67 @@ impl Spotify {
                 .and_then(Value::as_str)
                 .map(str::to_string),
             device_id: data["device"]["id"].as_str().map(str::to_string),
+            shuffle: data["shuffle_state"].as_bool(),
+            repeat,
+            can_shuffle: allowed("toggling_shuffle"),
+            can_repeat_context: allowed("toggling_repeat_context"),
+            can_repeat_track: allowed("toggling_repeat_track"),
             source: PlayerKind::Spotify,
         })
+    }
+
+    /// The playing song and what Spotify will play after it. Asked only while
+    /// the queue window is open: it is one more request against the quota.
+    pub async fn queue(&self) -> Result<Queue, SpotifyError> {
+        Ok(parse_queue(&self.fetch_queue().await?))
+    }
+
+    async fn fetch_queue(&self) -> Result<Value, SpotifyError> {
+        Ok(self
+            .call(reqwest::Method::GET, "/me/player/queue", &[])
+            .await?
+            .unwrap_or(Value::Null))
+    }
+
+    /// Skip forward until the chosen song plays. `position` is where the
+    /// window showed it; the queue is read again first, because it may have
+    /// moved on since, and a song queued twice is told apart by that place.
+    pub async fn jump(&self, uri: &str, position: usize) -> Result<(), SpotifyError> {
+        let data = self.fetch_queue().await?;
+        let skips = jump_index(&parse_queue(&data), uri, position)
+            .and_then(|index| skips_to(&data, index));
+        let Some(skips) = skips else {
+            return Err(SpotifyError::Refused {
+                status: 404,
+                message: "That song is no longer in the queue.".into(),
+            });
+        };
+        // One at a time and in order: each skip is answered before the next
+        // is sent, so none of them can overtake another.
+        for _ in 0..skips {
+            self.next().await?;
+        }
+        Ok(())
+    }
+
+    pub async fn set_shuffle(&self, on: bool) -> Result<(), SpotifyError> {
+        self.call(
+            reqwest::Method::PUT,
+            "/me/player/shuffle",
+            &[("state", on.to_string())],
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_repeat(&self, repeat: Repeat) -> Result<(), SpotifyError> {
+        self.call(
+            reqwest::Method::PUT,
+            "/me/player/repeat",
+            &[("state", repeat.as_str().to_string())],
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn play(&self) -> Result<(), SpotifyError> {
@@ -451,6 +522,90 @@ impl Spotify {
             .await?;
         Ok(())
     }
+}
+
+/// A track or a podcast episode from the queue answer, or nothing for anything
+/// else. An episode has no artists; its show stands in for them.
+fn queue_item(item: &Value) -> Option<QueueItem> {
+    let title = item["name"].as_str()?.trim();
+    let uri = item["uri"].as_str().unwrap_or_default();
+    if title.is_empty() {
+        return None;
+    }
+    let artists = match item["artists"].as_array() {
+        Some(list) => list
+            .iter()
+            .filter_map(|artist| artist["name"].as_str())
+            .map(str::to_string)
+            .collect(),
+        None => item["show"]["name"]
+            .as_str()
+            .map(str::to_string)
+            .into_iter()
+            .collect(),
+    };
+    // The smallest picture that is still sharp in a 32 px thumbnail.
+    let images = item["album"]["images"]
+        .as_array()
+        .or_else(|| item["images"].as_array());
+    let art = images.and_then(|images| {
+        images
+            .iter()
+            .filter(|image| image["url"].as_str().is_some())
+            .min_by_key(|image| {
+                let width = image["width"].as_u64().unwrap_or(640);
+                (width < 64, width)
+            })
+            .and_then(|image| image["url"].as_str())
+            .map(str::to_string)
+    });
+    Some(QueueItem {
+        title: title.to_string(),
+        artists,
+        duration_ms: item["duration_ms"].as_i64().unwrap_or(0),
+        art,
+        uri: uri.to_string(),
+    })
+}
+
+fn parse_queue(data: &Value) -> Queue {
+    let upcoming: Vec<QueueItem> = data["queue"]
+        .as_array()
+        .map(|list| list.iter().filter_map(queue_item).collect())
+        .unwrap_or_default();
+    Queue {
+        now: queue_item(&data["currently_playing"]),
+        can_jump: upcoming.iter().any(|item| !item.uri.is_empty()),
+        upcoming,
+    }
+}
+
+/// Where in the fresh queue the chosen song is: at the place the window showed
+/// it if it is still there, otherwise its first appearance.
+fn jump_index(queue: &Queue, uri: &str, position: usize) -> Option<usize> {
+    if uri.is_empty() {
+        return None;
+    }
+    let at = |index: usize| queue.upcoming.get(index).is_some_and(|item| item.uri == uri);
+    let index = if at(position) {
+        position
+    } else {
+        queue.upcoming.iter().position(|item| item.uri == uri)?
+    };
+    Some(index)
+}
+
+/// How many skips reach the `index`th song the window lists. Spotify's own
+/// queue may hold entries the window leaves out (no name), and each of those
+/// takes a skip too.
+fn skips_to(data: &Value, index: usize) -> Option<usize> {
+    let (raw, _) = data["queue"]
+        .as_array()?
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| queue_item(item).is_some())
+        .nth(index)?;
+    (raw < MAX_JUMP).then_some(raw + 1)
 }
 
 /// Spotify reports null volume for some devices and explicitly marks support.
@@ -595,6 +750,79 @@ mod tests {
             })),
             (Some(40), false)
         );
+    }
+
+    fn queue_answer() -> Value {
+        serde_json::json!({
+            "currently_playing": {
+                "type": "track", "name": "Now", "uri": "spotify:track:now",
+                "duration_ms": 200000,
+                "artists": [{"name": "A"}, {"name": "B"}],
+                "album": {"images": [
+                    {"url": "https://i/640", "width": 640},
+                    {"url": "https://i/300", "width": 300},
+                    {"url": "https://i/64", "width": 64}
+                ]}
+            },
+            "queue": [
+                {"type": "track", "name": "Next", "uri": "spotify:track:next",
+                 "duration_ms": 180000, "artists": [{"name": "C"}], "album": {"images": []}},
+                {"type": "episode", "name": "Talk", "uri": "spotify:episode:talk",
+                 "duration_ms": 900000, "show": {"name": "Show"},
+                 "images": [{"url": "https://i/ep", "width": 300}]},
+                {"type": "track", "name": "Next", "uri": "spotify:track:next",
+                 "duration_ms": 180000, "artists": [{"name": "C"}]},
+                {"type": "track", "name": "  "}
+            ]
+        })
+    }
+
+    #[test]
+    fn the_queue_lists_tracks_and_episodes_with_the_smallest_sharp_art() {
+        let queue = parse_queue(&queue_answer());
+        let now = queue.now.unwrap();
+        assert_eq!(now.title, "Now");
+        assert_eq!(now.artists, vec!["A".to_string(), "B".to_string()]);
+        assert_eq!(now.art.as_deref(), Some("https://i/64"));
+        assert_eq!(queue.upcoming.len(), 3, "a nameless entry is left out");
+        assert_eq!(queue.upcoming[0].art, None);
+        assert_eq!(queue.upcoming[1].artists, vec!["Show".to_string()]);
+        assert_eq!(queue.upcoming[1].art.as_deref(), Some("https://i/ep"));
+        assert!(queue.can_jump);
+    }
+
+    #[test]
+    fn nothing_playing_is_an_empty_queue() {
+        let queue = parse_queue(&Value::Null);
+        assert_eq!(queue, Queue::default());
+        assert!(!queue.can_jump);
+    }
+
+    #[test]
+    fn a_jump_finds_the_song_where_it_was_shown_or_where_it_moved() {
+        let queue = parse_queue(&queue_answer());
+        // Queued twice: the second copy is the one that was clicked.
+        assert_eq!(jump_index(&queue, "spotify:track:next", 2), Some(2));
+        assert_eq!(jump_index(&queue, "spotify:track:next", 0), Some(0));
+        // The queue moved on; the song is found where it is now.
+        assert_eq!(jump_index(&queue, "spotify:episode:talk", 0), Some(1));
+        assert_eq!(jump_index(&queue, "spotify:track:gone", 0), None);
+        assert_eq!(jump_index(&queue, "", 0), None);
+    }
+
+    #[test]
+    fn a_jump_skips_past_entries_the_window_leaves_out() {
+        assert_eq!(skips_to(&queue_answer(), 1), Some(2));
+        // A nameless entry ahead of the song: listed nowhere, still played.
+        let mut data = queue_answer();
+        data["queue"]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, serde_json::json!({"type": "track", "name": ""}));
+        let index = jump_index(&parse_queue(&data), "spotify:episode:talk", 1).unwrap();
+        assert_eq!(index, 1);
+        assert_eq!(skips_to(&data, index), Some(3));
+        assert_eq!(skips_to(&data, 9), None);
     }
 
     #[test]

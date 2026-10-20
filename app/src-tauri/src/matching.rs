@@ -70,6 +70,32 @@ pub fn matches(
     }
 }
 
+/// Separators that reliably mean "several artists". An ampersand is deliberately
+/// absent: it appears inside single names often enough to split the wrong ones.
+/// YouTube Music joins a credit in the reader's language: "、" in Japanese, "和"
+/// in Chinese, "및" in Korean. A name that merely contains "和" gains a stray
+/// part, which is harmless: the whole credit is still offered.
+const ARTIST_SEPARATORS: [char; 5] = [',', '\u{3001}', '\u{ff0c}', '\u{548c}', '\u{bc0f}'];
+
+/// Split one artist credit into the names a lyrics source can match.
+///
+/// Both the whole string and its parts are wanted: `matches` needs one name to
+/// overlap, and a source may list "A, B" as one name or as two.
+pub fn split_artists(value: &str) -> Vec<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Vec::new();
+    }
+    let mut names = vec![value.to_string()];
+    for part in value.split(ARTIST_SEPARATORS) {
+        let part = part.trim();
+        if !part.is_empty() && !names.iter().any(|known| known == part) {
+            names.push(part.to_string());
+        }
+    }
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,5 +149,57 @@ mod tests {
     #[test]
     fn empty_title_never_matches() {
         assert!(!matches("", &artists(&["Singer"]), 180_000, "", &artists(&["Singer"]), Some(180_000)));
+    }
+
+    #[test]
+    fn one_artist_stays_one_name() {
+        assert_eq!(split_artists("Jess Lee"), vec!["Jess Lee".to_string()]);
+    }
+
+    #[test]
+    fn several_artists_are_offered_whole_and_in_parts() {
+        // A lyrics source may store either form, and only one has to match.
+        assert_eq!(
+            split_artists("Aimer, Jess Lee"),
+            vec![
+                "Aimer, Jess Lee".to_string(),
+                "Aimer".to_string(),
+                "Jess Lee".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_credit_joined_in_the_readers_language_is_split() {
+        // How YouTube Music in Chinese and in Korean joins a credit.
+        assert_eq!(
+            split_artists("The Chainsmokers\u{548c}Coldplay"),
+            vec![
+                "The Chainsmokers\u{548c}Coldplay".to_string(),
+                "The Chainsmokers".to_string(),
+                "Coldplay".to_string()
+            ]
+        );
+        assert_eq!(
+            split_artists("The Chainsmokers \u{bc0f} Coldplay"),
+            vec![
+                "The Chainsmokers \u{bc0f} Coldplay".to_string(),
+                "The Chainsmokers".to_string(),
+                "Coldplay".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn an_ampersand_is_left_alone_because_names_contain_it() {
+        assert_eq!(
+            split_artists("Simon & Garfunkel"),
+            vec!["Simon & Garfunkel".to_string()]
+        );
+    }
+
+    #[test]
+    fn no_artist_yields_no_names() {
+        assert!(split_artists("   ").is_empty());
     }
 }
