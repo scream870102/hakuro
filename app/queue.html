@@ -16,7 +16,6 @@
           <header class="queue__head" data-tauri-drag-region="deep">
             <div class="queue__titles">
               <h1 id="queue-title">QUEUE</h1>
-              <p id="queue-sub">UP NEXT</p>
             </div>
             <!-- Only for a player that reports them (Spotify). -->
             <button class="hb" id="queue-shuffle" type="button" hidden disabled
@@ -54,7 +53,10 @@
 
           <footer class="queue__foot">
             <span id="queue-status" role="status"></span>
-            <button id="queue-refresh" type="button" title="Read the queue again">↻ REFRESH</button>
+            <button class="hb hb--label" id="queue-refresh" type="button" title="Read the queue again">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.8 10.4A8 8 0 1 0 18.8 16M20 3.8v6.6h-6.6"/></svg>
+              <span>REFRESH</span>
+            </button>
           </footer>
         </div>
       </div>

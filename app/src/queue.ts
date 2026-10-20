@@ -41,7 +41,6 @@ interface PlaybackEvent extends ModeReport {
 
 const ui = {
   lean: element("queue-lean"),
-  sub: element("queue-sub"),
   shuffle: element<HTMLButtonElement>("queue-shuffle"),
   repeat: element<HTMLButtonElement>("queue-repeat"),
   now: element("queue-now"),
@@ -86,7 +85,6 @@ const lengthText = (item: QueueItem) => (item.durationMs > 0 ? formatTime(item.d
 function render() {
   const upcoming = queue?.upcoming ?? [];
   const now = queue?.now ?? null;
-  ui.sub.textContent = [source, `UP NEXT ${upcoming.length}`].filter(Boolean).join(" · ");
 
   ui.now.hidden = !now;
   if (now) {
@@ -106,7 +104,8 @@ function render() {
     none.textContent = "Nothing after this song.";
     ui.list.append(none);
   }
-  hint = !queue ? "" : queue.canJump ? "點一下跳到這首" : `${source || "THIS PLAYER"} · 僅能檢視`;
+  // Only a queue that cannot be played from needs saying so.
+  hint = !queue || queue.canJump ? "" : `${source || "THIS PLAYER"} · 僅能檢視`;
   setStatus(hint);
 }
 

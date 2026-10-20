@@ -49,7 +49,10 @@ export interface Deck {
   /** The outlined word behind everything. */
   setTitle(text: string): void;
   turnTo(face: CubeFace): void;
-  /** Compact moves the dial round to the left face; a stretched cube rests turned nearer to face-on. */
+  /**
+   * Compact moves the dial round to the left face, and once stretched the record
+   * to the right; a stretched cube rests turned nearer to face-on.
+   */
   setLayout(layout: { compact: boolean; stretched: boolean }): void;
   /** How the cube is turned right now, sway included; the floor turns with it. */
   pose(): Pose;
@@ -140,6 +143,7 @@ export function createDeck(options: {
   const front = byId("cover-face");
   const coverBox = byId("cover-box");
   const rightFace = cube.querySelector<HTMLElement>(".face--right")!;
+  const topFace = cube.querySelector<HTMLElement>(".face--top")!;
   const leftFace = cube.querySelector<HTMLElement>(".face--left")!;
   const coverBase = byId<HTMLImageElement>("album-art");
   const coverPeek = byId<HTMLImageElement>("cover-peek");
@@ -289,6 +293,7 @@ export function createDeck(options: {
         lk = 0;
       }
     }
+    front.classList.toggle("is-flooding", flood !== null);
     front.style.setProperty("--lk", lk.toFixed(3));
     front.style.setProperty("--mx", `${lx.value.toFixed(1)}%`);
     front.style.setProperty("--my", `${ly.value.toFixed(1)}%`);
@@ -375,6 +380,9 @@ export function createDeck(options: {
     compact = layout.compact;
     const home = compact ? leftFace : rightFace;
     if (dial.parentElement !== home) home.append(dial);
+    // Compact's lid takes the top; stretched, the record turns up at the right end.
+    const record = compact && layout.stretched ? rightFace : topFace;
+    if (vinyl.parentElement !== record) record.prepend(vinyl);
     const next = layout.compact && layout.stretched ? STRETCHED_REST : { x: REST_X, y: REST_Y };
     if (next.y === rest.y && next.x === rest.x) return;
     // Keep whichever face was turned to the reader; only the resting angle moves.
@@ -527,7 +535,6 @@ export function createDeck(options: {
   const tools = [...cube.querySelectorAll<HTMLButtonElement>(".tool")].map((tool) => ({
     tool,
     target: byId<HTMLInputElement | HTMLButtonElement>(tool.dataset.proxy!),
-    label: tool.querySelector("b"),
   }));
   for (const { tool, target } of tools) {
     tool.addEventListener("click", () => {
@@ -540,7 +547,7 @@ export function createDeck(options: {
     });
   }
   function toolsFrame() {
-    for (const { tool, target, label } of tools) {
+    for (const { tool, target } of tools) {
       tool.disabled = target.disabled;
       if (tool.hasAttribute("data-follow-hidden")) tool.hidden = target.hidden;
       const mode = target.dataset.mode;
@@ -548,7 +555,6 @@ export function createDeck(options: {
       let pressed: string | null = null;
       if (target instanceof HTMLInputElement) {
         pressed = String(target.checked);
-        if (label) label.textContent = target.checked ? "ON" : "OFF";
       } else if (target.hasAttribute("aria-pressed")) {
         pressed = target.getAttribute("aria-pressed");
       }

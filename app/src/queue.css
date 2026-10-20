@@ -7,9 +7,10 @@ html, body { background: transparent; }
 body { overflow: hidden; user-select: none; }
 
 .stage { position: absolute; inset: 0; perspective: 900px; perspective-origin: 30% 50%; }
-/* The shadow it casts on the desk, under its foot. */
+/* The shadow it casts on the desk, under its foot. It reaches up over the
+   sheet's bottom edge, so it must not take the footer's clicks. */
 .stage::after {
-  content: ""; position: absolute; left: 40px; right: 30px; bottom: 16px; height: 28px; border-radius: 50%;
+  content: ""; position: absolute; left: 40px; right: 30px; bottom: 16px; height: 28px; border-radius: 50%; pointer-events: none;
   background: radial-gradient(closest-side, rgb(0 0 0 / .6), transparent);
 }
 .lean {
@@ -36,7 +37,6 @@ body { overflow: hidden; user-select: none; }
 .queue__head { display: flex; align-items: center; gap: 10px; flex-shrink: 0; height: 58px; padding: 0 14px; border-bottom: 1px solid var(--line); cursor: move; }
 .queue__titles { flex: 1; min-width: 0; }
 .queue__titles h1 { margin: 0; font: 22px/1 var(--display); letter-spacing: .14em; }
-.queue__titles p { margin: 4px 0 0; overflow: hidden; font: 700 9px var(--mono); letter-spacing: .16em; color: #8a8a85; white-space: nowrap; text-overflow: ellipsis; }
 
 .hb {
   position: relative; display: grid; place-items: center; flex-shrink: 0; width: 30px; height: 30px;
@@ -49,6 +49,12 @@ body { overflow: hidden; user-select: none; }
 .hb:disabled { opacity: .35; }
 .hb[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .hb--close { color: var(--ink-2); }
+/* A header button with its name beside the icon, for the footer. */
+.hb--label {
+  grid-auto-flow: column; gap: 6px; width: auto; height: 26px; padding: 0 10px;
+  font: 700 9px var(--mono); letter-spacing: .14em;
+}
+.hb--label svg { width: 13px; height: 13px; }
 /* Repeat one song: a small 1 on its corner. */
 .hb[data-mode="track"]::after {
   content: "1"; position: absolute; right: -6px; top: -7px; padding: 1px 3px;
@@ -111,9 +117,6 @@ body { overflow: hidden; user-select: none; }
 }
 #queue-status { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 #queue-status.is-error { color: var(--accent); }
-#queue-refresh { flex-shrink: 0; padding: 4px 0; letter-spacing: .14em; color: #8a8a85; transition: color .15s; }
-#queue-refresh:hover:not(:disabled) { color: var(--ink); }
-#queue-refresh:disabled { opacity: .4; }
 
 @media (prefers-reduced-motion: reduce) {
   .lean.is-in { animation: none; }

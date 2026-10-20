@@ -74,7 +74,9 @@ it("lists Spotify's song now and what follows it, then shows itself", async () =
   expect(rows()[0].querySelector(".qr__time")!.textContent).toBe("03:20");
   expect(rows()[0].querySelector<HTMLElement>(".art")!.style.backgroundImage).toContain("https://i.scdn.co/One");
   expect(rows().every((row) => !row.disabled)).toBe(true);
-  expect(el("queue-sub").textContent).toBe("SPOTIFY · UP NEXT 3");
+  // Spotify's rows say what they do by being buttons; no caption explains them.
+  expect(document.getElementById("queue-sub")).toBeNull();
+  expect(el("queue-status").textContent).toBe("");
   expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#123456");
   expect(win.show).toHaveBeenCalled();
 });
@@ -114,12 +116,13 @@ it("runs one jump at a time, whatever else is pressed meanwhile", async () => {
   expect(el("queue-list").hasAttribute("aria-busy")).toBe(false);
 });
 
-it("names the player it follows from the track key, and follows a switch", async () => {
-  await open({ get_config: config("ytmdesktop2"), get_queue: spotifyQueue() });
-  expect(el("queue-sub").textContent).toContain("YTMDESKTOP2");
+it("names the player it follows from the track key in a read-only note, and follows a switch", async () => {
+  const readOnly = { now: item("Now", { uri: "" }), upcoming: [item("Next", { uri: "" })], canJump: false };
+  await open({ get_config: config("spotify"), get_queue: readOnly });
+  expect(el("queue-status").textContent).toContain("SPOTIFY");
   // The backend's own prefixes: sp for Spotify, ytmd2 for ytmdesktop2.
-  playback("sp:now");
-  expect(el("queue-sub").textContent).toBe("SPOTIFY · UP NEXT 3");
+  playback("ytmd2:Now|200000");
+  expect(el("queue-status").textContent).toContain("YTMDESKTOP2");
 });
 
 it("lists ytmdesktop2's queue to read only, without shuffle or repeat", async () => {

@@ -25,6 +25,7 @@ body {
 }
 .panel__foot { padding: 10px 22px 12px; border-top: 1px solid var(--line); background: #0a0a0a; }
 .panel__foot .dialog-actions { margin-top: 0; }
+.dialog-actions a.ghost-button { display: inline-flex; align-items: center; text-decoration: none; }
 #settings-error, #source-error, #shortcut-status { margin: 0 0 8px; color: var(--accent); overflow-wrap: anywhere; }
 #settings-error:empty, #source-error:empty, #shortcut-status:empty { display: none; }
 

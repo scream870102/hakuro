@@ -36,6 +36,8 @@ export interface Wave {
   /** Show the floor and listen, or hide it and stop listening. */
   setActive(active: boolean): void;
   setAccent(hex: string): void;
+  /** How hard the floor answers the sound, as a percentage; the tallest tile stays the same. */
+  setStrength(percent: number): void;
   /** Called every animation frame, after the cube has moved. */
   draw(now: number): void;
 }
@@ -76,6 +78,7 @@ export function createWave(options: {
   let active = false;
   let channel: Channel<number[]> | null = null;
   let rgb = parseHex("#e6ff1f");
+  let gain = 1;
   let layout: Layout | null = null;
   let dirty = true;
 
@@ -212,7 +215,7 @@ export function createWave(options: {
       const tile = tiles[index];
       const lag = Math.round(tile.reach * LAG);
       const band = Math.round(tile.around * (BANDS - 1));
-      const raw = still ? 0 : history[(head - lag + HISTORY) % HISTORY][band] / 255;
+      const raw = still ? 0 : Math.min(1, (history[(head - lag + HISTORY) % HISTORY][band] / 255) * gain);
       const level = Math.pow(raw, 1.25);
       const height = Math.max(1, tallest * level * (1 - 0.45 * tile.reach) * (inFront ? FRONT_CAP : 1));
       const top = ground - height;
@@ -271,6 +274,9 @@ export function createWave(options: {
     },
     setAccent(hex) {
       rgb = parseHex(hex);
+    },
+    setStrength(percent) {
+      gain = Math.max(0, percent) / 100;
     },
     draw,
   };

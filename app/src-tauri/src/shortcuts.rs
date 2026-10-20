@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 
-pub const ACTIONS: [&str; 30] = [
+pub const ACTIONS: [&str; 31] = [
     "commands",
     "playPause",
     "previous",
@@ -24,6 +24,7 @@ pub const ACTIONS: [&str; 30] = [
     "lyricsSource",
     "reloadLyrics",
     "compact",
+    "compactLyrics",
     "alwaysOnTop",
     "clickThrough",
     "settings",

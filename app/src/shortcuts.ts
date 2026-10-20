@@ -23,6 +23,7 @@ export const SHORTCUT_ACTIONS = [
   ["lyricsSource", "Lyrics source", "歌詞來源", "LYRICS"],
   ["reloadLyrics", "Reload lyrics", "重新載入歌詞", "LYRICS"],
   ["compact", "Compact mode", "精簡模式", "WINDOW"],
+  ["compactLyrics", "Lyrics in compact mode", "精簡模式顯示歌詞", "WINDOW"],
   ["alwaysOnTop", "Keep on top", "置頂", "WINDOW"],
   ["clickThrough", "Click-through", "滑鼠穿透", "WINDOW"],
   ["settings", "Settings", "設定", "WINDOW"],

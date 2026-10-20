@@ -32,6 +32,8 @@ const initial = () => ({
     compactLyricSize: 18,
     waveFull: true,
     waveCompact: false,
+    waveStrength: 100,
+    checkUpdates: true,
     shortcuts: SHORTCUT_ACTIONS.map(([action]) => ({ action, accelerator: "", global: false, ...DEFAULT_SHORTCUTS.find((item) => item.action === action) })),
   },
   providers: [{ id: "lrclib", label: "LRCLIB" }, { id: "musixmatch", label: "Musixmatch" }],
@@ -62,6 +64,7 @@ it("fills in what is stored, then shows itself", async () => {
   expect(el("source-order").textContent).toContain("Musixmatch");
   expect(el("storage-info").textContent).toBe("Data folder: C:/Hakuro · Cached songs: 2");
   expect(el("app-version").textContent).toBe("v1.3.0");
+  expect(el<HTMLInputElement>("settings-check-updates").checked).toBe(true);
   expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#123456");
   expect(win.show).toHaveBeenCalled();
   expect(win.setFocus).toHaveBeenCalled();
@@ -73,6 +76,7 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
   el<HTMLInputElement>("color-active").value = "#fedcba";
   el<HTMLInputElement>("color-past").value = "#112233";
   el<HTMLInputElement>("settings-follow").checked = false;
+  el<HTMLInputElement>("settings-check-updates").checked = false;
   // The floor's two switches start from what is stored, one per mode.
   expect(el<HTMLInputElement>("settings-wave-full").checked).toBe(true);
   expect(el<HTMLInputElement>("settings-wave-compact").checked).toBe(false);
@@ -91,6 +95,7 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
     sources: [{ id: "musixmatch", enabled: true }, { id: "lrclib", enabled: false }],
     theme: { accent: "#abcdef", activeLine: "#fedcba", pastLine: "#112233" },
     followLyrics: false,
+    checkUpdates: false,
     alwaysOnTop: false,
     opacity: 100,
     clickThrough: "off",
@@ -101,6 +106,7 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
     compactLyricSize: 18,
     waveFull: false,
     waveCompact: true,
+    waveStrength: 100,
     shortcuts: initial().settings.shortcuts,
   } });
   expect(win.close).toHaveBeenCalled();
@@ -145,14 +151,24 @@ it("refuses a port ytmdesktop2 would not accept, but only while it is the player
   expect((saved[1] as { incoming: { ytmdPort: number } }).incoming.ytmdPort).toBe(13091);
 });
 
-it("previews the opacity and size dials on the main window as they move", async () => {
+it("previews the opacity, size and wave strength dials on the main window as they move", async () => {
   const size = el<HTMLInputElement>("settings-lyric-size");
   size.value = "40";
   size.dispatchEvent(new Event("input"));
   expect(el("lyric-size-value").textContent).toBe("40px");
   expect(bridge.emitTo).toHaveBeenLastCalledWith("main", "settings:preview", {
-    opacity: 100, compactOpacity: 85, lyricSize: 40, compactLyricSize: 18,
+    opacity: 100, compactOpacity: 85, lyricSize: 40, compactLyricSize: 18, waveStrength: 100,
   });
+  const strength = el<HTMLInputElement>("settings-wave-strength");
+  expect(el("wave-strength-value").textContent).toBe("100%");
+  strength.value = "150";
+  strength.dispatchEvent(new Event("input"));
+  expect(el("wave-strength-value").textContent).toBe("150%");
+  expect(bridge.emitTo).toHaveBeenLastCalledWith("main", "settings:preview", expect.objectContaining({ waveStrength: 150 }));
+  submit();
+  await flush();
+  const saved = bridge.invoke.mock.calls.find(([command]) => command === "save_settings")!;
+  expect(saved[1].incoming.waveStrength).toBe(150);
 });
 
 it("closes without saving from Cancel, the close button or Escape", async () => {

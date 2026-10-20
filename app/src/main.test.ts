@@ -82,6 +82,7 @@ const initial = () => ({
     sources: [{ id: "lrclib", enabled: true }, { id: "musixmatch", enabled: true }],
     theme: { accent: "#123456", activeLine: "#ffffff", pastLine: "#666666" },
     followLyrics: true,
+    checkUpdates: true,
     alwaysOnTop: false,
     opacity: 100,
     clickThrough: "off",
@@ -351,7 +352,7 @@ it("opens settings as a window of its own, previews its dials and re-reads what 
   await flush();
   expect(settings.setFocus).toHaveBeenCalled();
 
-  bridge.listeners.get("settings:preview")!({ payload: { opacity: 60, compactOpacity: 85, lyricSize: 40, compactLyricSize: 18 } });
+  bridge.listeners.get("settings:preview")!({ payload: { opacity: 60, compactOpacity: 85, lyricSize: 40, compactLyricSize: 18, waveStrength: 150 } });
   expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("40px");
   expect(document.documentElement.style.getPropertyValue("--ui-opacity")).toBe("0.6");
 
@@ -363,6 +364,48 @@ it("opens settings as a window of its own, previews its dials and re-reads what 
   await flush();
   expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#abcdef");
   expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("26px");
+});
+
+it.each([
+  [false, "1.6.0", false],
+  [true, null, false],
+  [true, "1.6.0", true],
+  [true, new Error("offline"), false],
+])("checks updates at startup only when enabled (%s, %s)", async (enabled, release, notified) => {
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, compact: true, checkUpdates: enabled } };
+    if (command === "check_for_updates") {
+      if (release instanceof Error) throw release;
+      return release;
+    }
+  });
+  await import("./main");
+  await flush();
+  await flush();
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "check_for_updates")).toBe(enabled);
+  expect(children.has("update")).toBe(notified);
+  if (notified) expect(children.get("update")?.options).toMatchObject({ url: "update.html?version=1.6.0", parent: "main", width: 460, height: 320 });
+  expect(bridge.invoke).toHaveBeenCalledWith("connect", undefined);
+});
+
+it("does not delay connecting for update checks and drops a result after updates are disabled", async () => {
+  let resolveUpdate!: (version: string) => void;
+  let checkUpdates = true;
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, checkUpdates } };
+    if (command === "check_for_updates") return new Promise<string>((resolve) => { resolveUpdate = resolve; });
+  });
+  await import("./main");
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("connect", undefined);
+  el("settings-open").click();
+  await flush();
+  checkUpdates = false;
+  children.get("settings")!.events.get("tauri://destroyed")!({ payload: null });
+  await flush();
+  resolveUpdate("1.6.0");
+  await flush();
+  expect(children.has("update")).toBe(false);
 });
 
 it("connects straight away on first run when the player needs no Client ID", async () => {
@@ -804,6 +847,7 @@ it("stretches the compact cube for the lyrics, remembers it, and moves the lyric
   expect(el("lyrics").parentElement).toBe(el("cube-lyrics"));
   // The dial follows the cube's faces round: the spine has the right one.
   expect(el("volume-control").closest(".face--left")).not.toBeNull();
+  expect(el("vinyl").closest(".face--top")).not.toBeNull();
 
   document.querySelector<HTMLButtonElement>('.lid .tool[data-proxy="compact-lyrics"]')!.click();
   await flush();
@@ -811,6 +855,7 @@ it("stretches the compact cube for the lyrics, remembers it, and moves the lyric
     incoming: { ...initial().settings, compact: true, compactLyrics: true },
   });
   expect(document.body.classList.contains("is-stretched")).toBe(true);
+  expect(el("vinyl").closest(".face--right")).not.toBeNull();
   // The lyrics only widen the window; it was already tall enough for them.
   expect(lastSize(appWindow.setSize)).toEqual({ width: 2 * edge + Math.round(edge * 1.9), height: heightFor(edge) });
   runFrame();
@@ -826,6 +871,7 @@ it("stretches the compact cube for the lyrics, remembers it, and moves the lyric
   expect(el("lyrics").parentElement).toBe(document.querySelector(".lyrics-zone"));
   expect(el("lyrics").nextElementSibling).toBe(el("shards"));
   expect(el("volume-control").closest(".face--right")).not.toBeNull();
+  expect(el("vinyl").closest(".face--top")).not.toBeNull();
   expect(appWindow.setResizable).toHaveBeenLastCalledWith(true);
 });
 
@@ -925,9 +971,16 @@ it("gives the roomy size back when compact is switched off", async () => {
 const press = (target: Element, type: string, x = 0, y = 0) =>
   target.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y }));
 
-it("previews turntable time and lyrics through playback polls, then seeks once on release", async () => {
+it.each([false, true])("previews turntable time and lyrics through playback polls, then seeks once on release (compact: %s)", async (compact) => {
   await import("./main");
   await flush();
+  if (compact) {
+    el("mode-toggle").click();
+    await flush();
+    el("compact-lyrics").click();
+    await flush();
+    expect(el("vinyl").closest(".face--right")).not.toBeNull();
+  }
   playback("song-a", 1, 10000);
   bridge.listeners.get("lyrics")!({ payload: {
     generation: 1, trackId: "spotify:song-a", source: "LRCLIB", synced: true, text: "", partial: false, requested: "",
@@ -1198,6 +1251,31 @@ async function openPalette() {
   return call?.[2] as { commands: { id: number; label: string; enabled: boolean; state: unknown; shortcut?: { action: string; accelerator: string; global: boolean } }[]; lines: unknown[]; trackKey: string; accent: string };
 }
 const runInPalette = (payload: unknown) => bridge.listeners.get("palette:run")!({ payload });
+
+it("toggles compact lyrics from the palette and a bound shortcut, restoring the record when collapsed", async () => {
+  const settings = { ...initial().settings, compact: true, shortcuts: [
+    { action: "commands", accelerator: "Ctrl+KeyK", global: false },
+    { action: "compactLyrics", accelerator: "F8", global: false },
+  ] };
+  bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
+    if (command === "get_config") return { ...initial(), settings };
+    if (command === "save_settings") return { ...initial(), settings: args!.incoming };
+  });
+  await import("./main");
+  await flush();
+  const command = (await openPalette()).commands.find((item) => item.label === "Lyrics in compact mode")!;
+  expect(command).toMatchObject({ enabled: true, state: { text: "OFF", on: false }, shortcut: { action: "compactLyrics", accelerator: "F8" } });
+  runInPalette({ command: command.id });
+  await flush();
+  expect(document.body.classList.contains("is-stretched")).toBe(true);
+  expect(el("vinyl").closest(".face--right")).not.toBeNull();
+  expect((await openPalette()).commands.find((item) => item.id === command.id)?.state).toEqual({ text: "ON", on: true });
+  key(window, { key: "F8", code: "F8" });
+  await flush();
+  expect(document.body.classList.contains("is-stretched")).toBe(false);
+  expect(el("vinyl").closest(".face--top")).not.toBeNull();
+  expect(bridge.invoke).toHaveBeenLastCalledWith("save_settings", { incoming: { ...settings, compactLyrics: false } });
+});
 
 it("dispatches custom local and global bindings once with availability and typing guards", async () => {
   bridge.invoke.mockImplementation(async (command: string) => {

@@ -1,6 +1,6 @@
 [package]
 name = "hakuro"
-version = "1.5.1"
+version = "1.5.2"
 description = "Original-language lyrics for whatever Spotify is playing."
 authors = ["Eccentric Studio"]
 edition = "2021"
@@ -23,6 +23,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "default-tls", "query", "form"] }
 tokio = { version = "1.53.1", features = ["time", "sync", "rt", "macros"] }
 regex = "1.13.1"

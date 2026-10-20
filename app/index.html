@@ -81,7 +81,8 @@
         <!-- The controls live on a cube you can grab and turn: the cover on the
              front (tap it to play or pause; skip waits at its edges), volume on
              the right, the record on top with the queue at its centre, lyric and
-             window tools round the back. -->
+             window tools round the back. Compact with lyrics moves the record to
+             the right end, in place of the spine. -->
         <div class="scene" id="scene">
           <div class="glow" id="glow"></div>
           <div class="shadow" id="shadow"></div>
@@ -149,7 +150,11 @@
                 <img class="cover cover--peek" id="cover-peek" alt="" draggable="false" />
                 <div class="cover-empty"><span>H</span><small>NO COVER</small></div>
                 <div class="cover-shade"></div>
-                <i class="lens"></i>
+                <!-- The lens under the pointer shows what a tap does: play while paused, pause while playing. -->
+                <i class="lens">
+                  <svg class="lens__play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.8v14.4a.8.8 0 0 0 1.22.68l11.3-7.2a.8.8 0 0 0 0-1.36L8.22 4.12A.8.8 0 0 0 7 4.8Z"/></svg>
+                  <svg class="lens__pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5h4v15H6zM14 4.5h4v15h-4z"/></svg>
+                </i>
                 <!-- The cover takes the pointer (a tap toggles, a drag turns the cube);
                      this button is the same control for the keyboard. -->
                 <button class="cover-hit" id="play-pause" type="button" disabled
@@ -210,9 +215,15 @@
             <div class="face face--left" data-face="left">
               <span class="face__label">04 WINDOW</span>
               <div class="tools">
-                <button class="tool" type="button" data-proxy="follow" aria-pressed="true">FOLLOW <b>ON</b></button>
-                <button class="tool" type="button" data-proxy="pin" aria-pressed="false">PIN <b>TOP</b></button>
-                <button class="tool" type="button" data-proxy="mode-toggle" aria-pressed="false">MINI <b>◱</b></button>
+                <button class="tool" type="button" data-proxy="follow" aria-pressed="true">FOLLOW
+                  <svg class="tool__glyph" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5v6.2M3.4 5.3 6 7.9l2.6-2.6M2 10.5h8"/></svg>
+                </button>
+                <button class="tool" type="button" data-proxy="pin" aria-pressed="false">PIN
+                  <svg class="tool__glyph" viewBox="0 0 12 12" aria-hidden="true"><path d="M3.6 1.4h4.8M5 1.4v2.8L3.4 6h5.2L7 4.2V1.4M6 6v3.2"/></svg>
+                </button>
+                <button class="tool" type="button" data-proxy="mode-toggle" aria-pressed="false">MINI
+                  <svg class="tool__glyph" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.4v3.1M4.4 3l1.6 1.5L7.6 3M6 10.6V7.5M4.4 9l1.6-1.5L7.6 9"/></svg>
+                </button>
               </div>
               <!-- The tool is drawn; this checkbox is the real control, for main.ts. -->
               <input id="follow" type="checkbox" checked hidden aria-label="Follow lyrics" />

@@ -218,8 +218,15 @@ body.is-maximized .icon-maximize { display: none; }
 }
 .lens {
   position: absolute; left: var(--mx); top: var(--my); width: calc(var(--s) * var(--lk) * 2); aspect-ratio: 1; translate: -50% -50%;
+  display: grid; place-items: center;
   border: 2px solid var(--accent); border-radius: 50%; box-shadow: 0 0 0 1px #000, 0 0 14px var(--accent-glow); pointer-events: none;
 }
+/* Grows with the lens, and fades in only once it is open enough to hold it. */
+.lens svg {
+  width: 30%; fill: var(--accent); opacity: clamp(0, calc(var(--lk) * 8 - 1), 1);
+  filter: drop-shadow(0 0 1.5px #000) drop-shadow(0 0 calc(var(--s) * .04) rgb(0 0 0 / .7));
+}
+.face--front:not(.is-color) .lens__pause, .face--front.is-color .lens__play, .face--front.is-flooding .lens svg { display: none; }
 .cover-hit { position: absolute; inset: 0; pointer-events: none; border-radius: inherit; }
 .cover-hit:focus-visible { outline-offset: -6px; }
 /* Skip waits at the cover's edges and shows while the pointer is over the
@@ -302,7 +309,6 @@ body.is-maximized .icon-maximize { display: none; }
   font: calc(var(--s) * .07)/1 var(--display); letter-spacing: .12em; color: var(--ink-2);
   transition: background .15s, color .15s, transform .15s cubic-bezier(.3, 1.6, .5, 1), border-color .15s, opacity .15s;
 }
-.tool b { font: 700 calc(var(--s) * .04)/1 var(--mono); letter-spacing: .1em; color: var(--ink-3); }
 /* Drawn, not typed: a glyph from the font is lost at the tool's text size. */
 .tool__glyph {
   flex-shrink: 0; width: calc(var(--s) * .09); height: calc(var(--s) * .09);
@@ -312,7 +318,6 @@ body.is-maximized .icon-maximize { display: none; }
 .tool:active:not(:disabled) { transform: scale(.9); }
 .tool:disabled { opacity: .35; }
 .tool[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #000; }
-.tool[aria-pressed="true"] b { color: #000; }
 .logo { font: calc(var(--s) * .5)/1 var(--display); color: var(--accent); filter: drop-shadow(0 0 12px var(--accent-glow)); }
 
 .hint { position: absolute; left: 50%; bottom: 4%; transform: translateX(-50%); font: 700 9.5px var(--mono); letter-spacing: .24em; color: var(--ink-3); white-space: nowrap; pointer-events: none; transition: opacity .6s; }
@@ -529,7 +534,7 @@ body.is-compact .meta,
 body.is-compact .hint,
 body.is-compact .lyrics-head,
 body.is-compact .face__label,
-body.is-compact .vinyl,
+body.is-compact .face--top .vinyl,
 body.is-compact .face--left .tools {
   display: none;
 }
@@ -609,11 +614,13 @@ body.is-compact .lid__meta {
 .lid__track { position: relative; flex: 1; height: 3px; background: #2a2a2a; }
 .lid__fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); }
 
-/* right: the spine. The volume dial moves round to the left face. */
+/* right: the spine. The volume dial moves round to the left face. Stretched,
+   the lid already names the song, so the record takes the spine's place. */
 body.is-compact .spine {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(var(--s) * .05);
   position: absolute; inset: 9% 0; writing-mode: vertical-rl;
 }
+body.is-compact.is-stretched .spine { display: none; }
 .spine__title, .spine__artist { max-height: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .spine__title { font: 900 calc(var(--s) * .1)/1.1 var(--display); letter-spacing: .1em; color: var(--ink); }
 .spine__artist { font: 700 calc(var(--s) * .05)/1.2 var(--mono); letter-spacing: .22em; text-transform: uppercase; color: var(--ink-2); }

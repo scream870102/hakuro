@@ -21,6 +21,7 @@ mod settings;
 mod shortcuts;
 mod spotify;
 mod token_store;
+mod updates;
 mod visualizer;
 mod youtube_music;
 mod ytmdesktop;
@@ -232,6 +233,25 @@ fn emit_status(
 async fn get_config(state: State<'_, AppState>) -> Result<ConfigPayload, String> {
     let settings = state.settings.read().await.clone();
     Ok(state.config(&settings))
+}
+
+#[tauri::command]
+async fn check_for_updates(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let enabled = state.settings.read().await.check_updates;
+    let release = updates::check(&state.http, enabled).await;
+    // Turning the setting off while a request is pending also cancels its notification.
+    Ok(if state.settings.read().await.check_updates {
+        release
+    } else {
+        None
+    })
+}
+
+#[tauri::command]
+fn open_latest_release(app: AppHandle) -> Result<(), String> {
+    app.opener()
+        .open_url(updates::RELEASE_URL, None::<&str>)
+        .map_err(|error| error.to_string())
 }
 
 /// Persist the panel's contents, apply them, and reconnect if the identity changed.
@@ -1561,6 +1581,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             connect,
             get_config,
+            check_for_updates,
+            open_latest_release,
             save_settings,
             clear_lyrics_cache,
             set_track_source,

@@ -86,7 +86,12 @@
           <label><input id="settings-wave-full" type="checkbox" /> Full mode</label>
           <label><input id="settings-wave-compact" type="checkbox" /> Compact mode</label>
         </div>
-        <p>A floor of tiles under the cube ripples with whatever this computer is playing. Music playing on another device, such as a phone controlled through Spotify Connect, makes no sound here, so the floor stays still. In compact mode the window grows to hold the floor.</p>
+        <label class="range-setting">
+          <span>Strength / 強度</span>
+          <input id="settings-wave-strength" type="range" min="10" max="200" step="10" />
+          <output id="wave-strength-value" for="settings-wave-strength">100%</output>
+        </label>
+        <p>A floor of tiles under the cube ripples with whatever this computer is playing. Music playing on another device, such as a phone controlled through Spotify Connect, makes no sound here, so the floor stays still. In compact mode the window grows to hold the floor. Strength sets how high the tiles rise for the same sound; above 100% quiet music moves them more, and loud music reaches the full height sooner.</p>
 
         <!-- Every command in the palette can be bound, which makes a long list,
              so it folds away under its heading. -->
@@ -98,6 +103,9 @@
         </details>
 
         <label class="follow-setting"><input id="settings-follow" type="checkbox" /> Follow lyrics automatically</label>
+        <h3>Updates / 更新</h3>
+        <label class="follow-setting"><input id="settings-check-updates" type="checkbox" /> Check for updates on startup / 啟動時檢查更新</label>
+        <p>When a newer version is available, show a notification with a link to the latest GitHub Release.</p>
         <p id="storage-info"></p>
       </div>
       <div class="panel__foot">

@@ -136,12 +136,13 @@ element("shortcuts-reset").addEventListener("click", () => {
   element("shortcut-status").textContent = "Defaults restored. Save to apply.";
 });
 
-/** The four per-mode dials, each with its own readout. */
+/** The per-mode dials and the floor's strength, each with its own readout. */
 const DIALS = [
   { input: "settings-opacity", output: "opacity-value", unit: "%", key: "opacity" },
   { input: "settings-compact-opacity", output: "compact-opacity-value", unit: "%", key: "compactOpacity" },
   { input: "settings-lyric-size", output: "lyric-size-value", unit: "px", key: "lyricSize" },
   { input: "settings-compact-lyric-size", output: "compact-lyric-size-value", unit: "px", key: "compactLyricSize" },
+  { input: "settings-wave-strength", output: "wave-strength-value", unit: "%", key: "waveStrength" },
 ] as const;
 
 const dialValue = (id: string) => Number(element<HTMLInputElement>(id).value);
@@ -153,13 +154,14 @@ function paintRange(input: HTMLInputElement) {
   input.style.setProperty("--p", `${((Number(input.value) - min) / (max - min)) * 100}%`);
 }
 
-/** All four values; the main window picks the pair for the mode it is in. */
+/** Every dial; the main window picks the pair for the mode it is in. */
 function previewWindowStyle() {
   const preview: WindowStylePreview = {
     opacity: dialValue("settings-opacity"),
     compactOpacity: dialValue("settings-compact-opacity"),
     lyricSize: dialValue("settings-lyric-size"),
     compactLyricSize: dialValue("settings-compact-lyric-size"),
+    waveStrength: dialValue("settings-wave-strength"),
   };
   void emitTo("main", SETTINGS_PREVIEW, preview);
 }
@@ -227,6 +229,8 @@ element<HTMLSelectElement>("settings-player").addEventListener("change", (event)
 function fill(value: Config) {
   config = value;
   draft = structuredClone(value.settings);
+  draft.waveStrength ??= 100;
+  draft.checkUpdates ??= true;
   draft.shortcuts = SHORTCUT_ACTIONS.map(([action]) => ({ action, accelerator: "", global: false, ...(value.settings.shortcuts ?? DEFAULT_SHORTCUTS).find((item) => item.action === action) }));
   renderShortcuts();
   applyTheme(draft.theme);
@@ -238,6 +242,7 @@ function fill(value: Config) {
   element<HTMLInputElement>("color-active").value = draft.theme.activeLine;
   element<HTMLInputElement>("color-past").value = draft.theme.pastLine;
   element<HTMLInputElement>("settings-follow").checked = draft.followLyrics;
+  element<HTMLInputElement>("settings-check-updates").checked = draft.checkUpdates;
   element<HTMLInputElement>("settings-wave-full").checked = draft.waveFull;
   element<HTMLInputElement>("settings-wave-compact").checked = draft.waveCompact;
   for (const dial of DIALS) {
@@ -280,6 +285,7 @@ element("settings-form").addEventListener("submit", async (event) => {
     pastLine: element<HTMLInputElement>("color-past").value,
   };
   draft.followLyrics = element<HTMLInputElement>("settings-follow").checked;
+  draft.checkUpdates = element<HTMLInputElement>("settings-check-updates").checked;
   draft.waveFull = element<HTMLInputElement>("settings-wave-full").checked;
   draft.waveCompact = element<HTMLInputElement>("settings-wave-compact").checked;
   for (const dial of DIALS) draft[dial.key] = dialValue(dial.input);

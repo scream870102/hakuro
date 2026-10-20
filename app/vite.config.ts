@@ -21,6 +21,7 @@ export default defineConfig(() => ({
         search: "search.html",
         source: "source.html",
         queue: "queue.html",
+        update: "update.html",
       },
     },
   },

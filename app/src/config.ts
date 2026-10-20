@@ -22,6 +22,7 @@ export interface Settings {
   sources: { id: string; enabled: boolean }[];
   theme: Theme;
   followLyrics: boolean;
+  checkUpdates: boolean;
   alwaysOnTop: boolean;
   /** Background opacity as a percentage; the lyrics stay opaque regardless. */
   opacity: number;
@@ -36,6 +37,8 @@ export interface Settings {
   /** The tile floor that ripples with the sound under the cube, per mode. */
   waveFull: boolean;
   waveCompact: boolean;
+  /** How hard the floor answers the sound, 10–200 (%). */
+  waveStrength: number;
   shortcuts: ShortcutBinding[];
 }
 
@@ -53,6 +56,7 @@ export interface WindowStylePreview {
   compactOpacity: number;
   lyricSize: number;
   compactLyricSize: number;
+  waveStrength: number;
 }
 
 export const SETTINGS_PREVIEW = "settings:preview";

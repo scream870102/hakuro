@@ -1,5 +1,28 @@
 # hakuro session recovery
 
+## 1.5.2 UI follow-up, startup update notification and local release — 2026-10-20
+
+Goal: finish the interrupted Claude changes for the user's eight items, verify, commit and tag 1.5.2, and build a local Windows installer. Do not push.
+Known: takeover begins on main with 16 modified app files implementing most of items 1–7; version files are still 1.5.1. Preserve and finish these changes. No repository-local AGENTS.md/CLAUDE.md found. Codebase-memory tools are unavailable in this session, so use scoped local source inspection.
+Open questions: none.
+Plan: inspect existing changes and affected flows; fix gaps and add focused regression coverage; verify frontend, Rust and browser interactions; bump all version files and package; commit and tag locally, verify clean status and artifact metadata.
+Scope update: user requested startup update checks before release completion. Include in 1.5.2: default-on persisted setting; GitHub latest stable release check; notify only when newer, with a link to the official latest GitHub Release; no download/install. Rebuild the installer after integrating this addition.
+Acceptance:
+- [x] Compact lyrics can be toggled through Command Palette and assigned a shortcut.
+- [x] Expanded compact lyrics replace the side song/artist spine with the existing record, retaining seek preview and release behavior.
+- [x] Cover hover lens shows the current play/pause action.
+- [x] Full-mode Follow/Pin/Mini controls match Source/Find/Reload icon and label sizing.
+- [x] Settings persist Wave strength and preview it immediately with compatible defaults.
+- [x] Queue removes the source/up-next subtitle and click-to-jump instruction.
+- [x] Queue Refresh has a consistent visible button and correct clickable area.
+- [x] Startup checks GitHub for a newer release when enabled, shows a dismissible popup with a Release link, and stays quiet when current/offline/disabled; the setting persists.
+- [x] All six version entries in five files are 1.5.2; relevant checks pass; final local executable/installer built.
+Delivery: the local v1.5.2 tag identifies the release commit; Git is the authoritative commit/tag record. No push. Installer: app/src-tauri/target/release/bundle/nsis/Hakuro_1.5.2_x64-setup.exe (9,733,376 bytes; SHA256 367c5f15f8465f1284ea8de9b92d24efe68a3e0eb4720e2714727e44ff1ea49b). Executable and installer both report FileVersion/ProductVersion 1.5.2. Final Tauri build completed after the update-notification addition and popup layout fix.
+Verification: 129 frontend tests passed; TypeScript/Vite production build passed; Cargo 141 passed / 13 ignored; diff whitespace check passed. Edge browser confirms cover play/pause clicks and icons, identical six full-mode control sizes, visible gain change at 10%/200%, compact record preview (30s → ~35s) with exactly one request on release, Refresh hit targets at top/middle/bottom plus an actual click, and the settings/update popup. Evidence: app/node_modules/.cache/hakuro-152/results.json, update-results.json and PNGs. Real unauthenticated GitHub latest-release GET succeeded, returning v1.5.1; local 1.5.2 correctly does not need an update.
+Implementation: reuse the existing reqwest client and installed semver dependency; 8-second update request timeout; release comparison ignores build metadata and rejects drafts/prereleases/invalid versions. A fixed backend release URL opens only on the user's click. Existing settings deserialize checkUpdates=true, waveStrength=100; both persist normally.
+Limits: real player accounts, system audio capture and installed-app interaction were not exercised; playback/audio and Tauri window calls in browser tests are simulated. Repository-wide cargo fmt --check reports pre-existing formatting in unrelated functions/modules; only new/changed sections are formatted.
+Reusable finding: headless Edge can become hidden even with Page.bringToFront, stopping both RAF and audio capture. Enable Emulation.setFocusEmulationEnabled for deterministic active-window interaction checks; inspect hit targets in projected cube faces before interpreting a missed drag as an app failure.
+
 ## Compact translations, cube icons, bind every command — 1.5.1 — 2026-10-20
 
 Goal (user's four points): translated compact lyrics were crowded and cut off at the bottom; the lid's lyrics icon looked like the queue icon; the back face's SOURCE/FIND glyphs were too small; every command palette entry should take a shortcut, with the settings shortcut list made collapsible. Then 1.5.1, commit and tag, no push.

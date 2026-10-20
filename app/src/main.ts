@@ -763,6 +763,7 @@ function applyConfig(value: Config) {
   if (changedPlayer) resetVolume();
   applyTheme(value.settings.theme);
   wave.setAccent(value.settings.theme.accent);
+  wave.setStrength(value.settings.waveStrength ?? 100);
   ui.follow.checked = value.settings.followLyrics;
   ui.queueOpen.disabled = false;
 
@@ -837,6 +838,7 @@ const previewReady = listen<WindowStylePreview>(SETTINGS_PREVIEW, ({ payload }) 
   );
   // Compact's type size is also its cube's size, so the window follows the dial.
   if (compact && config) void applyWindowBounds({ ...config.settings, compactLyricSize: payload.compactLyricSize });
+  wave.setStrength(payload.waveStrength);
 });
 
 // Find lyrics and the source picker work on the song playing when they open.
@@ -1081,6 +1083,10 @@ const COMMANDS: Command[] = [
   { id: "lyricsSource", group: "LYRICS", icon: "⇄", label: "Lyrics source…", hint: "歌詞來源", words: "provider", enabled: usable(ui.sourceBadge), run: () => ui.sourceBadge.click() },
   { id: "reloadLyrics", group: "LYRICS", icon: "↻", label: "Reload lyrics", hint: "重新載入歌詞", words: "refresh download", enabled: usable(ui.reload), run: () => ui.reload.click() },
   { id: "compact", group: "WINDOW", icon: "◱", label: "Compact mode", hint: "精簡模式", words: "mini small", state: () => onOff(document.body.classList.contains("is-compact")), enabled: usable(ui.mode), run: () => ui.mode.click() },
+  {
+    id: "compactLyrics", group: "WINDOW", icon: "☰", label: "Lyrics in compact mode", hint: "精簡模式顯示歌詞", words: "mini stretch lyrics show hide",
+    state: () => onOff(ui.compactLyrics.checked), enabled: () => Boolean(config) && !ui.compactLyrics.disabled, run: () => ui.compactLyrics.click(),
+  },
   { id: "alwaysOnTop", group: "WINDOW", icon: "▲", label: "Keep on top", hint: "置頂", words: "pin always", state: () => onOff(ui.pin.getAttribute("aria-pressed") === "true"), enabled: usable(ui.pin), run: () => ui.pin.click() },
   { id: "clickThrough", group: "WINDOW", icon: "◇", label: "Click-through", hint: "滑鼠穿透", words: "mouse ignore", state: () => onOff(config?.settings.clickThrough === "always"), run: toggleClickThrough },
   { id: "settings", group: "WINDOW", icon: "≡", label: "Settings…", hint: () => (appVersion ? `設定 · v${appVersion}` : "設定"), words: "preferences options version 版本", run: () => element("settings-open").click() },
@@ -1205,6 +1211,18 @@ async function showVersion() {
   } catch { /* outside Tauri there is no bundle to ask */ }
 }
 
+async function checkForUpdates() {
+  if (!config?.settings.checkUpdates) return;
+  try {
+    const version = await invoke<string | null>("check_for_updates");
+    if (!version || !config?.settings.checkUpdates) return;
+    await openPanel("update", {
+      url: `update.html?${new URLSearchParams({ version })}`, title: "Hakuro Update",
+      width: 460, height: 320, minWidth: 360, minHeight: 260, drop: 0.5,
+    });
+  } catch { /* Offline or rate-limited: startup and playback continue normally. */ }
+}
+
 requestAnimationFrame(frame);
 
 // Connect only once the listeners above exist, so no status is emitted into the
@@ -1218,6 +1236,7 @@ async function start() {
     void syncMaximized();
     void showVersion();
     applyConfig(await invoke<Config>("get_config"));
+    void checkForUpdates();
     // Only Spotify needs anything typed in before it can connect.
     if (config!.settings.player === "spotify" && !config!.settings.clientId) {
       ui.statusText.textContent = "Set up Spotify in Settings";

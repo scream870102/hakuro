@@ -138,6 +138,8 @@ pub struct Settings {
     pub theme: Theme,
     /// Auto-scroll the lyrics to the current line.
     pub follow_lyrics: bool,
+    /// Check GitHub for a newer release at startup; only notify, never install.
+    pub check_updates: bool,
     /// Keep the window above every other window.
     ///
     /// Stored rather than reset each launch: a reader who pins the lyrics over
@@ -165,6 +167,10 @@ pub struct Settings {
     /// and not the other.
     pub wave_full: bool,
     pub wave_compact: bool,
+    /// How hard the floor answers the sound, as a percentage of its level: a
+    /// quiet room may want more, a loud one less. The tallest tile stays the
+    /// same, so compact's window never grows with it.
+    pub wave_strength: u8,
 }
 
 /// Type-size bounds, shared by the two sliders. The floor stays readable at a
@@ -174,6 +180,11 @@ pub const MAX_LYRIC_SIZE: u8 = 44;
 
 /// Below this the chrome stops being findable, so the slider stops here too.
 pub const MIN_OPACITY: u8 = 30;
+
+/// The floor's gain bounds: below the floor it barely moves (the per-mode
+/// switches turn it off); past the ceiling every tile just stands at full height.
+pub const MIN_WAVE_STRENGTH: u8 = 10;
+pub const MAX_WAVE_STRENGTH: u8 = 200;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -191,6 +202,7 @@ impl Default for Settings {
                 .collect(),
             theme: Theme::default(),
             follow_lyrics: true,
+            check_updates: true,
             always_on_top: false,
             opacity: 100,
             click_through: ClickThrough::Off,
@@ -201,6 +213,7 @@ impl Default for Settings {
             compact_lyric_size: 18,
             wave_full: true,
             wave_compact: true,
+            wave_strength: 100,
         }
     }
 }
@@ -237,6 +250,9 @@ impl Settings {
         self.compact_lyric_size = self
             .compact_lyric_size
             .clamp(MIN_LYRIC_SIZE, MAX_LYRIC_SIZE);
+        self.wave_strength = self
+            .wave_strength
+            .clamp(MIN_WAVE_STRENGTH, MAX_WAVE_STRENGTH);
     }
 
     /// The lookup order actually used: enabled sources, in the stored order.
@@ -590,6 +606,37 @@ pub(crate) mod tests {
         assert!(chosen.wave_full && !chosen.wave_compact);
         let text = serde_json::to_string(&chosen).unwrap();
         assert!(text.contains("\"waveCompact\":false"));
+    }
+
+    #[test]
+    fn wave_strength_defaults_to_full_and_stays_in_bounds() {
+        let older: Settings = serde_json::from_str(r#"{"waveFull":true}"#).unwrap();
+        assert_eq!(older.wave_strength, 100);
+        for (stored, expected) in [(0, MIN_WAVE_STRENGTH), (150, 150), (255, MAX_WAVE_STRENGTH)] {
+            let mut settings = Settings {
+                wave_strength: stored,
+                ..Settings::default()
+            };
+            settings.normalize();
+            assert_eq!(settings.wave_strength, expected, "strength {stored}");
+        }
+        let text = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(text.contains("\"waveStrength\":100"));
+    }
+
+    #[test]
+    fn startup_updates_default_on_and_preserve_an_opt_out() {
+        let older: Settings = serde_json::from_str("{}").unwrap();
+        assert!(older.check_updates);
+        let mut settings: Settings = serde_json::from_str(r#"{"checkUpdates":false}"#).unwrap();
+        settings.normalize();
+        let saved = serde_json::to_string(&settings).unwrap();
+        assert!(saved.contains("\"checkUpdates\":false"));
+        assert!(
+            !serde_json::from_str::<Settings>(&saved)
+                .unwrap()
+                .check_updates
+        );
     }
 
     /// Disabling everything must not mean "never fetch lyrics again".
