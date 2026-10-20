@@ -1,5 +1,28 @@
 # hakuro session recovery
 
+## Completed research — 2026-10-20 playlists, queue, shuffle/repeat API availability (nothing implemented)
+
+User: "1. 列出使用者有的所有撥放清單 2. 點擊撥放清單 可以看到清單內的歌曲 3. 撥放佇列的功能 4. 轉盤快轉Seek的時候至少視覺表現要先知道時間軸前進多少 可以的話 歌詞也先一起前進 鬆開來才真的送出request ... 5. 切換random repeat模式 除了第4點 先幫我調查Spotify跟ytmdesktop2是否都有對應的api可以使用 先都不要實作"
+Status: research reported to the user; no code changed. Item 4 (dial seek preview) needs no API: today deck.ts:389-392 already sends one seek per gesture; plan = while dragging, compute the target locally and move the timeline and lyrics, send the seek on release. Confirm with the user before building.
+
+Spotify (developer.spotify.com reference pages, checked 2026-10-20; sonnet agent report, get-playlists-items restriction re-checked on the official page by the main thread):
+- 1 SUPPORTED: GET /v1/me/playlists, scope playlist-read-private (+ playlist-read-collaborative for collaborative ones), limit ≤ 50, owned + followed playlists. Liked Songs not included: GET /v1/me/tracks, scope user-library-read.
+- 2 PARTIAL: GET /v1/playlists/{id}/items (/tracks deprecated; entry field `track` → `item`; limit ≤ 50). Official: "only accessible for playlists owned by the current user or playlists the user is a collaborator of", else 403 — followed and Spotify playlists show their name only. Play: PUT /v1/me/player/play with context_uri + offset.position, Premium only. Starting a followed playlist in dev mode: unverified.
+- 3 PARTIAL: GET /v1/me/player/queue (existing scopes; Premium requirement unverified) → {currently_playing, queue[]}; POST /v1/me/player/queue?uri= appends, Premium only. No remove / reorder / jump endpoint found.
+- 5 SUPPORTED: PUT /v1/me/player/shuffle?state=true|false, PUT /v1/me/player/repeat?state=off|context|track, Premium only. State comes free from the GET /v1/me/player poll Hakuro already does (shuffle_state, repeat_state).
+- Costs: new scopes force re-authorization; spotify.rs:126-133 `has_control_scope` checks only user-modify-playback-state → generalize to a required-scope list (granted scope string already stored, spotify.rs:241-242). Dev mode since 2026-03-09: app owner needs Premium, 5 users per Client ID. Rate and quota numbers unpublished; quota 429s carry reason QUOTA_EXCEEDED → fetch playlists/queue when a panel opens, cache playlists by snapshot_id, never poll them.
+
+ytmdesktop2 (v1.8.3 source: nav-service.ts, api-controls.cmds.ts, routes.mdx):
+- 1 NONE: no route lists library playlists.
+- 2 NONE for listing; POST /nav/playlist {playlistId, play} opens or plays a known playlist id.
+- 3 MINIMAL: GET /nav/queue → {items:[{index, videoId?, title?}], count, storeHooked} (no artist, duration, art or current-item marker); POST /nav/queue {videoId|playlistId} appends (a video needs an active queue); POST /nav/queue/clear. No remove / reorder / jump. Like every page command it hangs while nothing is loaded.
+- 5 PARTIAL: POST /track/shuffle toggles and returns {shuffle}, but shuffle is absent from /track/state (initial state unknown). POST /track/repeat takes no HTTP argument: cycles NONE → ALL → ONE and returns `loop: bool`, so ALL and ONE look the same.
+- No upstream issue asks for a playlist API. Security: issue #265 (open) — the API listens on 0.0.0.0, reachable from the LAN; advise turning on Require authorization (Hakuro pairing supports it).
+- Options for 1/2: (a) YouTube Data API v3 playlists.list?mine=true — official, 1 quota unit, OAuth; the page does not say whether YTM playlists or Liked Music are returned (only Watch Later is stated as unlistable) → unverified, needs a live test, and the user would have to set up their own Google Cloud OAuth client. (b) Upstream ytmd2 PR adding library/playlist routes, a richer queue and shuffle/repeat state — cleanest. (c) Hakuro reading YTM session cookies — rejected (credentials, ToS).
+- Suggestion: per-player capability flags; the UI hides what the active player cannot do.
+
+Also: v1.4.0 Release run 39302317704 finished with success.
+
 ## Completed task — 2026-10-20 ytmdesktop2 player option, v1.4.0
 
 Goal: add "YouTube Music (ytmdesktop2)" as a third player (keep Spotify and browser SMTC), reading the exact videoId from ytmdesktop2's local API.
