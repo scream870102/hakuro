@@ -303,6 +303,11 @@ body.is-maximized .icon-maximize { display: none; }
   transition: background .15s, color .15s, transform .15s cubic-bezier(.3, 1.6, .5, 1), border-color .15s, opacity .15s;
 }
 .tool b { font: 700 calc(var(--s) * .04)/1 var(--mono); letter-spacing: .1em; color: var(--ink-3); }
+/* Drawn, not typed: a glyph from the font is lost at the tool's text size. */
+.tool__glyph {
+  flex-shrink: 0; width: calc(var(--s) * .09); height: calc(var(--s) * .09);
+  fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: square;
+}
 .tool:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .tool:active:not(:disabled) { transform: scale(.9); }
 .tool:disabled { opacity: .35; }
@@ -551,19 +556,27 @@ body.is-compact .face__lyrics {
   display: block; position: absolute; top: 0; bottom: 0; left: var(--s); width: var(--lw);
   padding-left: calc(var(--s) * .1); border-left: 1px solid var(--line); cursor: auto;
 }
-body.is-compact .lyrics { mask-image: linear-gradient(transparent, #000 8%, #000 92%, transparent); }
+/* Never sideways: even a passing horizontal scrollbar shortens the face the
+   sung line is centred in, and the rows below it end up cut off. */
+body.is-compact .lyrics { overflow-x: hidden; mask-image: linear-gradient(transparent, #000 8%, #000 92%, transparent); }
 /* The line being sung leans in by scaling, not by growing, so the three lines
    the cube is sized for always fit. */
 body.is-compact .lyrics__list { padding-right: 14%; }
 body.is-compact .line { padding-left: 0; }
-/* Fit original + translation into a plain row's budget at every compact size
-   (12–44px); hiding translations restores the reader's original type size. */
+/* A translated row takes a third of the face, so the line being sung and one on
+   either side fill it, with nothing cut off at its edges. The type shrinks to
+   fit at every compact size (12–44px) and the padding takes up the rest; hiding
+   translations restores the reader's original type size. --pad counts the
+   original (.8 at 1.15), the gap (2px) and the translation (.6 at 1.2). */
 body.is-compact:not(.hide-translations) .line:has(> .lyric-translation) {
-  padding-block: 3px;
+  --pad: max(4px, calc((var(--s) / 3 - var(--lyric-size) * 1.64 - 2px) / 2));
+  padding-block: var(--pad);
   font-size: calc(var(--lyric-size) * .8);
-  line-height: 1.1;
+  line-height: 1.15;
 }
-body.is-compact .lyric-translation { margin-top: 2px; font-size: .75em; line-height: 1.1; }
+body.is-compact .lyric-translation { margin-top: 2px; font-size: .75em; line-height: 1.2; }
+/* The progress bar sits in the gap below the translation, not across it. */
+body.is-compact:not(.hide-translations) .line.is-active:has(> .lyric-translation)::after { bottom: calc(var(--pad) / 2 - 1px); height: 2px; }
 body.is-compact .line--seekable::before { display: none; }
 body.is-compact .line.is-active { scale: 1.12; }
 body.is-compact .line.is-active::after { left: 0; width: calc(100% * var(--lp, 0)); }

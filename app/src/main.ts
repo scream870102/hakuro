@@ -561,8 +561,9 @@ const FULL_MIN_HEIGHT = 460;
 
 /**
  * The cube's edge, how far the lyrics stretch it, and the window around both.
- * Sized for original-only rows. Translated rows use smaller type to fit the
- * same space, so songs and the translation switch never resize the window.
+ * Sized for original-only rows. Translated rows take a third of the face each,
+ * with type small enough to fit, so songs and the translation switch never
+ * resize the window.
  */
 function compactGeometry(lyricSize: number, stretched: boolean, floor: boolean) {
   const lines = 3 * (lyricSize * 1.32 + 18);
@@ -1041,8 +1042,9 @@ const statusReady = listen<StatusEvent>("status", ({ payload }) => {
 let appVersion = "";
 const onOff = (on: boolean) => ({ text: on ? "ON" : "OFF", on });
 const usable = (button: HTMLButtonElement) => () => !button.disabled;
-const turn = (face: CubeFace, label: string, hint: string, words: string): Command =>
-  ({ group: "CUBE", icon: "■", label: `Turn cube: ${label}`, hint, words, run: () => deck.turnTo(face) });
+const turn = (face: CubeFace, label: string, hint: string, words: string): Command => ({
+  id: `turn${face[0].toUpperCase()}${face.slice(1)}`, group: "CUBE", icon: "■", label: `Turn cube: ${label}`, hint, words, run: () => deck.turnTo(face),
+});
 
 // Most commands click the control that already does the job, so the palette can
 // never disagree with the window about what a command means.
@@ -1058,42 +1060,46 @@ const COMMANDS: Command[] = [
   { id: "seekBackward", group: "PLAYBACK", icon: "←", label: "Back 10 seconds", hint: "倒轉 10 秒", words: "seek rewind", enabled: () => state.canSeek, run: () => seekBy(-10_000) },
   { id: "volumeUp", group: "PLAYBACK", icon: "+", label: "Volume up", hint: "音量 +5", words: "louder", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(5) },
   { id: "volumeDown", group: "PLAYBACK", icon: "−", label: "Volume down", hint: "音量 −5", words: "quieter", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(-5) },
-  { group: "PLAYBACK", icon: "≣", label: "Queue…", hint: "播放佇列", words: "up next queue list", enabled: usable(ui.queueOpen), run: () => ui.queueOpen.click() },
+  { id: "queue", group: "PLAYBACK", icon: "≣", label: "Queue…", hint: "播放佇列", words: "up next queue list", enabled: usable(ui.queueOpen), run: () => ui.queueOpen.click() },
   {
-    group: "PLAYBACK", icon: "⤨", label: "Shuffle", hint: "隨機播放", words: "random shuffle",
+    id: "shuffle", group: "PLAYBACK", icon: "⤨", label: "Shuffle", hint: "隨機播放", words: "random shuffle",
     state: () => onOff(modes.current.shuffle === true), visible: () => !ui.shuffle.hidden, enabled: usable(ui.shuffle), run: () => ui.shuffle.click(),
   },
   {
-    group: "PLAYBACK", icon: "⟲", label: "Repeat", hint: "循環播放", words: "repeat loop one all",
+    id: "repeat", group: "PLAYBACK", icon: "⟲", label: "Repeat", hint: "循環播放", words: "repeat loop one all",
     state: () => ({ text: REPEAT_NAMES[modes.current.repeat ?? "off"].toUpperCase(), on: (modes.current.repeat ?? "off") !== "off" }),
     visible: () => !ui.repeat.hidden, enabled: usable(ui.repeat), run: () => ui.repeat.click(),
   },
-  { group: "PLAYBACK", icon: "↺", label: "Refresh playback", hint: "重新整理播放狀態", words: "sync", run: () => element("refresh-playback").click() },
-  { group: "PLAYBACK", icon: "!", label: "Retry connection", hint: "重新連線", words: "reconnect", visible: () => !ui.reconnect.hidden, run: () => ui.reconnect.click() },
+  { id: "refreshPlayback", group: "PLAYBACK", icon: "↺", label: "Refresh playback", hint: "重新整理播放狀態", words: "sync", run: () => element("refresh-playback").click() },
+  { id: "reconnect", group: "PLAYBACK", icon: "!", label: "Retry connection", hint: "重新連線", words: "reconnect", visible: () => !ui.reconnect.hidden, run: () => ui.reconnect.click() },
   { id: "followLyrics", group: "LYRICS", icon: "↧", label: "Follow lyrics", hint: "自動跟隨歌詞", words: "scroll auto", state: () => onOff(ui.follow.checked), enabled: () => !ui.follow.disabled, run: () => ui.follow.click() },
   {
     id: "translations", group: "LYRICS", icon: "文", label: "Show translations", hint: "顯示翻譯", words: "translation bilingual",
     state: () => onOff(state.showTranslations), run: () => setTranslations(!state.showTranslations),
   },
   { id: "findLyrics", group: "LYRICS", icon: "⌕", label: "Find lyrics…", hint: "搜尋歌詞", words: "search match", enabled: usable(ui.search), run: () => ui.search.click() },
-  { group: "LYRICS", icon: "⇄", label: "Lyrics source…", hint: "歌詞來源", words: "provider", enabled: usable(ui.sourceBadge), run: () => ui.sourceBadge.click() },
+  { id: "lyricsSource", group: "LYRICS", icon: "⇄", label: "Lyrics source…", hint: "歌詞來源", words: "provider", enabled: usable(ui.sourceBadge), run: () => ui.sourceBadge.click() },
   { id: "reloadLyrics", group: "LYRICS", icon: "↻", label: "Reload lyrics", hint: "重新載入歌詞", words: "refresh download", enabled: usable(ui.reload), run: () => ui.reload.click() },
   { id: "compact", group: "WINDOW", icon: "◱", label: "Compact mode", hint: "精簡模式", words: "mini small", state: () => onOff(document.body.classList.contains("is-compact")), enabled: usable(ui.mode), run: () => ui.mode.click() },
   { id: "alwaysOnTop", group: "WINDOW", icon: "▲", label: "Keep on top", hint: "置頂", words: "pin always", state: () => onOff(ui.pin.getAttribute("aria-pressed") === "true"), enabled: usable(ui.pin), run: () => ui.pin.click() },
   { id: "clickThrough", group: "WINDOW", icon: "◇", label: "Click-through", hint: "滑鼠穿透", words: "mouse ignore", state: () => onOff(config?.settings.clickThrough === "always"), run: toggleClickThrough },
   { id: "settings", group: "WINDOW", icon: "≡", label: "Settings…", hint: () => (appVersion ? `設定 · v${appVersion}` : "設定"), words: "preferences options version 版本", run: () => element("settings-open").click() },
   {
-    group: "WINDOW", icon: "≈", label: "Sound wave in full mode", hint: "波動：完整模式", words: "wave visualizer floor ripple audio",
+    id: "waveFull", group: "WINDOW", icon: "≈", label: "Sound wave in full mode", hint: "波動：完整模式", words: "wave visualizer floor ripple audio",
     state: () => onOff(config?.settings.waveFull ?? false), enabled: () => Boolean(config),
     run: () => void patchSettings({ waveFull: !config!.settings.waveFull }),
   },
   {
-    group: "WINDOW", icon: "≈", label: "Sound wave in compact mode", hint: "波動：精簡模式", words: "wave visualizer floor ripple audio mini",
+    id: "waveCompact", group: "WINDOW", icon: "≈", label: "Sound wave in compact mode", hint: "波動：精簡模式", words: "wave visualizer floor ripple audio mini",
     state: () => onOff(config?.settings.waveCompact ?? false), enabled: () => Boolean(config),
     run: () => void patchSettings({ waveCompact: !config!.settings.waveCompact }),
   },
-  { group: "WINDOW", icon: "_", label: "Minimize", hint: "最小化", words: "hide", run: () => element("win-minimize").click() },
-  { group: "WINDOW", icon: "□", label: () => (document.body.classList.contains("is-maximized") ? "Restore" : "Maximize"), hint: "最大化", words: "maximize restore full", run: () => element("win-maximize").click() },
+  { id: "minimize", group: "WINDOW", icon: "_", label: "Minimize", hint: "最小化", words: "hide", run: () => element("win-minimize").click() },
+  // Compact sizes its own window; filling the screen would leave the cube on a screenful of glass.
+  {
+    id: "maximize", group: "WINDOW", icon: "□", label: () => (document.body.classList.contains("is-maximized") ? "Restore" : "Maximize"), hint: "最大化", words: "maximize restore full",
+    enabled: () => !document.body.classList.contains("is-compact"), run: () => element("win-maximize").click(),
+  },
   turn("front", "Cover", "方塊轉到封面", "front"),
   turn("right", "Volume", "方塊轉到音量", "right dial"),
   turn("back", "Lyric tools", "方塊轉到歌詞工具", "back source find"),

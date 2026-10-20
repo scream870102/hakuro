@@ -4,23 +4,37 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 
-pub const ACTIONS: [&str; 16] = [
+pub const ACTIONS: [&str; 30] = [
     "commands",
     "playPause",
-    "next",
     "previous",
-    "seekForward",
+    "next",
     "seekBackward",
+    "seekForward",
     "volumeUp",
     "volumeDown",
+    "queue",
+    "shuffle",
+    "repeat",
+    "refreshPlayback",
+    "reconnect",
     "followLyrics",
     "translations",
     "findLyrics",
+    "lyricsSource",
     "reloadLyrics",
     "compact",
     "alwaysOnTop",
-    "settings",
     "clickThrough",
+    "settings",
+    "waveFull",
+    "waveCompact",
+    "minimize",
+    "maximize",
+    "turnFront",
+    "turnRight",
+    "turnBack",
+    "turnLeft",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

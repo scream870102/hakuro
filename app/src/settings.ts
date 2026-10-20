@@ -26,7 +26,17 @@ function renderShortcuts() {
   if (!draft) return;
   const list = element("shortcut-list");
   list.replaceChildren();
-  for (const [action, name, hint] of SHORTCUT_ACTIONS) {
+  const bound = draft.shortcuts.filter((item) => item.accelerator).length;
+  element("shortcut-count").textContent = `${bound} bound`;
+  let group = "";
+  for (const [action, name, hint, heading] of SHORTCUT_ACTIONS) {
+    if (heading !== group) {
+      group = heading;
+      const title = document.createElement("div");
+      title.className = "shortcut-group";
+      title.textContent = heading;
+      list.append(title);
+    }
     const binding = draft.shortcuts.find((item) => item.action === action)!;
     const row = document.createElement("div");
     row.className = "shortcut-row";
@@ -109,6 +119,14 @@ window.addEventListener("keydown", (event) => {
   renderShortcuts();
   element(`shortcut-${action}`).focus();
 }, true);
+
+// Folding the list away mid-recording would leave keys captured by a hidden row.
+element("shortcuts").addEventListener("toggle", () => {
+  if (element<HTMLDetailsElement>("shortcuts").open || !recording) return;
+  recording = undefined;
+  element("shortcut-status").textContent = "Recording cancelled.";
+  renderShortcuts();
+});
 
 element("shortcuts-reset").addEventListener("click", () => {
   if (!draft) return;

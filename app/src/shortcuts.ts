@@ -1,21 +1,39 @@
-/** Stable action IDs shared with the backend's shortcut allowlist. */
+/**
+ * Stable action IDs shared with the backend's shortcut allowlist: one for every
+ * command in the palette, plus opening the palette itself. Grouped as the
+ * palette groups them.
+ */
 export const SHORTCUT_ACTIONS = [
-  ["commands", "Commands", "命令選單"],
-  ["playPause", "Play / pause", "播放／暫停"],
-  ["previous", "Previous track", "上一首"],
-  ["next", "Next track", "下一首"],
-  ["seekBackward", "Back 10 seconds", "倒轉 10 秒"],
-  ["seekForward", "Forward 10 seconds", "快轉 10 秒"],
-  ["volumeUp", "Volume up", "音量 +5"],
-  ["volumeDown", "Volume down", "音量 −5"],
-  ["followLyrics", "Follow lyrics", "跟隨歌詞"],
-  ["translations", "Show translations", "顯示翻譯"],
-  ["findLyrics", "Find lyrics", "搜尋歌詞"],
-  ["reloadLyrics", "Reload lyrics", "重新載入歌詞"],
-  ["compact", "Compact mode", "精簡模式"],
-  ["alwaysOnTop", "Keep on top", "置頂"],
-  ["settings", "Settings", "設定"],
-  ["clickThrough", "Click-through", "滑鼠穿透"],
+  ["commands", "Commands", "命令選單", "GENERAL"],
+  ["playPause", "Play / pause", "播放／暫停", "PLAYBACK"],
+  ["previous", "Previous track", "上一首", "PLAYBACK"],
+  ["next", "Next track", "下一首", "PLAYBACK"],
+  ["seekBackward", "Back 10 seconds", "倒轉 10 秒", "PLAYBACK"],
+  ["seekForward", "Forward 10 seconds", "快轉 10 秒", "PLAYBACK"],
+  ["volumeUp", "Volume up", "音量 +5", "PLAYBACK"],
+  ["volumeDown", "Volume down", "音量 −5", "PLAYBACK"],
+  ["queue", "Queue", "播放佇列", "PLAYBACK"],
+  ["shuffle", "Shuffle", "隨機播放", "PLAYBACK"],
+  ["repeat", "Repeat", "循環播放", "PLAYBACK"],
+  ["refreshPlayback", "Refresh playback", "重新整理播放狀態", "PLAYBACK"],
+  ["reconnect", "Retry connection", "重新連線", "PLAYBACK"],
+  ["followLyrics", "Follow lyrics", "跟隨歌詞", "LYRICS"],
+  ["translations", "Show translations", "顯示翻譯", "LYRICS"],
+  ["findLyrics", "Find lyrics", "搜尋歌詞", "LYRICS"],
+  ["lyricsSource", "Lyrics source", "歌詞來源", "LYRICS"],
+  ["reloadLyrics", "Reload lyrics", "重新載入歌詞", "LYRICS"],
+  ["compact", "Compact mode", "精簡模式", "WINDOW"],
+  ["alwaysOnTop", "Keep on top", "置頂", "WINDOW"],
+  ["clickThrough", "Click-through", "滑鼠穿透", "WINDOW"],
+  ["settings", "Settings", "設定", "WINDOW"],
+  ["waveFull", "Sound wave in full mode", "波動：完整模式", "WINDOW"],
+  ["waveCompact", "Sound wave in compact mode", "波動：精簡模式", "WINDOW"],
+  ["minimize", "Minimize", "最小化", "WINDOW"],
+  ["maximize", "Maximize / restore", "最大化／還原", "WINDOW"],
+  ["turnFront", "Turn cube: Cover", "方塊轉到封面", "CUBE"],
+  ["turnRight", "Turn cube: Volume", "方塊轉到音量", "CUBE"],
+  ["turnBack", "Turn cube: Lyric tools", "方塊轉到歌詞工具", "CUBE"],
+  ["turnLeft", "Turn cube: Window tools", "方塊轉到視窗工具", "CUBE"],
 ] as const;
 export type ShortcutAction = typeof SHORTCUT_ACTIONS[number][0];
 export interface ShortcutBinding { action: ShortcutAction; accelerator: string; global: boolean }

@@ -192,6 +192,25 @@ it("records shortcuts, rejects duplicates and lets Escape cancel without closing
   expect(saved[1].incoming.shortcuts).toContainEqual({ action: "playPause", accelerator: "F8", global: false });
 });
 
+it("folds the shortcut list away, grouped as the palette is, and stops recording when it folds", () => {
+  const section = el<HTMLDetailsElement>("shortcuts");
+  expect(section.open).toBe(false);
+  expect(el("shortcut-count").textContent).toBe("2 bound");
+  expect([...document.querySelectorAll(".shortcut-group")].map((group) => group.textContent))
+    .toEqual(["GENERAL", "PLAYBACK", "LYRICS", "WINDOW", "CUBE"]);
+  expect(document.querySelectorAll(".shortcut-row")).toHaveLength(SHORTCUT_ACTIONS.length);
+  section.open = true;
+  el("shortcut-turnBack").click();
+  press({ key: "F8", code: "F8" });
+  expect(el("shortcut-count").textContent).toBe("3 bound");
+  el("shortcut-queue").click();
+  expect(el("shortcut-queue").textContent).toBe("Press keys…");
+  section.open = false;
+  section.dispatchEvent(new Event("toggle"));
+  expect(el("shortcut-queue").textContent).toBe("Not bound");
+  expect(el("shortcut-status").textContent).toBe("Recording cancelled.");
+});
+
 it("clears and resets draft bindings without saving until requested", async () => {
   document.querySelector<HTMLButtonElement>('[aria-label="Clear Commands"]')!.click();
   expect(el("shortcut-commands").textContent).toBe("Not bound");

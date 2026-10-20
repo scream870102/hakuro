@@ -3,6 +3,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import html from "../index.html?raw";
 import { stretchedHeight } from "./deck";
+import { SHORTCUT_ACTIONS } from "./shortcuts";
 import { isolateListeners } from "./test-listeners";
 
 isolateListeners(window, document);
@@ -1247,6 +1248,36 @@ it("opens the palette as a window of its own with Ctrl+K and sends it what the w
   el("cmdk-open").click();
   await flush();
   expect(bridge.emitTo.mock.calls.filter(([, event]) => event === "palette:show")).toHaveLength(3);
+});
+
+it("lets every palette command take a shortcut and runs the new ones from the keyboard", async () => {
+  // Ctrl+K opens the palette below; every other action gets a chord of its own.
+  const codes = [..."ABCDEFGHIJLMNOPQRSTUVWXYZ"].map((letter) => `Key${letter}`).concat([..."0123456789"].map((digit) => `Digit${digit}`));
+  const shortcuts = SHORTCUT_ACTIONS.map(([action], index) => action === "commands"
+    ? { action, accelerator: "Ctrl+KeyK", global: false }
+    : { action, accelerator: `Ctrl+Alt+${codes[index]}`, global: false });
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, shortcuts } };
+  });
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, true, MODES);
+  const snapshot = await openPalette();
+  expect(snapshot.commands.filter((command) => !command.shortcut).map((command) => command.label)).toEqual([]);
+  // Shuffle and repeat are listed once the player reports them.
+  expect(snapshot.commands.find((command) => command.label === "Shuffle")?.shortcut?.action).toBe("shuffle");
+
+  const press = (action: string) => {
+    const code = shortcuts.find((binding) => binding.action === action)!.accelerator.split("+").pop()!;
+    key(window, { code, ctrlKey: true, altKey: true });
+  };
+  press("minimize");
+  press("maximize");
+  expect(appWindow.minimize).toHaveBeenCalledTimes(1);
+  expect(appWindow.toggleMaximize).toHaveBeenCalledTimes(1);
+  bridge.invoke.mockClear();
+  press("shuffle");
+  expect(bridge.invoke).toHaveBeenCalledWith("set_shuffle", { on: true });
 });
 
 it("refreshes palette binding hints from the saved settings after editing and clearing", async () => {

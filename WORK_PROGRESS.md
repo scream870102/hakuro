@@ -1,5 +1,17 @@
 # hakuro session recovery
 
+## Compact translations, cube icons, bind every command — 1.5.1 — 2026-10-20
+
+Goal (user's four points): translated compact lyrics were crowded and cut off at the bottom; the lid's lyrics icon looked like the queue icon; the back face's SOURCE/FIND glyphs were too small; every command palette entry should take a shortcut, with the settings shortcut list made collapsible. Then 1.5.1, commit and tag, no push.
+Acceptance:
+- [x] Translated compact rows each take a third of the face (padding absorbs the rest, from --s and --lyric-size), so the sung line and one either side fill it with no partial row; the progress bar sits below the translation; window size unchanged with translations on/off.
+- [x] Lid lyrics toggle is a microphone; back-face tools draw SVG glyphs at 9% of the edge (were 4% font glyphs).
+- [x] 30 shortcut actions = every palette command + `commands`, in the same order in shortcuts.ts and shortcuts.rs (test reads the Rust list); Maximize is disabled in compact. Settings list is a `<details>` (closed by default) grouped GENERAL/PLAYBACK/LYRICS/WINDOW/CUBE with a bound count; folding cancels recording.
+- [x] npm, Cargo, Tauri and both lockfiles at 1.5.1; README shortcut line updated.
+Verification: 118 frontend tests, Cargo 137 passed / 13 ignored, TypeScript + Vite build. Headless Edge on the built bundle with bilingual cues: three exact rows, no peeking row, bar clear of the translation and unchanged window size at 12/18/26/36px with the wave both off and on; F9 bound to turnBack turned the cube in compact and full mode; settings section renders collapsed and open with 30 rows. Real players not exercised.
+Known limit: rows that wrap are taller than a third. At 18px a 14-character Japanese line still fits; at 26px+ long lines (and at 44px even 11 characters) wrap and push the neighbours partly out of view. Plain rows already wrapped sooner, so this is not new. Possible follow-up: shrink long translated lines to fit one row.
+Reusable finding: a horizontal scrollbar that appears for a moment (scrollWidth 2px over clientWidth during a window resize) drops the lyric viewport's clientHeight by 10px exactly when `recentre()` runs, leaving the sung line 5px low until the next line. Compact `.lyrics` now uses `overflow-x: hidden`. When centring looks off by a few px, log clientHeight vs offsetHeight at each scrollTo call.
+
 ## Compact translations and 1.5.0 — 2026-10-20
 
 Goal: keep compact at its original-only size, shrink rows that show translations, then bump to 1.5.0, commit and push.

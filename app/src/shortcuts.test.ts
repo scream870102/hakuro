@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
+/// <reference types="vite/client" />
 import { expect, it } from "vitest";
-import { shortcutFromEvent, shortcutConflict } from "./shortcuts";
+import backend from "../src-tauri/src/shortcuts.rs?raw";
+import { SHORTCUT_ACTIONS, shortcutFromEvent, shortcutConflict } from "./shortcuts";
+
+it("offers exactly the actions the backend accepts, in the same order", () => {
+  const start = backend.indexOf("pub const ACTIONS");
+  const list = backend.slice(start, backend.indexOf("];", start));
+  expect([...list.matchAll(/"(\w+)"/g)].map((match) => match[1])).toEqual(SHORTCUT_ACTIONS.map(([action]) => action));
+});
 
 it("uses physical keys and exact modifiers while rejecting typing, repeat and IME", () => {
   const chord = (init: KeyboardEventInit) => shortcutFromEvent(new KeyboardEvent("keydown", init));

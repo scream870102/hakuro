@@ -28,7 +28,17 @@ body {
 #settings-error, #source-error, #shortcut-status { margin: 0 0 8px; color: var(--accent); overflow-wrap: anywhere; }
 #settings-error:empty, #source-error:empty, #shortcut-status:empty { display: none; }
 
-/* Find lyrics */
+/* Keyboard shortcuts: folded under their heading, grouped as the palette groups them. */
+.shortcuts > summary { list-style: none; cursor: pointer; }
+.shortcuts > summary::-webkit-details-marker { display: none; }
+.shortcuts > summary h3::after {
+  content: ""; width: 6px; height: 6px; margin: 0 4px 3px auto;
+  border: solid currentColor; border-width: 0 1.5px 1.5px 0; rotate: 45deg; transition: rotate .15s;
+}
+.shortcuts:not([open]) > summary h3::after { rotate: -45deg; margin-bottom: 0; }
+.shortcuts > summary:hover h3, .shortcuts > summary:focus-visible h3 { color: var(--ink); }
+.shortcuts__count { color: var(--accent); }
+.shortcut-group { padding: 16px 0 4px; font: 700 9.5px var(--mono); letter-spacing: .22em; color: var(--ink-3); }
 .shortcut-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(100px, 150px) auto auto; align-items: center; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .shortcut-row small { display: block; color: var(--ink-3); }
 .shortcut-row button { padding: 7px; overflow-wrap: anywhere; }
@@ -37,6 +47,7 @@ body {
 #shortcuts-reset { margin-top: 12px; }
 @media (max-width: 520px) { .shortcut-row { grid-template-columns: minmax(0, 1fr) auto auto; } .shortcut-row > span { grid-column: 1 / -1; } }
 
+/* Find lyrics */
 .lyrics-match-actions { flex-wrap: wrap; }
 .lyrics-candidates { max-height: 220px; margin: 10px 0; padding: 0; overflow-y: auto; list-style: none; }
 .lyric-candidate {
