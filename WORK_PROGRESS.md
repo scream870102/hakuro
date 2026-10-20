@@ -1,5 +1,23 @@
 # hakuro session recovery
 
+## Turntable seek preview — 2026-10-20
+
+Goal: preview the timeline and synced lyrics locally while turning the record; submit one seek on release.
+Known: the record already submits only on release; the render loop shares one position for times, progress, and lyrics.
+Open questions: none. User authorized implementation in this session.
+
+- [x] Add a gesture-start anchor and cumulative preview without mutating the live playback sample.
+- [x] Commit the displayed position once on release; discard on cancel, capture loss, track change, or lost seek support.
+- [x] Verify timeline/lyrics preview, polling stability, request count, cancellation, and track-change behavior with regression tests (4 new cases, written and run by an independent agent).
+- [x] Run frontend tests and production build (96 tests passed; TypeScript/Vite build passed; git diff --check passed).
+
+Progress: implementation complete. Native desktop interaction has not been manually tested; DOM integration tests cover the gesture and bridge request behavior.
+
+Release follow-up: user authorized version 1.4.1 and commit/push to the tracked origin/main.
+- [x] Update npm, Cargo, Tauri, and lockfile package versions to 1.4.1.
+- [x] Verify tests and build the 1.4.1 NSIS installer (96 tests passed; Tauri release build succeeded).
+Delivery: commit the verified seek preview and version update, then push origin/main. Use Git's HEAD/origin/main comparison to verify delivery status.
+
 ## Completed research — 2026-10-20 playlists, queue, shuffle/repeat API availability (nothing implemented)
 
 User: "1. 列出使用者有的所有撥放清單 2. 點擊撥放清單 可以看到清單內的歌曲 3. 撥放佇列的功能 4. 轉盤快轉Seek的時候至少視覺表現要先知道時間軸前進多少 可以的話 歌詞也先一起前進 鬆開來才真的送出request ... 5. 切換random repeat模式 除了第4點 先幫我調查Spotify跟ytmdesktop2是否都有對應的api可以使用 先都不要實作"

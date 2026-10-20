@@ -141,7 +141,8 @@ const state = {
   statusNotice: "",
 };
 
-const deck = createDeck({ seekBy, dragWindow: () => void appWindow.startDragging() });
+let seekPreview: { start: number; position: number } | null = null;
+const deck = createDeck({ beginSeek, previewSeek, endSeek, dragWindow: () => void appWindow.startDragging() });
 const lineNumber = (index: number) => String(index + 1).padStart(2, "0");
 
 // ---------------------------------------------------------------- rendering
@@ -286,7 +287,7 @@ function highlight(index: number) {
   ui.lineNow.textContent = current ? lineNumber(index) : "--";
   if (current) {
     current.classList.add("is-active");
-    if (centre(current, "smooth") && state.highlighted >= 0 && index === state.highlighted + 1) {
+    if (centre(current, "smooth") && !seekPreview && state.highlighted >= 0 && index === state.highlighted + 1) {
       // Only the song moving on by itself throws shards; seeks stay quiet.
       deck.lineChanged(current);
     }
@@ -310,7 +311,7 @@ function recentre() {
 
 function frame() {
   const now = performance.now();
-  const position = positionAt(state.sample, now);
+  const position = seekPreview?.position ?? positionAt(state.sample, now);
   const duration = state.sample.durationMs;
 
   ui.timeCurrent.textContent = ui.lidTime.textContent = formatTime(position);
@@ -646,7 +647,26 @@ element("refresh-playback").addEventListener("click", () => void send("refresh_p
 ui.reconnect.addEventListener("click", () => void send("connect"));
 ui.barPlay.addEventListener("click", () => ui.playPause.click());
 
-/** Seek relative to where the song is now: the record's spin and the palette. */
+function beginSeek() {
+  if (!state.canSeek || state.sample.durationMs <= 0) return;
+  const start = positionAt(state.sample, performance.now());
+  seekPreview = { start, position: start };
+}
+
+function previewSeek(deltaMs: number) {
+  if (!seekPreview) return;
+  seekPreview.position = Math.round(Math.min(state.sample.durationMs, Math.max(0, seekPreview.start + deltaMs)));
+}
+
+function endSeek(commit: boolean) {
+  const preview = seekPreview;
+  seekPreview = null;
+  if (!commit || !preview || !state.canSeek) return;
+  state.sample = { ...state.sample, positionMs: preview.position, receivedAt: performance.now() };
+  void send("seek", { positionMs: preview.position });
+}
+
+/** Seek relative to where the song is now, from the palette. */
 function seekBy(deltaMs: number) {
   if (!state.canSeek || state.sample.durationMs <= 0) return;
   const now = performance.now();
@@ -824,6 +844,7 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
   // match commands check it, so a key rebuilt here would never match theirs.
   const trackId = payload.hasTrack ? payload.trackKey : "";
   if (state.trackId !== trackId) {
+    seekPreview = null;
     state.requestedSource = "";
     // A new song spins the cube; its cover goes on while the front faces away.
     if (state.trackId && trackId) deck.trackChanged();
@@ -840,6 +861,7 @@ const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
   } satisfies Sample;
   state.isPlaying = payload.isPlaying;
   state.canSeek = payload.hasTrack && payload.canSeek;
+  if (!state.canSeek || payload.durationMs <= 0) seekPreview = null;
   document.body.classList.toggle("is-playing", payload.isPlaying);
   deck.setPlaying(payload.isPlaying);
 

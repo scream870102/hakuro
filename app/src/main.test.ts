@@ -866,6 +866,79 @@ it("gives the roomy size back when compact is switched off", async () => {
 const press = (target: Element, type: string, x = 0, y = 0) =>
   target.dispatchEvent(new PointerEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y }));
 
+it("previews turntable time and lyrics through playback polls, then seeks once on release", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 10000);
+  bridge.listeners.get("lyrics")!({ payload: {
+    generation: 1, trackId: "spotify:song-a", source: "LRCLIB", synced: true, text: "", partial: false, requested: "",
+    cues: [{ time_ms: 10000, text: "Before" }, { time_ms: 12000, text: "Preview" }],
+  } });
+  runFrame();
+  expect(el("lyrics-list").children[0].classList.contains("is-active")).toBe(true);
+  const vinyl = el("vinyl");
+  // jsdom puts the centre at the origin; each clockwise quarter turn adds 2.5 seconds.
+  press(vinyl, "pointerdown", 10, 0);
+  playback("song-a", 1, 11000);
+  press(vinyl, "pointermove", 0, 10);
+  runFrame();
+  expect(el("time-current").textContent).toBe("00:12");
+  expect(el("lid-time").textContent).toBe("00:12");
+  expect(el("scrubber").getAttribute("aria-valuenow")).toBe("12500");
+  expect(el("scrubber-fill").style.width).toBe("12.5%");
+  expect(el("lyrics-list").children[1].classList.contains("is-active")).toBe(true);
+  playback("song-a", 1, 11500);
+  runFrame();
+  expect(el("scrubber").getAttribute("aria-valuenow")).toBe("12500");
+  press(vinyl, "pointermove", -10, 0);
+  runFrame();
+  expect(el("scrubber").getAttribute("aria-valuenow")).toBe("15000");
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "seek")).toEqual([]);
+  press(vinyl, "pointerup", -10, 0);
+  press(vinyl, "lostpointercapture", -10, 0);
+  await flush();
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "seek")).toEqual([["seek", { positionMs: 15000 }]]);
+  runFrame();
+  expect(el("scrubber").getAttribute("aria-valuenow")).toBe("15000");
+});
+
+it.each(["pointercancel", "lostpointercapture"])("cancels turntable preview on %s without seeking", async (event) => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 10000);
+  const vinyl = el("vinyl");
+  press(vinyl, "pointerdown", 10, 0);
+  press(vinyl, "pointermove", 0, 10);
+  runFrame();
+  expect(el("scrubber").getAttribute("aria-valuenow")).toBe("12500");
+  playback("song-a", 1, 11000);
+  press(vinyl, event, 0, 10);
+  press(vinyl, "pointerup", 0, 10);
+  runFrame();
+  expect(el("time-current").textContent).toBe("00:11");
+  expect(el("scrubber").getAttribute("aria-valuenow")).toBe("11000");
+  expect(vinyl.classList.contains("is-held")).toBe(false);
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "seek")).toEqual([]);
+});
+
+it("invalidates turntable preview when the track changes", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 10000);
+  const vinyl = el("vinyl");
+  press(vinyl, "pointerdown", 10, 0);
+  press(vinyl, "pointermove", 0, 10);
+  runFrame();
+  expect(el("scrubber").getAttribute("aria-valuenow")).toBe("12500");
+  playback("song-b", 2, 30000);
+  press(vinyl, "pointermove", -10, 0);
+  runFrame();
+  expect(el("scrubber").getAttribute("aria-valuenow")).toBe("30000");
+  press(vinyl, "pointerup", -10, 0);
+  await flush();
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "seek")).toEqual([]);
+});
+
 it("toggles playback from a tap on the cover, but not from a drag that turns the cube", async () => {
   await import("./main");
   await flush();

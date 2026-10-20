@@ -111,7 +111,12 @@ export function stretchedHeight(edge: number, length: number) {
   return 2 * (reach + BOB);
 }
 
-export function createDeck(options: { seekBy(ms: number): void; dragWindow(): void }): Deck {
+export function createDeck(options: {
+  beginSeek(): void;
+  previewSeek(ms: number): void;
+  endSeek(commit: boolean): void;
+  dragWindow(): void;
+}): Deck {
   const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
   const scene = byId("scene");
   const cube = byId("cube");
@@ -368,6 +373,7 @@ export function createDeck(options: { seekBy(ms: number): void; dragWindow(): vo
     const box = vinyl.getBoundingClientRect();
     scratch = { cx: box.left + box.width / 2, cy: box.top + box.height / 2, a: 0, moved: 0, turned: 0 };
     scratch.a = angleOf(event, scratch);
+    options.beginSeek();
     vinyl.setPointerCapture?.(event.pointerId);
     vinyl.classList.add("is-held");
   });
@@ -379,22 +385,24 @@ export function createDeck(options: { seekBy(ms: number): void; dragWindow(): vo
     scratch.moved += Math.abs(d);
     scratch.turned += d;
     discAngle += (d * 180) / Math.PI;
+    options.previewSeek(Math.round((scratch.turned / (2 * Math.PI)) * SCRATCH_MS_PER_TURN));
   });
   function endScratch(event: PointerEvent) {
     if (!scratch) return;
     const { moved, turned } = scratch;
     scratch = null;
     vinyl.classList.remove("is-held");
+    options.endSeek(event.type === "pointerup" && moved >= 0.08 && Math.abs(turned) > 0.05);
     if (event.type !== "pointerup") return;
     // One seek for the whole gesture: the player is a network call away.
     if (moved < 0.08) togglePlayback();
     else if (Math.abs(turned) > 0.05) {
-      options.seekBy(Math.round((turned / (2 * Math.PI)) * SCRATCH_MS_PER_TURN));
       thump(0.4, Math.sign(turned));
     }
   }
   vinyl.addEventListener("pointerup", endScratch);
   vinyl.addEventListener("pointercancel", endScratch);
+  vinyl.addEventListener("lostpointercapture", endScratch);
 
   // ------------------------------------------------------- the volume dial
 
