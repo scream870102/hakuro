@@ -669,3 +669,105 @@ downmix, with regression coverage for this measured case and true silence.
 Installed Hakuro's UI was not instrumented, so additional UI conditions are not
 excluded. The existing live test passing only establishes that capture opens;
 its printed bands must also be inspected.
+# 2026-10-21 — GitHub Pages introduction (local implementation complete)
+
+Goal: create a user-facing Hakuro introduction on a dedicated gh-pages branch,
+matching the app's visual style, with actual screenshots/video and optional CSS 3D guidance.
+
+Acceptance:
+- [x] Update source and installed app to latest official release: v1.6.2.
+- [x] Create local gh-pages branch from origin/main 68172b8.
+- [x] Export agreed implementation plan before page implementation.
+- [x] Create responsive introduction with app styling and accurate user workflows.
+- [x] Capture and inspect actual app screenshots; no mock screenshots claimed as real.
+- [x] Verify page rendering, navigation, interaction and Pages-relative asset paths.
+
+Evidence: official release installer SHA-256
+851a8c9eaf71b7066bae43a8ef441cf581c1b357f66cadd749023044299001d1;
+installer exit 0; HKCU uninstall DisplayVersion 1.6.2 at
+C:/Users/screa/AppData/Local/Hakuro; running accessibility tree shows HAKURO / v1.6.2.
+Source updated with fast-forward; no commits, push or Pages publication performed.
+Installer and local verification artifacts are retained in ignored
+app/node_modules/.cache/hakuro-pages/ (do not commit).
+
+Knowns: plain static docs/ on gh-pages can be served with branch publishing.
+Visual tokens: app/src/base.css; deck interactions: app/src/deck.ts; current
+workflows: README.md. Latest supports Spotify, ytmdesktop Companion and ytmdesktop2.
+README's old shake-default-off paragraph conflicts with the new selector: use
+app/settings.html and app/src/settings.ts behavior for website copy.
+
+User selected EccentricVault. Obsidian registration confirmed the actual path:
+D:/EccentricStudio/Scream/EccentricVault. Export saved to
+Project/Hakuro/261021-hakuro-gh-pages.md, with a work log at
+Agents/Log/261021-hakuro-gh-pages-worklog.md. Both paths and plan_export_dir
+are recorded in the local, ignored local-rules/project.md. The old C:/Data
+vault path in earlier log entries does not exist on this machine.
+
+Capture issue resolved: native tools showed wallpaper, so captured the installed
+v1.6.2 WebView via a temporary localhost CDP port. Actual full and compact PNGs
+are in docs/assets/; lyrics blurred only during screenshot export. Pink custom
+theme is preserved and disclosed. No playback mock, replacement text or personal
+credentials were copied. The CSS cube is separately labeled an illustration.
+App restored to full mode and restarted without the temporary debugging port.
+
+Verification: real Edge checks pass at 1440/768/390/320 px; /hakuro/ subpath,
+all image/font requests, four cube tabs, three setup tabs, keyboard focus,
+section anchors and reduced motion pass; no page errors or failed resources.
+Desktop/mobile full-page screenshots were inspected. Independent source and
+image review passed all criteria, no missing local refs or duplicate IDs.
+Validation scripts and screenshots are in app/node_modules/.cache/hakuro-pages/.
+The site is buildless; no App source or dependency manifests changed.
+
+Remaining: no commit/push/publication authorized or performed. GitHub Pages API
+returned 404; do not assume hosting exists. On approval, publish only intended
+website/log changes and configure gh-pages /docs as source. App installation,
+the website and the Vault export are complete locally.
+
+## Introduction revision 2 — user feedback
+
+Goal: replace the blurred captures and inaccurate illustrated cube with clear
+real app captures, silent motion clips and real face textures with explanatory
+hotspots. Retain the right-side guide; add translations, shake, Command Palette,
+click-through, always-on-top and Sound wave explanations.
+
+- [x] Recapture clear actual full/compact screenshots.
+- [x] Capture and verify silent video clips (no audio stream).
+- [x] Use real six-face textures with hover/focus/touch help and retained guide.
+- [x] Add all six requested features based on current source behavior.
+- [x] Verify desktop/mobile, keyboard/touch, video and product accuracy.
+
+Revision plan exported to the existing EccentricVault plan before edits.
+Live app currently shows bilingual lyrics, allowing authentic capture without
+mocked playback or text. Capture uses temporary local CDP; no App source changes.
+Independent source research confirms click-through requires PIN, Ctrl+Alt+P
+defaults to off/always toggle, translations are source-provided, shake uses the
+current action selector, and Sound wave uses local default-device audio.
+
+Revision 2 delivered: actual bilingual screenshots without blur; 12.042-second
+full and 10.042-second compact H.264 clips. ffprobe verifies one video stream and
+no audio in each. Actual six faces captured at 3x via temporary flattening CSS;
+the website restores 10% corner radii. No invented face artwork or lyric data.
+Actual Command Palette screenshot included. App restored to full mode and
+restarted without the CDP port after capture; port 9223 no longer listens.
+
+Checks: actual Edge mouse hover hits all 13 hotspots; keyboard focus/Enter,
+invisible-face exclusion, pointer dragging and mobile touch pass. Both muted
+videos decode and advance. Four viewport sizes, /hakuro/ asset paths, setup tabs,
+anchors and reduced motion pass without page errors. Independent review found
+one accessibility gap; fixed with aria-describedby and a polite live description,
+then reran browser checks successfully. Video stills, real textures and desktop/
+mobile guide screenshots were visually inspected. git diff --check passes.
+No commit, push, publish or App source changes. Both Vault notes updated.
+
+Reusable lesson from user correction: use real product face captures for product
+interaction demos; do not invent an approximation when fidelity is requested.
+Retain the requested clear lyrics and use audio-free recordings for motion.
+
+## Publish authorization — 2026-10-21
+
+User explicitly approved publishing, then requested a website icon. Added the
+existing App icon as favicon.ico and a 32px PNG, using relative URLs for Pages.
+Plan: verify favicon assets; commit docs/ and this work log on gh-pages; push
+origin; enable GitHub Pages branch source gh-pages /docs; verify build status,
+public HTML, icons and media. Existing repository is public, administrator access
+confirmed, Pages currently disabled and no remote gh-pages branch exists.
