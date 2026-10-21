@@ -771,3 +771,11 @@ Plan: verify favicon assets; commit docs/ and this work log on gh-pages; push
 origin; enable GitHub Pages branch source gh-pages /docs; verify build status,
 public HTML, icons and media. Existing repository is public, administrator access
 confirmed, Pages currently disabled and no remote gh-pages branch exists.
+
+Published https://scream870102.github.io/hakuro/ from commit 64e7af7.
+GitHub auto-enabled gh-pages / on first push; corrected it to /docs and requested
+a rebuild. Correct deployment run 39590810793 succeeded. After CDN propagation,
+the canonical URL returns the intended HAKURO page. Public Edge checks pass all
+four viewport widths, 13 hotspots, keyboard/touch, drag, both video decoders,
+relative resources and reduced motion. Both public favicon files return 200 and
+match local App icon copies byte-for-byte. No publication blockers remain.

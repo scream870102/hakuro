@@ -1,6 +1,8 @@
 # Hakuro introduction site
 
-Static Traditional Chinese product introduction for GitHub Pages. No build step or runtime dependencies. Serve this directory with a static HTTP server; all asset paths work under `/hakuro/` or a domain root. Publish from `gh-pages`, `/docs` only when authorized.
+Live site: https://scream870102.github.io/hakuro/
+
+Static Traditional Chinese product introduction for GitHub Pages. No build step or runtime dependencies. Serve this directory with a static HTTP server; all asset paths work under `/hakuro/` or a domain root. GitHub Pages publishes from `gh-pages`, `/docs`, with HTTPS enabled.
 
 ## Authentic application media
 
