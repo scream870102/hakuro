@@ -792,5 +792,17 @@ GitHub API. Existing App release workflow is unchanged.
 - [x] main contains App and docs/ together.
 - [x] Workflow and maintenance documentation prepared.
 - [x] Switch Pages to workflow mode and environment policy to main.
-- [ ] Commit/push and verify successful Actions deployment from main.
-- [ ] Verify public HTML, favicon and media match the deployed main source.
+- [x] Commit/push and verify successful Actions deployment from main.
+- [x] Verify public HTML, favicon and media match the deployed main source.
+
+Migration completed: main commit 6560e7a deployed successfully in Actions run
+39599592941: https://github.com/scream870102/hakuro/actions/runs/39599592941.
+Pages uses workflow publishing; the github-pages environment permits main only.
+The old gh-pages branch is retained as history and is no longer a publish source.
+Public URL remains https://scream870102.github.io/hakuro/.
+
+Independent workflow review passed. Public browser verification passed all 13
+hotspots, keyboard/touch interaction, pointer drag, two muted playable videos,
+and reduced motion. Eight public files match main: text after CRLF/LF
+normalization, icons and videos byte-for-byte. App source and release workflow
+remain unchanged. This progress-only follow-up does not trigger Pages deployment.
