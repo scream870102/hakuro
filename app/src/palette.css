@@ -27,6 +27,7 @@ body { overflow: hidden; padding: 6px 18px 26px 10px; user-select: none; }
   height: 38px; padding: 0 18px; color: var(--ink-2); cursor: pointer;
 }
 .pal__item i { font: 700 12px/1 var(--mono); font-style: normal; text-align: center; color: var(--ink-3); }
+.pal__item i svg { display: block; width: 16px; height: 16px; margin: auto; }
 .pal__label { overflow: hidden; font: 15px/1.1 var(--display); letter-spacing: .06em; white-space: nowrap; text-overflow: ellipsis; }
 .pal__label mark { background: none; color: var(--accent); }
 .pal__label small { margin-left: 10px; font: 500 12px var(--tc); letter-spacing: .03em; color: var(--ink-3); }

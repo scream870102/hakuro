@@ -4,6 +4,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import html from "../index.html?raw";
 import { stretchedHeight } from "./deck";
 import { SHORTCUT_ACTIONS } from "./shortcuts";
+import { createIcon } from "./icons";
 import { isolateListeners } from "./test-listeners";
 
 isolateListeners(window, document);
@@ -83,7 +84,7 @@ const initial = () => ({
     theme: { accent: "#123456", activeLine: "#ffffff", pastLine: "#666666" },
     followLyrics: true,
     checkUpdates: true,
-    shakeToSkip: false,
+    shakeAction: null as string | null,
     lastSeenVersion: "1.3.0",
     alwaysOnTop: false,
     opacity: 100,
@@ -1364,7 +1365,7 @@ async function openPalette() {
   await flush();
   await flush();
   const call = [...bridge.emitTo.mock.calls].reverse().find(([, event]) => event === "palette:show");
-  return call?.[2] as { commands: { id: number; label: string; enabled: boolean; state: unknown; shortcut?: { action: string; accelerator: string; global: boolean } }[]; lines: unknown[]; trackKey: string; accent: string };
+  return call?.[2] as { commands: { id: number; icon: string; label: string; enabled: boolean; state: unknown; shortcut?: { action: string; accelerator: string; global: boolean } }[]; lines: unknown[]; trackKey: string; accent: string };
 }
 const runInPalette = (payload: unknown) => bridge.listeners.get("palette:run")!({ payload });
 
@@ -1442,6 +1443,30 @@ it("opens the palette as a window of its own with Ctrl+K and sends it what the w
   el("cmdk-open").click();
   await flush();
   expect(bridge.emitTo.mock.calls.filter(([, event]) => event === "palette:show")).toHaveLength(3);
+});
+
+it("uses shared SVG icons for every palette action and follows playback/window state", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, false, { ...MODES, muted: false, canSetVolume: true, volumePercent: 40 });
+  const first = await openPalette();
+  for (const command of first.commands) expect(createIcon(command.icon), command.label).not.toBeNull();
+  for (const [label, selector] of [
+    ["Queue…", "#queue-open svg"], ["Lyrics in compact mode", '[data-proxy="compact-lyrics"] svg'],
+    ["Settings…", "#settings-open svg"], ["Find lyrics…", "#lyrics-search-open svg"],
+    ["Play", "#bar-play .icon-play"], ["Mute", ".dial__action--mute"],
+  ]) {
+    const command = first.commands.find(item => item.label === label)!;
+    expect(createIcon(command.icon)?.innerHTML).toBe(document.querySelector(selector)?.innerHTML);
+  }
+  expect(first.commands.find(item => item.label === "Compact mode")?.icon).toBe("compact");
+  playback("song-a", 1, 0, true, { ...MODES, muted: true, canSetVolume: true, volumePercent: 40 });
+  document.body.classList.add("is-compact", "is-maximized");
+  const next = await openPalette();
+  expect(next.commands.find(item => item.label === "Pause")?.icon).toBe("pause");
+  expect(next.commands.find(item => item.label === "Unmute")?.icon).toBe("unmute");
+  expect(next.commands.find(item => item.label === "Compact mode")?.icon).toBe("expand");
+  expect(next.commands.find(item => item.label === "Restore")?.icon).toBe("restore");
 });
 
 it("lets every palette command take a shortcut and runs the new ones from the keyboard", async () => {
@@ -1681,9 +1706,9 @@ it("runs random queue from the palette with gestures disabled, enforcing capabil
   expect(bridge.invoke.mock.calls.filter(([command]) => command === "random_queue_track")).toHaveLength(1);
 });
 
-it.each([[false, true, 0], [true, false, 0], [true, true, 1]] as const)("gates cube scramble by setting %s and queue capability %s", async (shakeToSkip, canJumpQueue, expected) => {
+it.each([[null, true, 0], ["randomQueue", false, 0], ["randomQueue", true, 1]] as const)("gates cube scramble by setting %s and queue capability %s", async (shakeAction, canJumpQueue, expected) => {
   bridge.invoke.mockImplementation(async (command: string) => {
-    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, shakeToSkip } };
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, shakeAction } };
   });
   await import("./main");
   await flush();
@@ -1699,6 +1724,30 @@ it.each([[false, true, 0], [true, false, 0], [true, true, 1]] as const)("gates c
     press(cube, "lostpointercapture", 160);
     await flush();
     expect(bridge.invoke.mock.calls.filter(([command]) => command === "random_queue_track")).toHaveLength(expected);
+  } finally { time.mockRestore(); }
+});
+
+it.each(["minimize", "playPause", "commands", "compactLyrics", "reconnect", null, "unknown"])("dispatches shake binding %s with palette availability and without requiring queue support", async (shakeAction) => {
+  bridge.invoke.mockImplementation(async (command: string, args?: { incoming?: unknown }) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, shakeAction } };
+    if (command === "save_settings") return { ...initial(), settings: args!.incoming };
+  });
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, false, { canJumpQueue: false });
+  bridge.invoke.mockClear();
+  let now = 10_000;
+  const time = vi.spyOn(performance, "now").mockImplementation(() => now);
+  try {
+    press(el("cube"), "pointerdown");
+    for (const x of [160, 0, 160]) { now += 100; press(el("cube"), "pointermove", x); }
+    press(el("cube"), "pointerup", 160);
+    await flush();
+    expect(appWindow.minimize).toHaveBeenCalledTimes(shakeAction === "minimize" ? 1 : 0);
+    expect(children.has("palette")).toBe(shakeAction === "commands");
+    expect(el<HTMLInputElement>("compact-lyrics").checked).toBe(shakeAction === "compactLyrics");
+    expect(bridge.invoke.mock.calls.filter(([cmd]) => cmd === "play")).toHaveLength(shakeAction === "playPause" ? 1 : 0);
+    expect(bridge.invoke.mock.calls.some(([cmd]) => cmd === "random_queue_track" || cmd === "connect")).toBe(false);
   } finally { time.mockRestore(); }
 });
 

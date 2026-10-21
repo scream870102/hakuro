@@ -1353,12 +1353,12 @@ mod tests {
             );
             {
                 let mut settings = current.write().await;
-                settings.shake_to_skip = true;
+                settings.shake_action = Some("playPause".into());
                 settings.theme.accent = "#123456".into();
             }
             drop(saving);
             let saved = pending.await.unwrap();
-            assert!(saved.shake_to_skip);
+            assert_eq!(saved.shake_action.as_deref(), Some("playPause"));
             assert_eq!(saved.theme.accent, "#123456");
             assert_eq!(saved.last_seen_version, env!("CARGO_PKG_VERSION"));
             assert_eq!(settings::load(), saved);

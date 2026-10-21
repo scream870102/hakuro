@@ -223,7 +223,7 @@ body.is-maximized .icon-maximize { display: none; }
 }
 /* Grows with the lens, and fades in only once it is open enough to hold it. */
 .lens svg {
-  width: 30%; fill: var(--accent); opacity: clamp(0, calc(var(--lk) * 8 - 1), 1);
+  width: 30%; color: var(--accent); opacity: clamp(0, calc(var(--lk) * 8 - 1), 1);
   filter: drop-shadow(0 0 1.5px #000) drop-shadow(0 0 calc(var(--s) * .04) rgb(0 0 0 / .7));
 }
 .face--front:not(.is-color) .lens__pause, .face--front.is-color .lens__play, .face--front.is-flooding .lens svg { display: none; }
@@ -355,6 +355,7 @@ body.is-playing .meta__eyebrow::before { animation: blink 1.2s steps(2) infinite
   transition: transform .15s cubic-bezier(.3, 1.6, .5, 1), background .15s, color .15s, border-color .15s;
 }
 .badge--synced::before { content: ""; flex-shrink: 0; width: 6px; height: 6px; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.badge svg { width: 12px; height: 12px; flex-shrink: 0; }
 .badge:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: #000; }
 .badge:hover:not(:disabled)::before { background: #000; box-shadow: none; }
 .badge:active:not(:disabled) { transform: scale(.9); }

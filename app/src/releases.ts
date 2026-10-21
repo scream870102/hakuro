@@ -12,6 +12,14 @@ export interface Release {
  * app version. Earlier Python snapshots have no recorded version number. */
 export const releases: readonly Release[] = [
   {
+    version: "1.6.2", date: "2026-10-21", title: "一致的圖示，自訂搖一搖",
+    changes: [
+      "主畫面、Compact 模式、Queue 與 Command Palette 的相同動作使用一致的圖示；Compact 歌詞改用對話框加文字線。",
+      "搖一搖可綁定任一 Command Palette 動作，或選擇不綁定。新設定預設為 Random queue track；升級時保留原本的開關選擇。",
+      "快速來回轉動方塊後放開，執行綁定動作並回到目前模式的預設角度。",
+    ],
+  },
+  {
     version: "1.6.1", date: "2026-10-21", title: "讓方塊替你選一首歌",
     changes: [
       "點一下音量環中央即可切換靜音，移入游標會顯示對應圖示。播放器不支援靜音時，改為切換 0%／100% 音量。",

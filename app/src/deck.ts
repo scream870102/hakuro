@@ -137,8 +137,8 @@ export function createDeck(options: {
   previewSeek(ms: number): void;
   endSeek(commit: boolean): void;
   dragWindow(): void;
-  /** A deliberate rapid scramble, once on release; main checks player support. */
-  randomQueue?(): void;
+  /** A deliberate rapid scramble, once on release; main dispatches its binding. */
+  shake?(): void;
 }): Deck {
   const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
   const scene = byId("scene");
@@ -379,7 +379,7 @@ export function createDeck(options: {
   function endDrag(event: PointerEvent) {
     if (!drag || event.pointerId !== drag.id) return;
     const now = performance.now();
-    const random = event.type === "pointerup" && now - lastScramble >= SCRAMBLE_COOLDOWN_MS && scrambled(now);
+    const shake = event.type === "pointerup" && scrambled(now);
     const tap = drag.cover && drag.moved < TAP_SLOP && event.type === "pointerup";
     ry.velocity = drag.vel * 0.5;
     const projected = ry.value + drag.vel * 0.12;
@@ -388,9 +388,13 @@ export function createDeck(options: {
     rx.velocity = 0;
     drag = null;
     scene.classList.remove("is-dragging");
-    if (random) {
-      lastScramble = now;
-      options.randomQueue?.();
+    if (shake) {
+      if (now - lastScramble >= SCRAMBLE_COOLDOWN_MS) {
+        lastScramble = now;
+        options.shake?.();
+      }
+      turnTo("front");
+      ry.velocity = 0;
     }
     if (tap) togglePlayback();
   }

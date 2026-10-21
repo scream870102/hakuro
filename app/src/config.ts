@@ -3,7 +3,7 @@
  * settings window, and the few things both do with it.
  */
 
-import type { ShortcutBinding } from "./shortcuts";
+import type { ShortcutAction, ShortcutBinding } from "./shortcuts";
 
 export type ClickThrough = "off" | "auto" | "always";
 /**
@@ -23,8 +23,8 @@ export interface Settings {
   theme: Theme;
   followLyrics: boolean;
   checkUpdates: boolean;
-  /** Opt in to jumping to a random queue song by rapidly turning the cube. */
-  shakeToSkip: boolean;
+  /** Command run after rapidly turning the cube; null leaves the gesture unbound. */
+  shakeAction: ShortcutAction | null;
   /** Written by the backend after the release notes have been displayed. */
   lastSeenVersion: string;
   alwaysOnTop: boolean;

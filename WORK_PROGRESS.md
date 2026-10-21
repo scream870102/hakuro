@@ -1,5 +1,50 @@
 # hakuro session recovery
 
+## 1.6.2 consistent icons and configurable shake - 2026-10-21
+
+Goal: share action icons across the app, replace Compact lyrics' microphone
+with the user's selected icon, let cube shake invoke any palette action or
+nothing, and synchronize the app version to 1.6.2.
+Scope: user confirmed current checkout; source edits and local verification.
+No commit/push or installed-app/personal-settings changes. Vault location is
+C:/Data/Obisidian/EccentricVault; no vault operation is needed for this task.
+Plan: inventory icons and offer A/B/C preview; reuse SVG definitions and the
+existing command dispatcher; migrate/persist shake action; update release
+notes/version; run frontend/Rust/build checks and independent review.
+Acceptance:
+- [x] Same actions share SVG geometry, including dynamic action states.
+- [x] User chose A: speech bubble with text lines; shared SVG is in place.
+- [x] Shake selects any command or none; default randomQueue, legacy off/on
+  settings retain their behavior; capability and gesture guards still apply.
+- [x] Version metadata is 1.6.2 and release notes describe these changes.
+- [x] Fresh tests, production build, visual checks and independent review pass.
+Progress: implementation integrated. Frontend 197/197; Rust 164 passed / 13
+existing ignored; TypeScript/Vite production build passed. Real Edge mouse
+input at compact 408x424 fired one random queue action and settled near -36deg.
+Browser confirms 34 actions plus None, saving null, shared main/palette/queue
+SVG geometry, and all 21 release entries with only 1.6.2 open. Evidence is in
+ignored app/node_modules/.cache/hakuro-162/. Independent review found inherited
+cover-hover icon color was overridden; restored accent via currentColor.
+Scope update: after a recognized shake, return to the current layout's default
+front pose, including an unbound/unavailable action and a shake during cooldown.
+Ordinary drags keep their face snapping. Final frontend rerun passed 197/197;
+rebuilt production frontend and Edge checks passed after cooldown/color fixes.
+The independent reviewer passed all acceptance criteria, including executable
+checks for all action IDs, SVG safety, three return poses, cooldown and version
+metadata. Local 1.6.2 NSIS packaging passed. Executable and installer both report
+FileVersion/ProductVersion 1.6.2; the executable embeds final main-VnLo4CIu.js
+and whats-new-BbjPbgGO.js. Installer is 9,889,368 bytes:
+app/src-tauri/target/release/bundle/nsis/Hakuro_1.6.2_x64-setup.exe
+SHA256: bcc66b17260a6b870c8510813e3c721fcbe56fc1d44d43ff69f07f5b4f303f5a.
+Final status: all requested criteria complete. No commit/push, installation,
+vault writes or personal settings changes. Browser checks used a simulated
+Tauri/player bridge; live authenticated playback was not exercised.
+Reusable lesson: shared SVGs that use currentColor must inherit a semantic
+color from the host (the cover lens uses accent), not rely on a CSS fill rule
+that an inline SVG fill can override. Separate gesture recognition/reset from
+action cooldown so rate limiting never leaves the cube facing a random side.
+Open questions: none.
+
 ## 1.6.1 cube mute, random queue gesture and What's new - 2026-10-21
 
 Goal: add volume-center mute/unmute (0/100 fallback), intentional rapid cube

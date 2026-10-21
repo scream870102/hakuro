@@ -83,6 +83,15 @@ it("tells the main window it is ready, then draws a snapshot, shows itself and t
   expect(el("pal-version").textContent).toBe("HAKURO v1.3.0");
 });
 
+it("renders bundled action SVGs while treating unknown icon markup as text", async () => {
+  const untrusted = '<img src=x onerror="alert(1)">';
+  await show({ commands: [command(0, "Compact lyrics", { icon: "compactLyrics" }), command(1, "Unknown", { icon: untrusted })] });
+  const rows = el("pal-list").querySelectorAll(".pal__item");
+  expect(rows[0].querySelector('svg[data-icon="compactLyrics"] path')).not.toBeNull();
+  expect(rows[1].querySelector("i")?.textContent).toBe(untrusted);
+  expect(rows[1].querySelector("img")).toBeNull();
+});
+
 it("shows saved shortcut keys and global scope, including search results, and removes stale bindings", async () => {
   const commands = [{ id: "compact", group: "WINDOW", label: "Compact mode", icon: "◱", run: () => {}, state: () => ({ text: "ON", on: true }) }];
   await show({ commands: describeCommands(commands, [{ action: "compact", accelerator: "Ctrl+Alt+KeyC", global: true }]), shortcut: "Ctrl+KeyJ" });

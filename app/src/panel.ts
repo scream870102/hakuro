@@ -6,6 +6,7 @@
 
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { renderIcons } from "./icons";
 
 export const element = <T extends HTMLElement>(id: string): T => {
   const found = document.getElementById(id);
@@ -19,6 +20,7 @@ export const closePanel = () => void panel.close();
 
 /** The header's close button and Escape both close, as they did when these were dialogs. */
 export function wireClosing() {
+  renderIcons();
   element("panel-close").addEventListener("click", closePanel);
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !event.isComposing) closePanel();

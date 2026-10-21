@@ -22,6 +22,18 @@ let config: Config | undefined;
 let draft: Settings | undefined;
 let recording: ShortcutAction | undefined;
 
+const shakeAction = element<HTMLSelectElement>("settings-shake-action");
+shakeAction.add(new Option("None / 不綁定", ""));
+let shakeGroup: HTMLOptGroupElement | undefined;
+for (const [action, name, hint, group] of SHORTCUT_ACTIONS) {
+  if (shakeGroup?.label !== group) {
+    shakeGroup = document.createElement("optgroup");
+    shakeGroup.label = group;
+    shakeAction.append(shakeGroup);
+  }
+  shakeGroup.append(new Option(`${name} / ${hint}`, action));
+}
+
 function renderShortcuts() {
   if (!draft) return;
   const list = element("shortcut-list");
@@ -232,7 +244,7 @@ function fill(value: Config) {
   draft = structuredClone(value.settings);
   draft.waveStrength ??= 100;
   draft.checkUpdates ??= true;
-  draft.shakeToSkip ??= false;
+  if (draft.shakeAction === undefined) draft.shakeAction = "randomQueue";
   draft.lastSeenVersion ??= "";
   draft.shortcuts = SHORTCUT_ACTIONS.map(([action]) => ({ action, accelerator: "", global: false, ...(value.settings.shortcuts ?? DEFAULT_SHORTCUTS).find((item) => item.action === action) }));
   renderShortcuts();
@@ -246,7 +258,7 @@ function fill(value: Config) {
   element<HTMLInputElement>("color-past").value = draft.theme.pastLine;
   element<HTMLInputElement>("settings-follow").checked = draft.followLyrics;
   element<HTMLInputElement>("settings-check-updates").checked = draft.checkUpdates;
-  element<HTMLInputElement>("settings-shake-to-skip").checked = draft.shakeToSkip;
+  shakeAction.value = draft.shakeAction ?? "";
   element<HTMLInputElement>("settings-wave-full").checked = draft.waveFull;
   element<HTMLInputElement>("settings-wave-compact").checked = draft.waveCompact;
   for (const dial of DIALS) {
@@ -293,7 +305,7 @@ element("settings-form").addEventListener("submit", async (event) => {
   };
   draft.followLyrics = element<HTMLInputElement>("settings-follow").checked;
   draft.checkUpdates = element<HTMLInputElement>("settings-check-updates").checked;
-  draft.shakeToSkip = element<HTMLInputElement>("settings-shake-to-skip").checked;
+  draft.shakeAction = shakeAction.value as ShortcutAction || null;
   draft.waveFull = element<HTMLInputElement>("settings-wave-full").checked;
   draft.waveCompact = element<HTMLInputElement>("settings-wave-compact").checked;
   for (const dial of DIALS) draft[dial.key] = dialValue(dial.input);

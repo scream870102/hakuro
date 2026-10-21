@@ -11,6 +11,7 @@
  */
 
 import { shortcutFromEvent, shortcutLabel, type ShortcutBinding } from "./shortcuts";
+import { createIcon } from "./icons";
 
 type Value = string | (() => string);
 
@@ -243,7 +244,9 @@ export function createPalette(options: {
       el.setAttribute("role", "option");
       if (!row.enabled) el.setAttribute("aria-disabled", "true");
       const icon = document.createElement("i");
-      icon.textContent = row.icon;
+      const glyph = "command" in row.action ? createIcon(row.icon) : null;
+      if (glyph) icon.append(glyph);
+      else icon.textContent = row.icon;
       const label = document.createElement("span");
       label.className = "pal__label";
       label.append(...marked(row.label, row.match));

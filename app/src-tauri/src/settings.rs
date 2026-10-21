@@ -140,8 +140,8 @@ pub struct Settings {
     pub follow_lyrics: bool,
     /// Check GitHub for a newer release at startup; only notify, never install.
     pub check_updates: bool,
-    /// Opt-in cube gesture; direct queue commands do not depend on this setting.
-    pub shake_to_skip: bool,
+    /// Command palette action for the cube gesture; None disables it.
+    pub shake_action: Option<String>,
     /// Written by the release-note acknowledgement command, never supplied by it.
     pub last_seen_version: String,
     /// Keep the window above every other window.
@@ -207,7 +207,7 @@ impl Default for Settings {
             theme: Theme::default(),
             follow_lyrics: true,
             check_updates: true,
-            shake_to_skip: false,
+            shake_action: Some("randomQueue".into()),
             last_seen_version: String::new(),
             always_on_top: false,
             opacity: 100,
@@ -249,6 +249,13 @@ impl Settings {
         self.client_id = self.client_id.trim().to_string();
         if !crate::ytmdesktop::PORTS.contains(&self.ytmd_port) {
             self.ytmd_port = crate::ytmdesktop::DEFAULT_PORT;
+        }
+        if self
+            .shake_action
+            .as_deref()
+            .is_some_and(|action| !crate::shortcuts::ACTIONS.contains(&action))
+        {
+            self.shake_action = None;
         }
         self.opacity = self.opacity.clamp(MIN_OPACITY, 100);
         self.compact_opacity = self.compact_opacity.clamp(MIN_OPACITY, 100);
@@ -304,7 +311,19 @@ pub fn load() -> Settings {
     let mut settings = data_path(SETTINGS_FILE)
         .ok()
         .and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|text| serde_json::from_str::<Settings>(&text).ok())
+        .and_then(|text| {
+            let mut json: serde_json::Value = serde_json::from_str(&text).ok()?;
+            if json.get("shakeAction").is_none() {
+                if let Some(enabled) = json.get("shakeToSkip").and_then(|value| value.as_bool()) {
+                    json["shakeAction"] = if enabled {
+                        serde_json::Value::String("randomQueue".into())
+                    } else {
+                        serde_json::Value::Null
+                    };
+                }
+            }
+            serde_json::from_value::<Settings>(json).ok()
+        })
         .unwrap_or_default();
     settings.normalize();
     settings
@@ -382,22 +401,63 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn cube_shake_is_opt_in_and_release_acknowledgement_persists() {
+    fn cube_shake_defaults_to_random_queue_and_release_acknowledgement_persists() {
         let old: Settings = serde_json::from_str("{}").unwrap();
-        assert!(!old.shake_to_skip);
+        assert_eq!(old.shake_action.as_deref(), Some("randomQueue"));
         assert!(old.last_seen_version.is_empty());
         with_temp_data_dir(|_| {
             let settings = Settings {
-                shake_to_skip: true,
+                shake_action: Some("playPause".into()),
                 last_seen_version: env!("CARGO_PKG_VERSION").into(),
                 ..old
             };
             save(&settings).unwrap();
             assert_eq!(load(), settings);
             let json = serde_json::to_value(settings).unwrap();
-            assert_eq!(json["shakeToSkip"], true);
+            assert_eq!(json["shakeAction"], "playPause");
+            assert!(json.get("shakeToSkip").is_none());
             assert_eq!(json["lastSeenVersion"], env!("CARGO_PKG_VERSION"));
         });
+    }
+
+    #[test]
+    fn cube_shake_migrates_legacy_choices_but_preserves_explicit_actions() {
+        with_temp_data_dir(|folder| {
+            for (json, expected) in [
+                (r#"{}"#, Some("randomQueue")),
+                (r#"{"shakeToSkip":true}"#, Some("randomQueue")),
+                (r#"{"shakeToSkip":false}"#, None),
+                (r#"{"shakeAction":null}"#, None),
+                (r#"{"shakeAction":"playPause"}"#, Some("playPause")),
+                (r#"{"shakeAction":null,"shakeToSkip":true}"#, None),
+                (
+                    r#"{"shakeAction":"playPause","shakeToSkip":false}"#,
+                    Some("playPause"),
+                ),
+                (r#"{"shakeAction":"unknown","shakeToSkip":true}"#, None),
+            ] {
+                std::fs::write(folder.join(SETTINGS_FILE), json).unwrap();
+                let settings = load();
+                assert_eq!(settings.shake_action.as_deref(), expected, "{json}");
+                save(&settings).unwrap();
+                assert_eq!(load(), settings, "{json}");
+            }
+        });
+    }
+
+    #[test]
+    fn cube_shake_accepts_every_command_palette_action_and_none() {
+        for action in crate::shortcuts::ACTIONS.into_iter().map(Some).chain([None]) {
+            let mut settings = Settings {
+                shake_action: action.map(str::to_string),
+                ..Settings::default()
+            };
+            settings.normalize();
+            assert_eq!(settings.shake_action.as_deref(), action);
+            let json = serde_json::to_value(&settings).unwrap();
+            assert_eq!(json["shakeAction"], serde_json::json!(action));
+            assert_eq!(serde_json::from_value::<Settings>(json).unwrap(), settings);
+        }
     }
 
     /// Files written before compact could hide its lyrics open with them hidden,

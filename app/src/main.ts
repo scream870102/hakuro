@@ -22,6 +22,9 @@ import {
 import { CHILD_WINDOW, created, openPanel, placeBesideMain, placeOverMain } from "./windows";
 import { DEFAULT_SHORTCUTS, shortcutFromEvent, shortcutLabel } from "./shortcuts";
 import { createWave } from "./wave";
+import { renderIcons } from "./icons";
+
+renderIcons();
 
 interface Cue {
   time_ms: number;
@@ -89,6 +92,7 @@ const ui = {
   trackName: element("track-name"),
   trackArtist: element("track-artist"),
   sourceBadge: element<HTMLButtonElement>("source-badge"),
+  sourceLabel: element("source-label"),
   statusText: element("status-text"),
   lyrics: element("lyrics"),
   lyricsList: element<HTMLOListElement>("lyrics-list"),
@@ -160,7 +164,7 @@ const state = {
 let seekPreview: { start: number; position: number } | null = null;
 const deck = createDeck({
   beginSeek, previewSeek, endSeek, dragWindow: () => void appWindow.startDragging(),
-  randomQueue: () => { if (config?.settings.shakeToSkip) void randomQueueTrack(); },
+  shake: () => { if (config?.settings.shakeAction) runShortcut(config.settings.shakeAction); },
 });
 /** The cube's column: the floor is drawn across it, and compact's glass is all of it. */
 const objectZone = ui.scene.parentElement!;
@@ -221,7 +225,7 @@ function clearLyrics(placeholder: string) {
   state.synced = false;
   ui.lineNow.textContent = "--";
   ui.lineTotal.textContent = "--";
-  ui.sourceBadge.textContent = "Lyrics source ▾";
+  ui.sourceLabel.textContent = "Lyrics source";
   ui.lyricsEmpty.textContent = placeholder;
   ui.lyricsEmpty.hidden = false;
   updateTranslationLayout();
@@ -293,7 +297,7 @@ function renderLyrics(event: LyricsEvent) {
     state.lines.push(line);
   }
 
-  ui.sourceBadge.textContent = `${event.source} · ${event.synced ? "Synced" : "Plain"}${state.manual ? " · Manual" : ""}`;
+  ui.sourceLabel.textContent = `${event.source} · ${event.synced ? "Synced" : "Plain"}${state.manual ? " · Manual" : ""}`;
   ui.sourceBadge.className = event.synced ? "badge badge--synced" : "badge";
   ui.sourceBadge.hidden = false;
   if (event.synced) ui.lineTotal.textContent = String(rows.length).padStart(2, "0");
@@ -1126,7 +1130,7 @@ let appVersion = "";
 const onOff = (on: boolean) => ({ text: on ? "ON" : "OFF", on });
 const usable = (button: HTMLButtonElement) => () => !button.disabled;
 const turn = (face: CubeFace, label: string, hint: string, words: string): Command => ({
-  id: `turn${face[0].toUpperCase()}${face.slice(1)}`, group: "CUBE", icon: "■", label: `Turn cube: ${label}`, hint, words,
+  id: `turn${face[0].toUpperCase()}${face.slice(1)}`, group: "CUBE", icon: "cube", label: `Turn cube: ${label}`, hint, words,
   run: () => deck.turnTo(face === "right" && config?.settings.compact ? "left" : face),
 });
 
@@ -1134,61 +1138,61 @@ const turn = (face: CubeFace, label: string, hint: string, words: string): Comma
 // never disagree with the window about what a command means.
 const COMMANDS: Command[] = [
   {
-    id: "playPause", group: "PLAYBACK", icon: () => (state.isPlaying ? "❚❚" : "▶"),
+    id: "playPause", group: "PLAYBACK", icon: () => (state.isPlaying ? "pause" : "play"),
     label: () => (state.isPlaying ? "Pause" : "Play"), hint: () => (state.isPlaying ? "暫停" : "播放"),
     words: "toggle play pause", enabled: usable(ui.playPause), run: () => ui.playPause.click(),
   },
-  { id: "next", group: "PLAYBACK", icon: "»", label: "Next track", hint: "下一首", words: "skip", enabled: usable(ui.next), run: () => ui.next.click() },
-  { id: "previous", group: "PLAYBACK", icon: "«", label: "Previous track", hint: "上一首", words: "skip back", enabled: usable(ui.previous), run: () => ui.previous.click() },
-  { id: "seekForward", group: "PLAYBACK", icon: "→", label: "Forward 10 seconds", hint: "快轉 10 秒", words: "seek", enabled: () => state.canSeek, run: () => seekBy(10_000) },
-  { id: "seekBackward", group: "PLAYBACK", icon: "←", label: "Back 10 seconds", hint: "倒轉 10 秒", words: "seek rewind", enabled: () => state.canSeek, run: () => seekBy(-10_000) },
-  { id: "volumeUp", group: "PLAYBACK", icon: "+", label: "Volume up", hint: "音量 +5", words: "louder", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(5) },
-  { id: "mute", group: "PLAYBACK", icon: "◖", label: () => ui.volumeMute.title || "Mute / unmute", hint: "靜音／取消靜音", words: "mute unmute silence volume", enabled: usable(ui.volumeMute), run: () => ui.volumeMute.click() },
-  { id: "volumeDown", group: "PLAYBACK", icon: "−", label: "Volume down", hint: "音量 −5", words: "quieter", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(-5) },
-  { id: "queue", group: "PLAYBACK", icon: "≣", label: "Queue…", hint: "播放佇列", words: "up next queue list", enabled: usable(ui.queueOpen), run: () => ui.queueOpen.click() },
-  { id: "randomQueue", group: "PLAYBACK", icon: "⚄", label: "Random queue track", hint: "隨機跳至佇列歌曲", words: "random queue dice shake 隨機 骰子", enabled: () => canJumpQueue && !randomQueuePending, run: () => void randomQueueTrack() },
+  { id: "next", group: "PLAYBACK", icon: "next", label: "Next track", hint: "下一首", words: "skip", enabled: usable(ui.next), run: () => ui.next.click() },
+  { id: "previous", group: "PLAYBACK", icon: "previous", label: "Previous track", hint: "上一首", words: "skip back", enabled: usable(ui.previous), run: () => ui.previous.click() },
+  { id: "seekForward", group: "PLAYBACK", icon: "seekForward", label: "Forward 10 seconds", hint: "快轉 10 秒", words: "seek", enabled: () => state.canSeek, run: () => seekBy(10_000) },
+  { id: "seekBackward", group: "PLAYBACK", icon: "seekBackward", label: "Back 10 seconds", hint: "倒轉 10 秒", words: "seek rewind", enabled: () => state.canSeek, run: () => seekBy(-10_000) },
+  { id: "volumeUp", group: "PLAYBACK", icon: "volumeUp", label: "Volume up", hint: "音量 +5", words: "louder", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(5) },
+  { id: "mute", group: "PLAYBACK", icon: () => ui.volumeMute.dataset.muted === "true" ? "unmute" : "mute", label: () => ui.volumeMute.title || "Mute / unmute", hint: "靜音／取消靜音", words: "mute unmute silence volume", enabled: usable(ui.volumeMute), run: () => ui.volumeMute.click() },
+  { id: "volumeDown", group: "PLAYBACK", icon: "volumeDown", label: "Volume down", hint: "音量 −5", words: "quieter", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(-5) },
+  { id: "queue", group: "PLAYBACK", icon: "queue", label: "Queue…", hint: "播放佇列", words: "up next queue list", enabled: usable(ui.queueOpen), run: () => ui.queueOpen.click() },
+  { id: "randomQueue", group: "PLAYBACK", icon: "randomQueue", label: "Random queue track", hint: "隨機跳至佇列歌曲", words: "random queue dice shake 隨機 骰子", enabled: () => canJumpQueue && !randomQueuePending, run: () => void randomQueueTrack() },
   {
-    id: "shuffle", group: "PLAYBACK", icon: "⤨", label: () => modes.current.shuffle === null ? "Shuffle queue" : "Shuffle", hint: "隨機播放", words: "random shuffle",
+    id: "shuffle", group: "PLAYBACK", icon: "shuffle", label: () => modes.current.shuffle === null ? "Shuffle queue" : "Shuffle", hint: "隨機播放", words: "random shuffle",
     state: () => modes.current.shuffle === null ? null : onOff(modes.current.shuffle), visible: () => !ui.shuffle.hidden, enabled: usable(ui.shuffle), run: () => ui.shuffle.click(),
   },
   {
-    id: "repeat", group: "PLAYBACK", icon: "⟲", label: "Repeat", hint: "循環播放", words: "repeat loop one all",
+    id: "repeat", group: "PLAYBACK", icon: "repeat", label: "Repeat", hint: "循環播放", words: "repeat loop one all",
     state: () => ({ text: REPEAT_NAMES[modes.current.repeat ?? "off"].toUpperCase(), on: (modes.current.repeat ?? "off") !== "off" }),
     visible: () => !ui.repeat.hidden, enabled: usable(ui.repeat), run: () => ui.repeat.click(),
   },
-  { id: "refreshPlayback", group: "PLAYBACK", icon: "↺", label: "Refresh playback", hint: "重新整理播放狀態", words: "sync", run: () => element("refresh-playback").click() },
-  { id: "reconnect", group: "PLAYBACK", icon: "!", label: "Retry connection", hint: "重新連線", words: "reconnect", visible: () => !ui.reconnect.hidden, run: () => ui.reconnect.click() },
-  { id: "followLyrics", group: "LYRICS", icon: "↧", label: "Follow lyrics", hint: "自動跟隨歌詞", words: "scroll auto", state: () => onOff(ui.follow.checked), enabled: () => !ui.follow.disabled, run: () => ui.follow.click() },
+  { id: "refreshPlayback", group: "PLAYBACK", icon: "refresh", label: "Refresh playback", hint: "重新整理播放狀態", words: "sync", run: () => element("refresh-playback").click() },
+  { id: "reconnect", group: "PLAYBACK", icon: "refresh", label: "Retry connection", hint: "重新連線", words: "reconnect", visible: () => !ui.reconnect.hidden, run: () => ui.reconnect.click() },
+  { id: "followLyrics", group: "LYRICS", icon: "followLyrics", label: "Follow lyrics", hint: "自動跟隨歌詞", words: "scroll auto", state: () => onOff(ui.follow.checked), enabled: () => !ui.follow.disabled, run: () => ui.follow.click() },
   {
-    id: "translations", group: "LYRICS", icon: "文", label: "Show translations", hint: "顯示翻譯", words: "translation bilingual",
+    id: "translations", group: "LYRICS", icon: "translations", label: "Show translations", hint: "顯示翻譯", words: "translation bilingual",
     state: () => onOff(state.showTranslations), run: () => setTranslations(!state.showTranslations),
   },
-  { id: "findLyrics", group: "LYRICS", icon: "⌕", label: "Find lyrics…", hint: "搜尋歌詞", words: "search match", enabled: usable(ui.search), run: () => ui.search.click() },
-  { id: "lyricsSource", group: "LYRICS", icon: "⇄", label: "Lyrics source…", hint: "歌詞來源", words: "provider", enabled: usable(ui.sourceBadge), run: () => ui.sourceBadge.click() },
-  { id: "reloadLyrics", group: "LYRICS", icon: "↻", label: "Reload lyrics", hint: "重新載入歌詞", words: "refresh download", enabled: usable(ui.reload), run: () => ui.reload.click() },
-  { id: "compact", group: "WINDOW", icon: "◱", label: "Compact mode", hint: "精簡模式", words: "mini small", state: () => onOff(document.body.classList.contains("is-compact")), enabled: usable(ui.mode), run: () => ui.mode.click() },
+  { id: "findLyrics", group: "LYRICS", icon: "findLyrics", label: "Find lyrics…", hint: "搜尋歌詞", words: "search match", enabled: usable(ui.search), run: () => ui.search.click() },
+  { id: "lyricsSource", group: "LYRICS", icon: "lyricsSource", label: "Lyrics source…", hint: "歌詞來源", words: "provider", enabled: usable(ui.sourceBadge), run: () => ui.sourceBadge.click() },
+  { id: "reloadLyrics", group: "LYRICS", icon: "refresh", label: "Reload lyrics", hint: "重新載入歌詞", words: "refresh download", enabled: usable(ui.reload), run: () => ui.reload.click() },
+  { id: "compact", group: "WINDOW", icon: () => document.body.classList.contains("is-compact") ? "expand" : "compact", label: "Compact mode", hint: "精簡模式", words: "mini small", state: () => onOff(document.body.classList.contains("is-compact")), enabled: usable(ui.mode), run: () => ui.mode.click() },
   {
-    id: "compactLyrics", group: "WINDOW", icon: "☰", label: "Lyrics in compact mode", hint: "精簡模式顯示歌詞", words: "mini stretch lyrics show hide",
+    id: "compactLyrics", group: "WINDOW", icon: "compactLyrics", label: "Lyrics in compact mode", hint: "精簡模式顯示歌詞", words: "mini stretch lyrics show hide",
     state: () => onOff(ui.compactLyrics.checked), enabled: () => Boolean(config) && !ui.compactLyrics.disabled, run: () => ui.compactLyrics.click(),
   },
-  { id: "alwaysOnTop", group: "WINDOW", icon: "▲", label: "Keep on top", hint: "置頂", words: "pin always", state: () => onOff(ui.pin.getAttribute("aria-pressed") === "true"), enabled: usable(ui.pin), run: () => ui.pin.click() },
-  { id: "clickThrough", group: "WINDOW", icon: "◇", label: "Click-through", hint: "滑鼠穿透", words: "mouse ignore", state: () => onOff(config?.settings.clickThrough === "always"), run: toggleClickThrough },
-  { id: "settings", group: "WINDOW", icon: "≡", label: "Settings…", hint: () => (appVersion ? `設定 · v${appVersion}` : "設定"), words: "preferences options version 版本", run: () => element("settings-open").click() },
-  { id: "whatsNew", group: "WINDOW", icon: "✦", label: "What's new…", hint: "版本更新說明", words: "release changelog history version 更新 歷史", run: () => void openWhatsNew() },
+  { id: "alwaysOnTop", group: "WINDOW", icon: "alwaysOnTop", label: "Keep on top", hint: "置頂", words: "pin always", state: () => onOff(ui.pin.getAttribute("aria-pressed") === "true"), enabled: usable(ui.pin), run: () => ui.pin.click() },
+  { id: "clickThrough", group: "WINDOW", icon: "clickThrough", label: "Click-through", hint: "滑鼠穿透", words: "mouse ignore", state: () => onOff(config?.settings.clickThrough === "always"), run: toggleClickThrough },
+  { id: "settings", group: "WINDOW", icon: "settings", label: "Settings…", hint: () => (appVersion ? `設定 · v${appVersion}` : "設定"), words: "preferences options version 版本", run: () => element("settings-open").click() },
+  { id: "whatsNew", group: "WINDOW", icon: "whatsNew", label: "What's new…", hint: "版本更新說明", words: "release changelog history version 更新 歷史", run: () => void openWhatsNew() },
   {
-    id: "waveFull", group: "WINDOW", icon: "≈", label: "Sound wave in full mode", hint: "波動：完整模式", words: "wave visualizer floor ripple audio",
+    id: "waveFull", group: "WINDOW", icon: "wave", label: "Sound wave in full mode", hint: "波動：完整模式", words: "wave visualizer floor ripple audio",
     state: () => onOff(config?.settings.waveFull ?? false), enabled: () => Boolean(config),
     run: () => void patchSettings({ waveFull: !config!.settings.waveFull }),
   },
   {
-    id: "waveCompact", group: "WINDOW", icon: "≈", label: "Sound wave in compact mode", hint: "波動：精簡模式", words: "wave visualizer floor ripple audio mini",
+    id: "waveCompact", group: "WINDOW", icon: "wave", label: "Sound wave in compact mode", hint: "波動：精簡模式", words: "wave visualizer floor ripple audio mini",
     state: () => onOff(config?.settings.waveCompact ?? false), enabled: () => Boolean(config),
     run: () => void patchSettings({ waveCompact: !config!.settings.waveCompact }),
   },
-  { id: "minimize", group: "WINDOW", icon: "_", label: "Minimize", hint: "最小化", words: "hide", run: () => element("win-minimize").click() },
+  { id: "minimize", group: "WINDOW", icon: "minimize", label: "Minimize", hint: "最小化", words: "hide", run: () => element("win-minimize").click() },
   // Compact sizes its own window; filling the screen would leave the cube on a screenful of glass.
   {
-    id: "maximize", group: "WINDOW", icon: "□", label: () => (document.body.classList.contains("is-maximized") ? "Restore" : "Maximize"), hint: "最大化", words: "maximize restore full",
+    id: "maximize", group: "WINDOW", icon: () => document.body.classList.contains("is-maximized") ? "restore" : "maximize", label: () => (document.body.classList.contains("is-maximized") ? "Restore" : "Maximize"), hint: "最大化", words: "maximize restore full",
     enabled: () => !document.body.classList.contains("is-compact"), run: () => element("win-maximize").click(),
   },
   turn("front", "Cover", "方塊轉到封面", "front"),

@@ -34,44 +34,34 @@
       <div class="window-controls">
         <button class="window-button" id="lyrics-search-open" type="button" disabled
                 title="Find lyrics" aria-label="Find lyrics" aria-haspopup="dialog">
-          <svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="5" cy="5" r="3"/><path d="m7.3 7.3 3 3"/></svg>
+          <svg data-icon="findLyrics" aria-hidden="true"></svg>
         </button>
         <button class="window-button" id="settings-open" type="button" title="Settings" aria-label="Settings">
-          <svg viewBox="0 0 12 12" aria-hidden="true">
-            <path d="M1.8 4h8.4M1.8 8h8.4"/><circle cx="4.2" cy="4" r="1.5"/><circle cx="7.8" cy="8" r="1.5"/>
-          </svg>
+          <svg data-icon="settings" aria-hidden="true"></svg>
         </button>
         <button class="window-button" id="refresh-playback" type="button"
                 title="Refresh playback" aria-label="Refresh playback">
-          <svg viewBox="0 0 12 12" aria-hidden="true">
-            <path d="M9.9 5.2A4 4 0 1 0 9.4 8M10 1.9v3.3H6.7"/>
-          </svg>
+          <svg data-icon="refresh" aria-hidden="true"></svg>
         </button>
         <button class="window-button" id="mode-toggle" type="button"
                 title="Compact mode" aria-label="Compact mode" aria-pressed="false">
-          <svg viewBox="0 0 12 12" aria-hidden="true" class="icon-compact">
-            <path d="M6 1.4v3.1M4.4 3l1.6 1.5L7.6 3M6 10.6V7.5M4.4 9l1.6-1.5L7.6 9"/>
-          </svg>
-          <svg viewBox="0 0 12 12" aria-hidden="true" class="icon-expand">
-            <path d="M6 4.5V1.4M4.4 2.9L6 1.4l1.6 1.5M6 7.5v3.1M4.4 9.1L6 10.6l1.6-1.5"/>
-          </svg>
+          <svg data-icon="compact" class="icon-compact" aria-hidden="true"></svg>
+          <svg data-icon="expand" class="icon-expand" aria-hidden="true"></svg>
         </button>
         <button class="window-button window-button--pin" id="pin" type="button"
                 title="Keep on top" aria-label="Keep window on top" aria-pressed="false">
-          <svg viewBox="0 0 12 12" aria-hidden="true">
-            <path d="M3.6 1.4h4.8M5 1.4v2.8L3.4 6h5.2L7 4.2V1.4M6 6v3.2"/>
-          </svg>
+          <svg data-icon="alwaysOnTop" aria-hidden="true"></svg>
         </button>
         <span class="window-controls__sep" aria-hidden="true"></span>
         <button class="window-button" id="win-minimize" type="button" title="Minimize" aria-label="Minimize">
-          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6h7"/></svg>
+          <svg data-icon="minimize" aria-hidden="true"></svg>
         </button>
         <button class="window-button" id="win-maximize" type="button" title="Maximize" aria-label="Maximize">
-          <svg viewBox="0 0 12 12" aria-hidden="true" class="icon-maximize"><path d="M2.5 2.5h7v7h-7z"/></svg>
-          <svg viewBox="0 0 12 12" aria-hidden="true" class="icon-restore"><path d="M2.5 4.5h5v5h-5zM4.5 4.5v-2h5v5h-2"/></svg>
+          <svg data-icon="maximize" class="icon-maximize" aria-hidden="true"></svg>
+          <svg data-icon="restore" class="icon-restore" aria-hidden="true"></svg>
         </button>
         <button class="window-button window-button--close" id="win-close" type="button" title="Close" aria-label="Close">
-          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 2.6l6.8 6.8M9.4 2.6l-6.8 6.8"/></svg>
+          <svg data-icon="close" aria-hidden="true"></svg>
         </button>
       </div>
     </header>
@@ -95,7 +85,7 @@
                 <!-- The queue, at the record's centre once the pointer is over it. -->
                 <button class="vinyl__queue" id="queue-open" type="button" disabled
                         title="Queue" aria-label="Show the queue" aria-haspopup="dialog">
-                  <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M3 6h13M3 11h13M3 16h8"/><path class="icon-solid" d="M16 14.5v6l5-3z"/></svg>
+                  <svg data-icon="queue" class="icon-line" aria-hidden="true"></svg>
                 </button>
               </div>
               <!-- Compact only: the lid takes the record's place. The window's
@@ -106,29 +96,29 @@
                 <div class="lid__row">
                   <button class="tool tool--icon" type="button" data-proxy="compact-lyrics"
                           title="Show lyrics" aria-label="Show lyrics" aria-pressed="false">
-                    <svg viewBox="0 0 12 12" aria-hidden="true"><rect x="4.3" y="1.2" width="3.4" height="5.8" rx="1.7"/><path d="M2.6 5.6a3.4 3.4 0 0 0 6.8 0M6 9v1.8"/></svg>
+                    <svg data-icon="compactLyrics" aria-hidden="true"></svg>
                   </button>
                   <button class="tool tool--icon" type="button" data-proxy="pin"
                           title="Keep on top" aria-label="Keep window on top" aria-pressed="false">
-                    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.6 1.4h4.8M5 1.4v2.8L3.4 6h5.2L7 4.2V1.4M6 6v3.2"/></svg>
+                    <svg data-icon="alwaysOnTop" aria-hidden="true"></svg>
                   </button>
                   <button class="tool tool--icon tool--full" type="button" data-proxy="mode-toggle" data-plain
                           title="Full mode" aria-label="Full mode">
-                    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1.5h3.5V5M5 10.5H1.5V7M10.5 1.5 7 5M1.5 10.5 5 7"/></svg>
+                    <svg data-icon="expand" aria-hidden="true"></svg>
                   </button>
                 </div>
                 <div class="lid__row">
                   <button class="tool tool--icon tool--mode" type="button" data-proxy="queue-open"
                           title="Queue" aria-label="Show the queue">
-                    <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M3 6h13M3 11h13M3 16h8"/><path class="icon-solid" d="M16 14.5v6l5-3z"/></svg>
+                    <svg data-icon="queue" class="icon-line" aria-hidden="true"></svg>
                   </button>
                   <button class="tool tool--icon tool--mode" type="button" data-proxy="shuffle" data-follow-hidden hidden
                           title="Shuffle" aria-label="Shuffle" aria-pressed="false">
-                    <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M3 7h3c2.5 0 3.7 1.4 5 3.6l1.6 2.8C14 15.6 15.4 17 18 17h3M18 14l3 3-3 3M3 17h3c1.5 0 2.5-.5 3.4-1.5M21 7h-3c-1.5 0-2.6.5-3.5 1.5M18 4l3 3-3 3"/></svg>
+                    <svg data-icon="shuffle" class="icon-line" aria-hidden="true"></svg>
                   </button>
                   <button class="tool tool--icon tool--mode" type="button" data-proxy="repeat" data-follow-hidden hidden
                           title="Repeat" aria-label="Repeat" aria-pressed="false">
-                    <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6H20M17 3l3 3-3 3M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5H4M7 21l-3-3 3-3"/></svg>
+                    <svg data-icon="repeat" class="icon-line" aria-hidden="true"></svg>
                   </button>
                 </div>
               </div>
@@ -152,8 +142,8 @@
                 <div class="cover-shade"></div>
                 <!-- The lens under the pointer shows what a tap does: play while paused, pause while playing. -->
                 <i class="lens">
-                  <svg class="lens__play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.8v14.4a.8.8 0 0 0 1.22.68l11.3-7.2a.8.8 0 0 0 0-1.36L8.22 4.12A.8.8 0 0 0 7 4.8Z"/></svg>
-                  <svg class="lens__pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5h4v15H6zM14 4.5h4v15h-4z"/></svg>
+                  <svg data-icon="play" class="lens__play" aria-hidden="true"></svg>
+                  <svg data-icon="pause" class="lens__pause" aria-hidden="true"></svg>
                 </i>
                 <!-- The cover takes the pointer (a tap toggles, a drag turns the cube);
                      this button is the same control for the keyboard. -->
@@ -162,11 +152,11 @@
                 <!-- Skip waits at the cover's edges, shown while the pointer is over it. -->
                 <button class="cover-skip cover-skip--previous glow-btn" id="previous" type="button" disabled
                         title="Previous track" aria-label="Previous track">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h3v14H5zM20 5.8v12.4a.8.8 0 0 1-1.25.66L9.5 12.66a.8.8 0 0 1 0-1.32l9.25-6.2A.8.8 0 0 1 20 5.8Z"/></svg>
+                  <svg data-icon="previous" aria-hidden="true"></svg>
                 </button>
                 <button class="cover-skip cover-skip--next glow-btn" id="next" type="button" disabled
                         title="Next track" aria-label="Next track">
-                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 5h3v14h-3zM4 5.8v12.4a.8.8 0 0 0 1.25.66l9.25-6.2a.8.8 0 0 0 0-1.32L5.25 5.14A.8.8 0 0 0 4 5.8Z"/></svg>
+                  <svg data-icon="next" aria-hidden="true"></svg>
                 </button>
               </div>
               <div class="spill"></div>
@@ -181,8 +171,8 @@
                 <button class="dial__read dial__mute" id="volume-mute" type="button" disabled
                         title="Mute" aria-label="Mute" aria-pressed="false" data-muted="false">
                   <output id="volume-value" for="volume">—</output><small>VOL</small>
-                  <svg class="dial__action dial__action--mute" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4 6 8H3v8h3l5 4Z"/><path d="m16 9 6 6m0-6-6 6"/></svg>
-                  <svg class="dial__action dial__action--unmute" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4 6 8H3v8h3l5 4Z"/><path d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg>
+                  <svg data-icon="mute" class="dial__action dial__action--mute" aria-hidden="true"></svg>
+                  <svg data-icon="unmute" class="dial__action dial__action--unmute" aria-hidden="true"></svg>
                 </button>
                 <!-- The dial is drawn; this range is the real control, for the keyboard and for main.ts. -->
                 <input class="dial__input" id="volume" type="range" min="0" max="100" step="1" value="0" disabled
@@ -199,17 +189,17 @@
               <span class="face__label">03 LYRICS</span>
               <div class="tools">
                 <button class="tool" type="button" data-proxy="source-badge">SOURCE
-                  <svg class="tool__glyph" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg>
+                  <svg data-icon="lyricsSource" class="tool__glyph" aria-hidden="true"></svg>
                 </button>
                 <button class="tool" type="button" data-proxy="lyrics-search-open">FIND
-                  <svg class="tool__glyph" viewBox="0 0 12 12" aria-hidden="true"><circle cx="5" cy="5" r="3"/><path d="m7.3 7.3 3 3"/></svg>
+                  <svg data-icon="findLyrics" class="tool__glyph" aria-hidden="true"></svg>
                 </button>
                 <button class="tool" type="button" data-proxy="reload">RELOAD
-                  <svg class="tool__glyph" viewBox="0 0 12 12" aria-hidden="true"><path d="M9.9 5.2A4 4 0 1 0 9.4 8M10 1.9v3.3H6.7"/></svg>
+                  <svg data-icon="refresh" class="tool__glyph" aria-hidden="true"></svg>
                 </button>
                 <!-- Compact has no header, so its settings button lives here. -->
                 <button class="tool tool--compact" type="button" data-proxy="settings-open">SETTINGS
-                  <svg class="tool__glyph" viewBox="0 0 12 12" aria-hidden="true"><path d="M1.8 4h8.4M1.8 8h8.4"/><circle cx="4.2" cy="4" r="1.5"/><circle cx="7.8" cy="8" r="1.5"/></svg>
+                  <svg data-icon="settings" class="tool__glyph" aria-hidden="true"></svg>
                 </button>
               </div>
               <!-- The tool is drawn; this button is the real control, for main.ts. -->
@@ -219,13 +209,13 @@
               <span class="face__label">04 WINDOW</span>
               <div class="tools">
                 <button class="tool" type="button" data-proxy="follow" aria-pressed="true">FOLLOW
-                  <svg class="tool__glyph" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.5v6.2M3.4 5.3 6 7.9l2.6-2.6M2 10.5h8"/></svg>
+                  <svg data-icon="followLyrics" class="tool__glyph" aria-hidden="true"></svg>
                 </button>
                 <button class="tool" type="button" data-proxy="pin" aria-pressed="false">PIN
-                  <svg class="tool__glyph" viewBox="0 0 12 12" aria-hidden="true"><path d="M3.6 1.4h4.8M5 1.4v2.8L3.4 6h5.2L7 4.2V1.4M6 6v3.2"/></svg>
+                  <svg data-icon="alwaysOnTop" class="tool__glyph" aria-hidden="true"></svg>
                 </button>
                 <button class="tool" type="button" data-proxy="mode-toggle" aria-pressed="false">MINI
-                  <svg class="tool__glyph" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1.4v3.1M4.4 3l1.6 1.5L7.6 3M6 10.6V7.5M4.4 9l1.6-1.5L7.6 9"/></svg>
+                  <svg data-icon="compact" class="tool__glyph icon-compact" aria-hidden="true"></svg><svg data-icon="expand" class="tool__glyph icon-expand" aria-hidden="true"></svg>
                 </button>
               </div>
               <!-- The tool is drawn; this checkbox is the real control, for main.ts. -->
@@ -244,7 +234,7 @@
 
       <section class="lyrics-zone">
         <div class="lyrics-head">
-          <button class="badge" id="source-badge" type="button" disabled aria-haspopup="dialog">Lyrics source ▾</button>
+          <button class="badge" id="source-badge" type="button" disabled aria-haspopup="dialog"><span id="source-label">Lyrics source</span><svg data-icon="lyricsSource" aria-hidden="true"></svg></button>
           <span class="counter"><b id="line-now">--</b> / <span id="line-total">--</span></span>
         </div>
         <div class="lyrics" id="lyrics" tabindex="0">
@@ -267,15 +257,15 @@
       <!-- Hidden for a player that cannot report them (ytmdesktop2). -->
       <button class="bar__mode" id="shuffle" type="button" hidden disabled
               title="Shuffle" aria-label="Shuffle" aria-pressed="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M3 7h3c2.5 0 3.7 1.4 5 3.6l1.6 2.8C14 15.6 15.4 17 18 17h3M18 14l3 3-3 3M3 17h3c1.5 0 2.5-.5 3.4-1.5M21 7h-3c-1.5 0-2.6.5-3.5 1.5M18 4l3 3-3 3"/></svg>
+        <svg data-icon="shuffle" class="icon-line" aria-hidden="true"></svg>
       </button>
       <button class="bar__mode" id="repeat" type="button" hidden disabled data-mode="off"
               title="Repeat: off" aria-label="Repeat: off" aria-pressed="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M4 11V9.5A3.5 3.5 0 0 1 7.5 6H20M17 3l3 3-3 3M20 13v1.5a3.5 3.5 0 0 1-3.5 3.5H4M7 21l-3-3 3-3"/></svg>
+        <svg data-icon="repeat" class="icon-line" aria-hidden="true"></svg>
       </button>
       <button class="bar__play" id="bar-play" type="button" disabled title="Play" aria-label="Play">
-        <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.8v14.4a.8.8 0 0 0 1.22.68l11.3-7.2a.8.8 0 0 0 0-1.36L8.22 4.12A.8.8 0 0 0 7 4.8Z"/></svg>
-        <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4.5h4v15H6zM14 4.5h4v15h-4z"/></svg>
+        <svg data-icon="play" class="icon-play" aria-hidden="true"></svg>
+        <svg data-icon="pause" class="icon-pause" aria-hidden="true"></svg>
       </button>
       <button class="bar__btn bar__btn--alert" id="reconnect" type="button" hidden>RETRY CONNECTION</button>
     </footer>
