@@ -11,7 +11,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import {
-  applyTheme, SETTINGS_PREVIEW,
+  applyTheme, SETTINGS_PREVIEW, WHATS_NEW_OPEN,
   type ClickThrough, type Config, type PlayerKind, type Settings, type WindowStylePreview,
 } from "./config";
 import { closePanel, element, reveal, wireClosing } from "./panel";
@@ -232,6 +232,8 @@ function fill(value: Config) {
   draft = structuredClone(value.settings);
   draft.waveStrength ??= 100;
   draft.checkUpdates ??= true;
+  draft.shakeToSkip ??= false;
+  draft.lastSeenVersion ??= "";
   draft.shortcuts = SHORTCUT_ACTIONS.map(([action]) => ({ action, accelerator: "", global: false, ...(value.settings.shortcuts ?? DEFAULT_SHORTCUTS).find((item) => item.action === action) }));
   renderShortcuts();
   applyTheme(draft.theme);
@@ -244,6 +246,7 @@ function fill(value: Config) {
   element<HTMLInputElement>("color-past").value = draft.theme.pastLine;
   element<HTMLInputElement>("settings-follow").checked = draft.followLyrics;
   element<HTMLInputElement>("settings-check-updates").checked = draft.checkUpdates;
+  element<HTMLInputElement>("settings-shake-to-skip").checked = draft.shakeToSkip;
   element<HTMLInputElement>("settings-wave-full").checked = draft.waveFull;
   element<HTMLInputElement>("settings-wave-compact").checked = draft.waveCompact;
   for (const dial of DIALS) {
@@ -260,6 +263,9 @@ function fill(value: Config) {
 // Closing never saves; the main window puts back whatever a dial previewed.
 wireClosing();
 element("settings-cancel").addEventListener("click", closePanel);
+element("whats-new-open").addEventListener("click", () => {
+  void emitTo("main", WHATS_NEW_OPEN).catch((error) => { settingsError.textContent = String(error); });
+});
 
 element("settings-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -287,6 +293,7 @@ element("settings-form").addEventListener("submit", async (event) => {
   };
   draft.followLyrics = element<HTMLInputElement>("settings-follow").checked;
   draft.checkUpdates = element<HTMLInputElement>("settings-check-updates").checked;
+  draft.shakeToSkip = element<HTMLInputElement>("settings-shake-to-skip").checked;
   draft.waveFull = element<HTMLInputElement>("settings-wave-full").checked;
   draft.waveCompact = element<HTMLInputElement>("settings-wave-compact").checked;
   for (const dial of DIALS) draft[dial.key] = dialValue(dial.input);

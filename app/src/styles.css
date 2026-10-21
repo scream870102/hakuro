@@ -243,7 +243,7 @@ body.is-maximized .icon-maximize { display: none; }
 .cover-box:hover .cover-skip:disabled { opacity: .25; }
 .scene.is-dragging .cover-skip { opacity: 0; }
 
-/* right: a big volume dial; the skip buttons sit in its middle, just under VOL */
+/* right: the outer ring sets volume; its centre toggles mute. */
 .face--right .face__label { left: 50%; top: auto; bottom: 6%; translate: -50% 0; }
 .dial { position: relative; width: 82%; aspect-ratio: 1; border-radius: 50%; touch-action: none; cursor: grab; --v: 0; }
 .dial.is-held { cursor: grabbing; }
@@ -274,6 +274,15 @@ body.is-maximized .icon-maximize { display: none; }
 .dial__read { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; pointer-events: none; }
 .dial__read output { font: calc(var(--s) * .13)/1 var(--display); color: var(--ink); }
 .dial__read small { font: 700 calc(var(--s) * .036)/1.6 var(--mono); letter-spacing: .2em; color: var(--ink-3); }
+.dial__ticks, .dial__ring, .dial__cap { pointer-events: none; }
+.dial__mute { inset: 17%; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--accent); pointer-events: auto; cursor: pointer; touch-action: none; }
+.dial__mute:disabled { cursor: default; }
+.dial__mute:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.dial__mute > * { pointer-events: none; }
+.dial__action { position: absolute; left: 50%; top: 50%; width: calc(var(--s) * .18); height: calc(var(--s) * .18); transform: translate(-50%, -50%); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+.dial__mute:not(:disabled):is(:hover, :focus-visible) :is(output, small) { opacity: 0; }
+.dial__mute[data-muted="false"]:not(:disabled):is(:hover, :focus-visible) .dial__action--mute,
+.dial__mute[data-muted="true"]:not(:disabled):is(:hover, :focus-visible) .dial__action--unmute { opacity: 1; }
 .dial.bump { animation: bump .35s cubic-bezier(.2, 1.8, .4, 1); }
 /* Visually hidden but focusable: arrow keys move it, the dial follows. */
 .dial__input { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; opacity: 0; pointer-events: none; }

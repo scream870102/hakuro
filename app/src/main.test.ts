@@ -83,6 +83,8 @@ const initial = () => ({
     theme: { accent: "#123456", activeLine: "#ffffff", pastLine: "#666666" },
     followLyrics: true,
     checkUpdates: true,
+    shakeToSkip: false,
+    lastSeenVersion: "1.3.0",
     alwaysOnTop: false,
     opacity: 100,
     clickThrough: "off",
@@ -325,16 +327,18 @@ it("opens settings instead of connecting on first run", async () => {
 });
 
 it("registers all event listeners before connecting an existing identity", async () => {
+  let connectedListeners: string[] = [];
   bridge.invoke.mockImplementation(async (command: string) => {
     if (command === "get_config") return initial();
-    if (command === "connect") expect([...bridge.listeners.keys()].sort()).toEqual([
-      "lyrics", "palette:closed", "palette:run", "playback", "search:translations", "settings:preview", "status",
-      "shortcut",
-    ]);
+    if (command === "connect") connectedListeners = [...bridge.listeners.keys()].sort();
   });
   await import("./main");
   await flush();
   expect(bridge.invoke).toHaveBeenCalledWith("connect", undefined);
+  expect(connectedListeners).toEqual([
+    "lyrics", "palette:closed", "palette:run", "playback", "search:translations", "settings:preview",
+    "shortcut", "status", "whats-new:open",
+  ]);
 });
 
 it("opens settings as a window of its own, previews its dials and re-reads what is stored when it closes", async () => {
@@ -1559,4 +1563,193 @@ it("matches lyrics and commands to the backend's track key, whatever its source 
   await flush();
   await flush();
   expect(song("source").track).toBe("ytm:Video|1105000");
+});
+
+it.each([false, true])("uses confirmed native mute state for the centre action (muted: %s)", async (muted) => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, false, { muted, volumePercent: 37, canSetVolume: true });
+  const mute = el<HTMLButtonElement>("volume-mute");
+  expect(mute.disabled).toBe(false);
+  expect(mute.dataset.muted).toBe(String(muted));
+  expect(mute.getAttribute("aria-pressed")).toBe(String(muted));
+  expect(mute.getAttribute("aria-label")).toBe(muted ? "Unmute" : "Mute");
+  expect(el("volume-value").textContent).toBe("37%");
+  mute.click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("toggle_mute");
+  // The response alone does not fabricate a successful state; playback confirms it.
+  expect(mute.dataset.muted).toBe(String(muted));
+  playback("song-a", 1, 0, false, { muted: !muted, volumePercent: 37, canSetVolume: true });
+  expect(mute.dataset.muted).toBe(String(!muted));
+  expect(mute.title).toBe(muted ? "Mute" : "Unmute");
+});
+
+it.each([[0, "true", "Set volume to 100%"], [37, "false", "Set volume to 0%"]] as const)("names the fallback action for volume %s", async (volumePercent, muted, label) => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, false, { volumePercent, canSetVolume: true, muted: null });
+  const mute = el<HTMLButtonElement>("volume-mute");
+  expect(mute.disabled).toBe(false);
+  expect(mute.dataset.muted).toBe(muted);
+  expect(mute.getAttribute("aria-label")).toBe(label);
+  mute.click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("toggle_mute");
+});
+
+it("gates mute while unsupported, during volume editing and while pending, then retains confirmed state on failure", async () => {
+  await import("./main");
+  await flush();
+  playback();
+  const mute = el<HTMLButtonElement>("volume-mute");
+  const volume = el<HTMLInputElement>("volume");
+  expect(mute.disabled).toBe(true);
+  mute.click();
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "toggle_mute")).toBe(false);
+  playback("song-a", 1, 0, false, { muted: false, volumePercent: 40, canSetVolume: true });
+  volume.dispatchEvent(new Event("pointerdown"));
+  expect(mute.disabled).toBe(true);
+  volume.dispatchEvent(new Event("pointercancel"));
+  expect(mute.disabled).toBe(false);
+  let reject!: (error: string) => void;
+  bridge.invoke.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+  mute.click();
+  mute.click();
+  expect(mute.disabled).toBe(true);
+  expect(volume.disabled).toBe(true);
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "toggle_mute")).toHaveLength(1);
+  playback("song-a", 1, 0, false, { muted: true, volumePercent: 30, canSetVolume: true });
+  reject("Mute refused");
+  await flush();
+  expect(mute.disabled).toBe(false);
+  expect(mute.dataset.muted).toBe("true");
+  expect(el("volume-value").textContent).toBe("30%");
+  expect(el("notice").textContent).toBe("Mute refused");
+  // Native mute remains available even when the player has no volume control.
+  playback("song-a", 1, 0, false, { muted: true, volumePercent: null, canSetVolume: false });
+  expect(volume.disabled).toBe(true);
+  expect(mute.disabled).toBe(false);
+});
+
+it("drops mute failures from a player replaced while its command was pending", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, false, { muted: false, volumePercent: 40, canSetVolume: true });
+  let reject!: (error: string) => void;
+  bridge.invoke.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+  el("volume-mute").click();
+  el("settings-open").click();
+  await flush();
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, player: "ytmdesktop" } };
+  });
+  children.get("settings")!.events.get("tauri://destroyed")!({ payload: null });
+  await flush();
+  playback("new-song", 2, 0, false, { trackKey: "ytmd:new-song", muted: true, volumePercent: 25, canSetVolume: true });
+  reject("Old mute failure");
+  await flush();
+  expect(el<HTMLButtonElement>("volume-mute").disabled).toBe(false);
+  expect(el("volume-mute").dataset.muted).toBe("true");
+  expect(el("volume-value").textContent).toBe("25%");
+  expect(el("notice").textContent).not.toContain("Old mute failure");
+});
+
+it("runs random queue from the palette with gestures disabled, enforcing capability and pending state", async () => {
+  await import("./main");
+  await flush();
+  const action = (await openPalette()).commands.find((command) => command.label === "Random queue track")!;
+  expect(action.enabled).toBe(false);
+  runInPalette({ command: action.id });
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "random_queue_track")).toBe(false);
+  playback("song-a", 1, 0, false, { canJumpQueue: true });
+  expect((await openPalette()).commands.find((command) => command.id === action.id)?.enabled).toBe(true);
+  let reject!: (error: string) => void;
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "random_queue_track") return new Promise((_, fail) => { reject = fail; });
+  });
+  runInPalette({ command: action.id });
+  runInPalette({ command: action.id });
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "random_queue_track")).toHaveLength(1);
+  expect((await openPalette()).commands.find((command) => command.id === action.id)?.enabled).toBe(false);
+  reject("No playable queued song");
+  await flush();
+  expect(el("notice").textContent).toBe("No playable queued song");
+  expect((await openPalette()).commands.find((command) => command.id === action.id)?.enabled).toBe(true);
+  playback("song-a", 1, 0, false, { canJumpQueue: false });
+  runInPalette({ command: action.id });
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "random_queue_track")).toHaveLength(1);
+});
+
+it.each([[false, true, 0], [true, false, 0], [true, true, 1]] as const)("gates cube scramble by setting %s and queue capability %s", async (shakeToSkip, canJumpQueue, expected) => {
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, shakeToSkip } };
+  });
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, false, { canJumpQueue });
+  let now = 10_000;
+  const time = vi.spyOn(performance, "now").mockImplementation(() => now);
+  try {
+    const cube = el("cube");
+    press(cube, "pointerdown");
+    for (const x of [160, 0, 160]) { now += 100; press(cube, "pointermove", x); }
+    expect(bridge.invoke.mock.calls.filter(([command]) => command === "random_queue_track")).toHaveLength(0);
+    press(cube, "pointerup", 160);
+    press(cube, "lostpointercapture", 160);
+    await flush();
+    expect(bridge.invoke.mock.calls.filter(([command]) => command === "random_queue_track")).toHaveLength(expected);
+  } finally { time.mockRestore(); }
+});
+
+it.each([["", true], ["1.2.0", true], ["1.3.0", false]] as const)("opens What's new at startup only for an unseen version (%s)", async (lastSeenVersion, opens) => {
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, lastSeenVersion } };
+  });
+  await import("./main");
+  await flush();
+  await flush();
+  expect(children.has("whats-new")).toBe(opens);
+  if (opens) expect(children.get("whats-new")?.options).toMatchObject({ url: "whats-new.html", parent: "main", visible: false });
+  expect(bridge.invoke).toHaveBeenCalledWith("connect", undefined);
+});
+
+it("opens What's new manually from the palette and settings event, focusing the existing window", async () => {
+  await import("./main");
+  await flush();
+  expect(children.has("whats-new")).toBe(false);
+  const action = (await openPalette()).commands.find((command) => command.label === "What's new…")!;
+  runInPalette({ command: action.id });
+  runInPalette({ command: action.id });
+  await flush();
+  await flush();
+  const panel = children.get("whats-new")!;
+  expect(panel.options.url).toBe("whats-new.html");
+  bridge.listeners.get("whats-new:open")!({ payload: null });
+  await flush();
+  expect(children.get("whats-new")).toBe(panel);
+  expect(panel.setFocus).toHaveBeenCalledTimes(1);
+  children.delete("whats-new");
+  bridge.listeners.get("whats-new:open")!({ payload: null });
+  await flush();
+  await flush();
+  expect(children.get("whats-new")).not.toBe(panel);
+  expect(children.get("whats-new")?.options.url).toBe("whats-new.html");
+});
+
+it.each([false, true])("turns the Volume command toward the face holding the dial (compact: %s)", async (compact) => {
+  bridge.invoke.mockImplementation(async (command: string) => {
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, compact } };
+  });
+  await import("./main");
+  await flush();
+  expect(el("volume-control").parentElement?.dataset.face).toBe(compact ? "left" : "right");
+  let now = performance.now();
+  const time = vi.spyOn(performance, "now").mockImplementation(() => now);
+  try {
+    bridge.listeners.get("shortcut")!({ payload: "turnRight" });
+    for (let i = 0; i < 100; i++) { now += 16; runFrame(); }
+    const yaw = Number(el("cube").style.transform.match(/rotateY\(([-\d.]+)deg\)/)?.[1]);
+    expect(Math.abs(yaw - (compact ? 54 : -126))).toBeLessThan(2);
+  } finally { time.mockRestore(); }
 });

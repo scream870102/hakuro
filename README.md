@@ -63,11 +63,14 @@ ytmdesktop2 會告訴 Hakuro 目前歌曲的 YouTube 影片 ID，所以不必靠
 - **精簡模式**：整個視窗只有一顆方塊，沒有背景。正面是封面，點一下切換播放／暫停，游標移上去時兩側出現上一首／下一首；頂部是控制鈕（歌詞、置頂、回到完整模式，以及佇列／隨機／循環）；右側書背直書歌名與歌手；左側是音量環；背面是 SOURCE／FIND／RELOAD／SETTINGS。按歌詞鈕或指令面板的 **Lyrics in compact mode**，方塊會向右拉長，正面在封面旁顯示三行歌詞，右側書背改成唱片，可轉動預覽時間與歌詞、放開後跳轉；頂部在控制鈕右邊顯示歌名、歌手與進度（只顯示，不能拖動跳轉）；開關狀態會記住，也能自訂快捷鍵。置頂時方塊邊緣亮起強調色。視窗大小依 Lyric size (compact)、歌詞面板與波動開關自動決定，不能手動縮放。有翻譯的行會縮小原文與行距，騰出空間給下方譯文；沒有翻譯或關閉翻譯時維持原字級，切歌與切換翻譯都不會改變視窗大小。拖動方塊旁的空白處可以移動視窗。
 - 背景的三角形碎片會各自緩慢漂移、旋轉；系統開啟「減少動態效果」時保持靜止。
 - 設定視窗右上角顯示目前版本。介面字型（Anton、JetBrains Mono、Noto Sans JP）隨 App 打包，離線也能顯示。
+- **What's new**：每個版本首次啟動時，顯示與 Queue 同風格的獨立立體更新視窗。目前版本預設展開，舊版可自行點開；可從 **Settings → Updates → What's new** 或 Command Palette 隨時重看。內附繁體中文版本歷史，不需連網。
 - **更新通知**：預設在啟動時背景檢查 GitHub 最新正式版；有較新版本才彈出獨立通知，可按 **GitHub Release** 開啟最新版頁面，或按 **Later／稍後** 關閉。**Settings → Updates → Check for updates on startup** 可關閉自動檢查，儲存後生效。離線、無新版本或檢查失敗時不打擾播放；不會自動下載或安裝。
 
 ## 歌詞與設定
 
 - **音量環**控制 Spotify 目前播放裝置或所選 YouTube Music 播放器的音量（0–100%），放開、停止捲動或以鍵盤提交時才送出調整，沿用既有授權。ytmdesktop 靜音時顯示 0%，調高音量會同時解除靜音。裝置不支援時會停用。Spotify 音量 API 的帳戶要求依 [官方文件](https://developer.spotify.com/documentation/web-api/reference/set-volume-for-users-playback) 為準。
+- **音量環中央**單點切換靜音，移入游標顯示下一個動作的圖示。ytmdesktop 使用原生靜音，取消後保留原音量；其他有音量控制的播放器在非零音量時切到 0%，零音量時切到 100%。也可從 Command Palette 執行或綁快捷鍵。
+- **亂轉骰子隨機點歌**：在 **Settings → Cube gestures** 啟用後，快速來回旋轉骰子再放開，隨機跳至 Queue 接下來的一首可播放歌曲。預設關閉；一般慢轉、取消拖曳與自動轉動不會觸發。支援 Spotify 與 ytmdesktop；ytmdesktop2 沒有 Queue 跳轉能力，因此停用。Command Palette 的 **Random queue track** 與對應快捷鍵可獨立使用，不受手勢開關影響。
 - 點目前顯示的**歌詞來源按鈕**，可選擇這首歌偏好的來源，或回到自動搜尋。每首歌的選擇會保存在 SQLite。
 - **Find lyrics** 可在已啟用的 LRCLIB、NetEase、QQ Music 搜尋其他曲名／歌手；Settings 的 **Player** 選擇任一 YouTube Music 播放器時，會另外提供原生 YouTube Music 搜尋，不需額外啟用來源。查看候選與歌詞預覽後，以 **Use these lyrics** 綁定目前這首歌。手動匹配會跨重啟保存；**Restore automatic** 可取消綁定，恢復自動搜尋。切換這首歌的來源也會取代手動匹配。
 - **RELOAD** 會略過快取、重新向來源取得目前歌曲的歌詞；來源選擇控制搜尋對象，兩者可同時使用。

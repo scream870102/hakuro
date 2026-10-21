@@ -178,9 +178,12 @@
               <div class="spill"></div>
               <div class="dial" id="volume-control" title="Volume control is unavailable for this player or device">
                 <div class="dial__ticks"></div><div class="dial__ring"></div><div class="dial__cap"></div>
-                <div class="dial__read">
+                <button class="dial__read dial__mute" id="volume-mute" type="button" disabled
+                        title="Mute" aria-label="Mute" aria-pressed="false" data-muted="false">
                   <output id="volume-value" for="volume">—</output><small>VOL</small>
-                </div>
+                  <svg class="dial__action dial__action--mute" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4 6 8H3v8h3l5 4Z"/><path d="m16 9 6 6m0-6-6 6"/></svg>
+                  <svg class="dial__action dial__action--unmute" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4 6 8H3v8h3l5 4Z"/><path d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></svg>
+                </button>
                 <!-- The dial is drawn; this range is the real control, for the keyboard and for main.ts. -->
                 <input class="dial__input" id="volume" type="range" min="0" max="100" step="1" value="0" disabled
                        aria-label="Volume" aria-describedby="volume-value" />

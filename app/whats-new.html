@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hakuro — What's new</title>
+    <link rel="stylesheet" href="/src/whats-new.css" />
+  </head>
+  <body>
+    <div class="stage">
+      <div class="lean" id="whats-new-lean">
+        <div class="lean__edge" aria-hidden="true"></div>
+        <main class="queue whats-new" aria-labelledby="whats-new-title">
+          <header class="queue__head" data-tauri-drag-region="deep">
+            <div class="queue__titles">
+              <h1 id="whats-new-title">WHAT'S NEW</h1>
+              <p id="whats-new-version">HAKURO</p>
+            </div>
+            <button class="hb hb--close" id="panel-close" type="button" title="關閉" aria-label="關閉更新說明">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            </button>
+          </header>
+          <div class="whats-new__history" id="release-history" aria-label="版本更新記錄"></div>
+          <footer class="queue__foot whats-new__foot">
+            <span id="whats-new-status" role="status" aria-live="polite">載入更新說明…</span>
+          </footer>
+        </main>
+      </div>
+    </div>
+    <script type="module" src="/src/whats-new.ts"></script>
+  </body>
+</html>

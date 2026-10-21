@@ -23,6 +23,10 @@ export interface Settings {
   theme: Theme;
   followLyrics: boolean;
   checkUpdates: boolean;
+  /** Opt in to jumping to a random queue song by rapidly turning the cube. */
+  shakeToSkip: boolean;
+  /** Written by the backend after the release notes have been displayed. */
+  lastSeenVersion: string;
   alwaysOnTop: boolean;
   /** Background opacity as a percentage; the lyrics stay opaque regardless. */
   opacity: number;
@@ -60,6 +64,7 @@ export interface WindowStylePreview {
 }
 
 export const SETTINGS_PREVIEW = "settings:preview";
+export const WHATS_NEW_OPEN = "whats-new:open";
 /** Find lyrics → main: its translation toggle drives the main window's lyrics. */
 export const SEARCH_TRANSLATIONS = "search:translations";
 

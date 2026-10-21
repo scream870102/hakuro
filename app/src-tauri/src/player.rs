@@ -116,7 +116,10 @@ pub struct Playback {
     pub device_name: Option<String>,
     pub device_id: Option<String>,
     pub volume_percent: Option<u8>,
+    /// Native mute state when the source reports one, independent of volume.
+    pub muted: Option<bool>,
     pub can_set_volume: bool,
+    pub can_jump_queue: bool,
     /// Shuffle and repeat as the player reports them, or `None` when it cannot
     /// say: ytmdesktop2 only toggles them blind, so the interface hides both
     /// rather than show a state it would have to guess.
@@ -292,6 +295,15 @@ impl Player {
         }
     }
 
+    pub async fn toggle_mute(&self) -> Result<(), PlayerError> {
+        let playing = self.playback().await?;
+        if let (Backend::Ytmdesktop(client), Some(muted)) = (self.backend.as_ref(), playing.muted) {
+            return client.set_muted(!muted).await;
+        }
+        let volume = mute_fallback_volume(&playing)?;
+        self.set_volume(volume, playing.device_id).await
+    }
+
     /// Play a song further down the queue, named by its `QueueItem::uri` and
     /// the place the queue window showed it.
     pub async fn jump(&self, uri: &str, position: usize) -> Result<(), PlayerError> {
@@ -319,6 +331,16 @@ impl Player {
     }
 }
 
+fn mute_fallback_volume(playing: &Playback) -> Result<u8, PlayerError> {
+    match playing.volume_percent.filter(|_| playing.can_set_volume) {
+        Some(0) => Ok(100),
+        Some(_) => Ok(0),
+        None => Err(PlayerError::Refused {
+            message: "This player or device does not support mute or volume control.".into(),
+        }),
+    }
+}
+
 /// ytmdesktop2's API cannot report shuffle or repeat, nor play a queued song,
 /// so the interface hides those controls; this answers a caller that asks anyway.
 fn unsupported(what: &str) -> PlayerError {
@@ -330,6 +352,23 @@ fn unsupported(what: &str) -> PlayerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mute_fallback_uses_zero_and_full_volume_only_when_supported() {
+        let mut playing = Playback {
+            can_set_volume: true,
+            volume_percent: Some(37),
+            ..Default::default()
+        };
+        assert_eq!(mute_fallback_volume(&playing).unwrap(), 0);
+        playing.volume_percent = Some(0);
+        assert_eq!(mute_fallback_volume(&playing).unwrap(), 100);
+        playing.volume_percent = None;
+        assert!(mute_fallback_volume(&playing).is_err());
+        playing.volume_percent = Some(37);
+        playing.can_set_volume = false;
+        assert!(mute_fallback_volume(&playing).is_err());
+    }
 
     #[test]
     fn every_source_gets_its_own_cache_prefix() {

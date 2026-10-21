@@ -465,6 +465,8 @@ fn sample(state: &Value, track: &Value, volume: Option<u8>) -> Playback {
         can_shuffle: false,
         can_repeat_context: false,
         can_repeat_track: false,
+        muted: None,
+        can_jump_queue: false,
         queue_revision: None,
         source: PlayerKind::Ytmdesktop2,
     }
@@ -838,6 +840,37 @@ pub(crate) mod tests {
         assert!(seen
             .iter()
             .any(|r| r.path == "/track/prev" && r.method == "POST"));
+    }
+
+    #[test]
+    fn mute_without_native_support_reads_current_volume_and_toggles_zero_full() {
+        let volume = Arc::new(std::sync::atomic::AtomicU8::new(37));
+        let current = volume.clone();
+        let fallback = open_player(json!({"isPlaying": true, "time": 0}));
+        let (base, seen) = fake(move |request| {
+            if request.path == "/track/volume" {
+                if let Some(value) = request.body["volume"].as_u64() {
+                    current.store(value as u8, std::sync::atomic::Ordering::SeqCst);
+                }
+                (200, json!({"volume": current.load(std::sync::atomic::Ordering::SeqCst)}).to_string())
+            } else {
+                fallback(request)
+            }
+        });
+        run(async {
+            let client = Ytmdesktop::connect_to(base, DEFAULT_PORT, |_| panic!("open API")).await.unwrap();
+            let player = crate::player::Player::ytmdesktop2(Arc::new(client));
+            let sample = player.playback().await.unwrap();
+            assert!(sample.muted.is_none() && !sample.can_jump_queue);
+            player.toggle_mute().await.unwrap();
+            assert_eq!(volume.load(std::sync::atomic::Ordering::SeqCst), 0);
+            player.toggle_mute().await.unwrap();
+            assert_eq!(volume.load(std::sync::atomic::Ordering::SeqCst), 100);
+        });
+        let changes: Vec<_> = seen.lock().unwrap().iter()
+            .filter(|request| request.path == "/track/volume" && request.body["volume"].is_number())
+            .map(|request| request.body["volume"].clone()).collect();
+        assert_eq!(changes, [json!(0), json!(100)]);
     }
 
     #[test]

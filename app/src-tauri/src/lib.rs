@@ -156,6 +156,8 @@ struct Session {
     /// instead of at the next sample.
     wake: tokio::sync::Notify,
     connecting: tokio::sync::Mutex<()>,
+    /// Queue selection and playback form one action, including concurrent gestures.
+    queue_action: tokio::sync::Mutex<()>,
 }
 
 struct AppState {
@@ -274,6 +276,10 @@ async fn save_settings(
     }
 
     let previous = state.settings.read().await.clone();
+    // An older settings panel must not erase an acknowledgement made meanwhile.
+    incoming
+        .last_seen_version
+        .clone_from(&previous.last_seen_version);
     let sources_changed = incoming.sources != previous.sources;
     // Either half of the identity invalidates the open connection: a new Client
     // ID cannot reuse the cached refresh token, and a new player is a different
@@ -332,6 +338,25 @@ async fn save_settings(
     }
 
     Ok(state.config(&incoming))
+}
+
+#[tauri::command]
+async fn mark_whats_new_seen(state: State<'_, AppState>) -> Result<ConfigPayload, String> {
+    let latest = acknowledge_release(&state.settings, &state.settings_update).await?;
+    Ok(state.config(&latest))
+}
+
+async fn acknowledge_release(
+    current: &RwLock<Settings>,
+    update: &tokio::sync::Mutex<()>,
+) -> Result<Settings, String> {
+    let _update = update.lock().await;
+    let mut latest = current.write().await;
+    let mut saved = latest.clone();
+    saved.last_seen_version = env!("CARGO_PKG_VERSION").into();
+    settings::save(&saved)?;
+    *latest = saved.clone();
+    Ok(saved)
 }
 
 /// Forget every downloaded lyric. The per-track source choices are kept,
@@ -1113,6 +1138,11 @@ async fn pause(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn toggle_mute(state: State<'_, AppState>) -> Result<(), String> {
+    with_client(&state, |client| async move { client.toggle_mute().await }).await
+}
+
+#[tauri::command]
 async fn next_track(state: State<'_, AppState>) -> Result<(), String> {
     with_client(&state, |client| async move { client.next().await }).await
 }
@@ -1175,7 +1205,64 @@ fn fill_missing_queue_song(queue: &mut Queue, playback: Option<&Playback>, sourc
 /// Play a queued song. `position` is where the window listed it.
 #[tauri::command]
 async fn jump_queue(uri: String, position: usize, state: State<'_, AppState>) -> Result<(), String> {
+    let _queue_action = state.session.queue_action.lock().await;
     with_client(&state, |client| async move { client.jump(&uri, position).await }).await
+}
+
+#[tauri::command]
+async fn random_queue_track(state: State<'_, AppState>) -> Result<(), String> {
+    jump_random_queue(&state.session, |count| rand::random_range(0..count)).await
+}
+
+async fn jump_random_queue(
+    session: &Session,
+    choose: impl FnOnce(usize) -> usize,
+) -> Result<(), String> {
+    let _queue_action = session.queue_action.lock().await;
+    let client = session
+        .player
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| "Not connected to a player".to_string())?;
+    let queue = client.queue().await.map_err(|error| error.to_string())?;
+    let (position, item) = choose_queue_track(&queue, choose)?;
+    // Keep the active connection stable while its queue is being advanced.
+    let active = session.player.read().await;
+    if !active
+        .as_ref()
+        .is_some_and(|open| open.serial == client.serial)
+    {
+        return Err("The player changed while choosing a queued song. Try again.".into());
+    }
+    client
+        .jump(&item.uri, position)
+        .await
+        .map_err(|error| error.to_string())?;
+    session.wake.notify_one();
+    Ok(())
+}
+
+fn choose_queue_track(
+    queue: &Queue,
+    choose: impl FnOnce(usize) -> usize,
+) -> Result<(usize, &QueueItem), String> {
+    if !queue.can_jump {
+        return Err("This player cannot play a queued song.".into());
+    }
+    let playable: Vec<_> = queue
+        .upcoming
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| !item.uri.trim().is_empty())
+        .collect();
+    if playable.is_empty() {
+        return Err("There are no playable upcoming songs in the queue.".into());
+    }
+    playable
+        .get(choose(playable.len()))
+        .copied()
+        .ok_or_else(|| "Could not choose a queued song.".into())
 }
 
 /// Stream the speakers' band levels to the tile floor until `stop_wave`.
@@ -1210,6 +1297,83 @@ async fn set_volume(volume_percent: u8, state: State<'_, AppState>) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn random_queue_candidates_keep_original_positions_and_exclude_unplayable_rows() {
+        let mut queue = Queue {
+            now: Some(QueueItem {
+                uri: "current".into(),
+                ..Default::default()
+            }),
+            upcoming: vec![
+                QueueItem::default(),
+                QueueItem {
+                    uri: "first".into(),
+                    ..Default::default()
+                },
+                QueueItem {
+                    uri: " ".into(),
+                    ..Default::default()
+                },
+                QueueItem {
+                    uri: "second".into(),
+                    ..Default::default()
+                },
+            ],
+            can_jump: true,
+        };
+        for (choice, expected_position, expected_uri) in [(0, 1, "first"), (1, 3, "second")] {
+            let (position, item) = choose_queue_track(&queue, |count| {
+                assert_eq!(count, 2);
+                choice
+            })
+            .unwrap();
+            assert_eq!(position, expected_position);
+            assert_eq!(item.uri, expected_uri);
+        }
+        queue.can_jump = false;
+        assert!(choose_queue_track(&queue, |_| panic!("unsupported player")).is_err());
+        queue.can_jump = true;
+        queue.upcoming.clear();
+        assert!(choose_queue_track(&queue, |_| panic!("empty queue")).is_err());
+    }
+
+    #[test]
+    fn release_acknowledgement_waits_for_settings_and_preserves_latest_edits() {
+        ytmdesktop::tests::run(async {
+            let current = RwLock::new(Settings::default());
+            let update = tokio::sync::Mutex::new(());
+            let saving = update.lock().await;
+            let pending = acknowledge_release(&current, &update);
+            tokio::pin!(pending);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(10), &mut pending)
+                    .await
+                    .is_err()
+            );
+            {
+                let mut settings = current.write().await;
+                settings.shake_to_skip = true;
+                settings.theme.accent = "#123456".into();
+            }
+            drop(saving);
+            let saved = pending.await.unwrap();
+            assert!(saved.shake_to_skip);
+            assert_eq!(saved.theme.accent, "#123456");
+            assert_eq!(saved.last_seen_version, env!("CARGO_PKG_VERSION"));
+            assert_eq!(settings::load(), saved);
+
+            current.write().await.last_seen_version = "previous".into();
+            let before = current.read().await.clone();
+            std::fs::create_dir(settings::data_path("settings.json.tmp").unwrap()).unwrap();
+            assert!(acknowledge_release(&current, &update).await.is_err());
+            assert_eq!(
+                *current.read().await,
+                before,
+                "failed persistence must not mark the release seen"
+            );
+        });
+    }
 
     #[test]
     fn the_lyric_lookup_wants_a_joint_credit_whole_and_apart() {
@@ -1307,7 +1471,9 @@ mod tests {
             device_name: Some("Device".into()),
             device_id: Some("device-1".into()),
             volume_percent: Some(50),
+            muted: None,
             can_set_volume: true,
+            can_jump_queue: true,
             shuffle: Some(false),
             repeat: Some(Repeat::Context),
             can_shuffle: true,
@@ -1429,7 +1595,9 @@ mod tests {
             "deviceName",
             "deviceId",
             "volumePercent",
+            "muted",
             "canSetVolume",
+            "canJumpQueue",
             "shuffle",
             "repeat",
             "canShuffle",
@@ -1450,6 +1618,7 @@ mod tests {
             "can_seek",
             "volume_percent",
             "can_set_volume",
+            "can_jump_queue",
             "queue_revision",
         ] {
             assert!(!object.contains_key(key), "snake_case leaked: {key}");
@@ -1723,6 +1892,7 @@ pub fn run() {
             check_for_updates,
             open_latest_release,
             save_settings,
+            mark_whats_new_seen,
             clear_lyrics_cache,
             set_track_source,
             reload_lyrics,
@@ -1736,11 +1906,13 @@ pub fn run() {
             next_track,
             previous_track,
             set_volume,
+            toggle_mute,
             seek,
             set_shuffle,
             set_repeat,
             get_queue,
             jump_queue,
+            random_queue_track,
             start_wave,
             stop_wave
         ])

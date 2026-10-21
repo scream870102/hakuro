@@ -4,16 +4,18 @@ use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 
-pub const ACTIONS: [&str; 31] = [
+pub const ACTIONS: [&str; 34] = [
     "commands",
     "playPause",
     "previous",
     "next",
     "seekBackward",
     "seekForward",
+    "mute",
     "volumeUp",
     "volumeDown",
     "queue",
+    "randomQueue",
     "shuffle",
     "repeat",
     "refreshPlayback",
@@ -28,6 +30,7 @@ pub const ACTIONS: [&str; 31] = [
     "alwaysOnTop",
     "clickThrough",
     "settings",
+    "whatsNew",
     "waveFull",
     "waveCompact",
     "minimize",
@@ -281,6 +284,19 @@ mod tests {
             action: action.into(),
             accelerator: key.into(),
             global,
+        }
+    }
+
+    #[test]
+    fn new_actions_keep_the_palette_order_and_accept_bindings() {
+        for (after, action) in [
+            ("seekForward", "mute"),
+            ("queue", "randomQueue"),
+            ("settings", "whatsNew"),
+        ] {
+            let index = ACTIONS.iter().position(|id| *id == after).unwrap();
+            assert_eq!(ACTIONS[index + 1], action);
+            assert!(validate(&mut [binding(action, "Ctrl+Alt+M", true)]).is_ok());
         }
     }
 

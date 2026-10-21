@@ -1,0 +1,46 @@
+@import "./queue.css";
+
+/* Keep Queue's glass, edge, perspective and reduced-motion treatment. */
+.lean { width: calc(100% - 60px); transform-origin: 50% 50%; }
+.whats-new .queue__head { height: 76px; padding-inline: 20px; }
+.whats-new .queue__titles h1 { font-size: 26px; letter-spacing: .08em; }
+#whats-new-version { margin: 7px 0 0; font: 700 10px var(--mono); color: var(--ink-2); letter-spacing: .08em; }
+.whats-new__history {
+  flex: 1; min-height: 0; padding: 16px 18px 24px; overflow-y: auto;
+  overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #3e4040 transparent;
+}
+.release { border-bottom: 1px solid var(--line); }
+.release summary {
+  position: relative; padding: 16px 23px 16px 0; cursor: pointer; list-style: none;
+}
+.release summary::-webkit-details-marker { display: none; }
+.release summary::after {
+  content: "+"; position: absolute; right: 1px; top: 14px;
+  font: 500 20px var(--mono); color: var(--ink-2);
+}
+.release[open] summary::after { content: "−"; }
+.release summary:hover, .release summary:hover::after { color: var(--accent); }
+.release summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.release__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.release__version { font: 400 23px/1 var(--display); letter-spacing: .04em; }
+.release__current {
+  padding: 3px 5px; background: var(--accent); color: #000;
+  font: 700 10px/1 var(--tc);
+}
+.release time { margin-left: auto; font: 500 9px var(--mono); color: var(--ink-2); }
+.release__title { display: block; margin-top: 9px; font: 700 13px/1.5 var(--tc); }
+.release ul {
+  margin: 0; padding: 0 0 17px 17px; color: var(--ink-2);
+  font: 500 12px/1.85 var(--tc); overflow-wrap: anywhere; user-select: text;
+}
+.release li + li { margin-top: 9px; }
+.release li::marker { color: var(--accent); }
+.release.is-current { border-top: 2px solid var(--accent); }
+.whats-new__foot { height: auto; min-height: 42px; padding: 10px 20px; font: 500 10px/1.6 var(--tc); letter-spacing: 0; }
+#whats-new-status.is-error { color: var(--accent); }
+
+@media (max-width: 420px) {
+  .lean { left: 20px; width: calc(100% - 40px); }
+  .whats-new__history { padding-inline: 12px; }
+  .release time { width: 100%; margin-left: 0; }
+}

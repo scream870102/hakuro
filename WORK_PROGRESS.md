@@ -1,5 +1,70 @@
 # hakuro session recovery
 
+## 1.6.1 cube mute, random queue gesture and What's new - 2026-10-21
+
+Goal: add volume-center mute/unmute (0/100 fallback), intentional rapid cube
+scramble to choose a playable upcoming queue song, and a version-history window.
+Known: clean f4e93b6 includes prior 1.6.0 integration. Work remains in the user-
+approved current checkout; bump to 1.6.1 and rebuild local NSIS. No commit/push,
+installed-app or personal config changes. CBM/Serena tools are unavailable.
+Plan: implement independent cube/backend/release-page parts; integrate main,
+settings and palette; test state/race/gesture/first-open behavior; review and
+rebuild installer. Gesture defaults off; explicit palette action stays available.
+Acceptance:
+- [x] Volume interior single tap toggles native mute or exactly 0/100%; hover
+  shows the next action, and ring drags/cancelled gestures never trigger a tap.
+- [x] Rapid deliberate cube scrambling triggers at most one random playable
+  upcoming queue jump when enabled; normal/slow drags and unsupported sources
+  do not jump. Palette action and a persisted setting are available.
+- [x] What's new opens once per version after successful display, can be opened
+  from Settings/palette, has Queue-style 3D presentation and factual current/
+  previous release notes with only current expanded initially.
+- [x] New palette actions accept shortcuts; automated checks, independent review
+  and relevant visual checks pass; local 1.6.1 NSIS is rebuilt and verified.
+Progress:
+- Implemented all three features, backend capabilities/settings/commands and
+  Settings/Command Palette/shortcut integration. Six Hakuro version fields are
+  1.6.1; release history now includes 20 versions, with 1.6.0 retained separately.
+- Fresh checks: frontend 181/181; Rust 162 passed / 13 existing ignored; tsc +
+  Vite production build passed. Independent review passed after restoring one
+  accidentally bumped dependency version in package-lock.json.
+- Browser confirms current/history disclosure, seen acknowledgement and narrow
+  scrolling. Adjusted What's new perspective origin to keep the wider panel
+  inside its window. Cube browser harness initially hit the wrong face; focused
+  diagnostics then verified native hover/click, cancelled-center drag, ring
+  adjustment and exactly one random jump using real CDP mouse events.
+- Fixed the semantic Volume command to follow the dial's left face in compact
+  mode. Two new regressions pass (main 83/83; total frontend 183); final tsc/Vite
+  rebuild passed. Follow-up independent review passed both this and the window
+  perspective fix. Final Edge run at actual compact size 408x424 passed native
+  mute/unmute hover/click, cancelled tap, ring adjustment and one ~307ms random
+  scramble; no runtime errors. Notes pass at 560x640 and narrow 340x480.
+- Rebuilt NSIS after the final Volume-command correction; verified the binary
+  contains main-B5-QO0Uu.js, not older main-CT5M5Jir.js.
+- User additionally emphasized including every past version in What's new.
+  Full version-history audit added early product versions 4.0.0 (6f7e238) and
+  3.0.0 (6bc8871), clearly labeled before formal 1.0.0 numbering (230347f).
+  Cargo-only 0.1.0 was an internal package placeholder, not a separate product
+  version. The unnumbered Python prototype is not assigned a fabricated version.
+  Also expanded 1.3.1 notes from its tagged README. Complete inventory regression
+  passes (notes 11/11, total frontend 184). Rebuilt browser verifies all 20,
+  only current expanded, and actual earliest-version disclosure. Independent
+  audit also confirms all 19 historical product versions plus current 1.6.1.
+- Final NSIS with complete history built successfully. Verified all six version
+  fields and installer FileVersion/ProductVersion are 1.6.1; binary embeds final
+  main-B5-QO0Uu.js and whats-new-DgVrYmnn.js. Installer: 9,854,376 bytes,
+  app/src-tauri/target/release/bundle/nsis/Hakuro_1.6.1_x64-setup.exe.
+  SHA256: f339234360b7ecc3103caa3172f2f99a21e48c5e70d00b6f3612f51ded5552e0.
+Evidence: ignored app/node_modules/.cache/hakuro-161/ holds build/test browser
+results, screenshots and artifact.json. Live authenticated playback was not
+exercised; player behavior uses fake HTTP/Socket.IO APIs and frontend fixtures.
+Final status: all requested acceptance criteria complete. No commit/push or
+personal/installed-app configuration changes performed.
+Reusable lessons: audit product-version commits as well as tags for historical
+notes (early numbering can reset); use actual 3D hit/settled-pose readiness in
+browser checks and a middle volume value for ring movement assertions.
+
+
 ## 1.6.0 ytmdesktop Companion support alongside ytmdesktop2 - 2026-10-21
 
 Goal: add ytmdesktop/ytmdesktop as a distinct player and implement the existing

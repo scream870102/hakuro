@@ -399,7 +399,9 @@ impl Spotify {
             can_skip_previous: allowed("skipping_prev"),
             can_seek: allowed("seeking"),
             volume_percent,
+            muted: None,
             can_set_volume,
+            can_jump_queue: allowed("skipping_next"),
             device_name: data
                 .get("device")
                 .and_then(|device| device.get("name"))

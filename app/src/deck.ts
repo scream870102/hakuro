@@ -78,6 +78,8 @@ const SWAY = 1.6;
 const SCRATCH_MS_PER_TURN = 10_000;
 /** A press that travels less than this is a tap, not a drag. */
 const TAP_SLOP = 6;
+const SCRAMBLE_WINDOW_MS = 900;
+const SCRAMBLE_COOLDOWN_MS = 1200;
 const HINT_KEY = "hakuro.cube-hint-seen";
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -135,6 +137,8 @@ export function createDeck(options: {
   previewSeek(ms: number): void;
   endSeek(commit: boolean): void;
   dragWindow(): void;
+  /** A deliberate rapid scramble, once on release; main checks player support. */
+  randomQueue?(): void;
 }): Deck {
   const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
   const scene = byId("scene");
@@ -151,6 +155,7 @@ export function createDeck(options: {
   const playPause = byId<HTMLButtonElement>("play-pause");
   const dial = byId("volume-control");
   const volume = byId<HTMLInputElement>("volume");
+  const mute = byId<HTMLButtonElement>("volume-mute");
   const vinyl = byId("vinyl");
   const disc = byId("disc");
   const shadow = byId("shadow");
@@ -306,8 +311,30 @@ export function createDeck(options: {
   // ------------------------------------------------------- turning the cube
 
   let drag: {
-    x: number; y: number; rx: number; ry: number; t: number; vel: number; moved: number; cover: boolean;
+    id: number; x: number; y: number; rx: number; ry: number; t: number; vel: number; moved: number; cover: boolean;
+    turns: { x: number; y: number; at: number }[];
   } | null = null;
+  let lastScramble = -Infinity;
+
+  function scrambled(now: number) {
+    const turns = drag?.turns.filter((point) => now - point.at <= SCRAMBLE_WINDOW_MS) ?? [];
+    if (turns.length < 4 || now - turns[turns.length - 1].at > 200) return false;
+    let path = 0, reversals = 0;
+    let anchor = turns[0];
+    let direction: { x: number; y: number } | null = null;
+    for (let i = 1; i < turns.length; i++) {
+      const point = turns[i];
+      path += Math.hypot(point.x - turns[i - 1].x, point.y - turns[i - 1].y);
+      const leg = { x: point.x - anchor.x, y: point.y - anchor.y };
+      // A 30° leg (~55px horizontally) keeps tiny pointer jitter out of reversals.
+      if (Math.hypot(leg.x, leg.y) < 30) continue;
+      if (direction && direction.x * leg.x + direction.y * leg.y < 0) reversals++;
+      direction = leg;
+      anchor = point;
+    }
+    // Roughly 455px of horizontal movement; an ordinary face turn is only 90°.
+    return path >= 250 && reversals >= 2;
+  }
 
   function hideHint() {
     if (hint.classList.contains("gone")) return;
@@ -317,34 +344,42 @@ export function createDeck(options: {
   try { if (localStorage.getItem(HINT_KEY)) hint.classList.add("gone"); } catch { /* keep the hint */ }
 
   scene.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || drag) return;
     // Compact's window is the cube on clear glass: the glass moves the window.
     if (compact && event.target === scene) {
       options.dragWindow();
       return;
     }
     if ((event.target as Element).closest("button, input, .vinyl, .dial, .lyrics")) return;
+    const now = performance.now();
     drag = {
-      x: event.clientX, y: event.clientY, rx: rx.value, ry: ry.value, t: performance.now(), vel: 0, moved: 0,
+      id: event.pointerId, x: event.clientX, y: event.clientY, rx: rx.value, ry: ry.value, t: now, vel: 0, moved: 0,
       cover: Boolean((event.target as Element).closest(".cover-box")),
+      turns: cube.contains(event.target as Node) ? [{ x: ry.value, y: rx.value, at: now }] : [],
     };
     scene.setPointerCapture?.(event.pointerId);
     scene.classList.add("is-dragging");
   });
   scene.addEventListener("pointermove", (event) => {
-    if (!drag) return;
+    if (!drag || event.pointerId !== drag.id) return;
     drag.moved = Math.max(drag.moved, Math.hypot(event.clientX - drag.x, event.clientY - drag.y));
     if (drag.moved > TAP_SLOP) hideHint();
     const nextY = drag.ry + (event.clientX - drag.x) * 0.55;
     const nextX = clamp(drag.rx - (event.clientY - drag.y) * 0.4, -78, 18);
     const now = performance.now();
+    if (drag.turns.length) {
+      drag.turns = drag.turns.filter((point) => now - point.at <= SCRAMBLE_WINDOW_MS);
+      drag.turns.push({ x: nextY, y: nextX, at: now });
+    }
     drag.vel = drag.vel * 0.6 + ((nextY - ry.value) / Math.max(1, now - drag.t)) * 1000 * 0.4;
     drag.t = now;
     ry.value = ry.target = nextY;
     rx.value = rx.target = nextX;
   });
   function endDrag(event: PointerEvent) {
-    if (!drag) return;
+    if (!drag || event.pointerId !== drag.id) return;
+    const now = performance.now();
+    const random = event.type === "pointerup" && now - lastScramble >= SCRAMBLE_COOLDOWN_MS && scrambled(now);
     const tap = drag.cover && drag.moved < TAP_SLOP && event.type === "pointerup";
     ry.velocity = drag.vel * 0.5;
     const projected = ry.value + drag.vel * 0.12;
@@ -353,10 +388,15 @@ export function createDeck(options: {
     rx.velocity = 0;
     drag = null;
     scene.classList.remove("is-dragging");
+    if (random) {
+      lastScramble = now;
+      options.randomQueue?.();
+    }
     if (tap) togglePlayback();
   }
   scene.addEventListener("pointerup", endDrag);
   scene.addEventListener("pointercancel", endDrag);
+  scene.addEventListener("lostpointercapture", endDrag);
 
   /** The colour follows the confirmed state; the tap itself answers with a bounce. */
   function togglePlayback() {
@@ -443,6 +483,36 @@ export function createDeck(options: {
   let dialDrag: { cx: number; cy: number; a: number; acc: number; start: number } | null = null;
   let wheelTimer = 0;
   let shownVolume = -1;
+
+  // Keep the centre a native button, but never let a pointer drag become mute.
+  let mutePress: { id: number; x: number; y: number } | null = null;
+  let muteDragged = false;
+  mute.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || mute.disabled) return;
+    mutePress = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    muteDragged = false;
+    mute.setPointerCapture?.(event.pointerId);
+  });
+  mute.addEventListener("pointermove", (event) => {
+    if (mutePress?.id === event.pointerId) {
+      muteDragged ||= Math.hypot(event.clientX - mutePress.x, event.clientY - mutePress.y) > TAP_SLOP;
+    }
+  });
+  function endMutePress(event: PointerEvent) {
+    if (!mutePress || mutePress.id !== event.pointerId) return;
+    muteDragged ||= event.type !== "pointerup" || Math.hypot(event.clientX - mutePress.x, event.clientY - mutePress.y) > TAP_SLOP;
+    mutePress = null;
+  }
+  mute.addEventListener("pointerup", endMutePress);
+  mute.addEventListener("pointercancel", endMutePress);
+  mute.addEventListener("lostpointercapture", endMutePress);
+  mute.addEventListener("click", (event) => {
+    // Keyboard activation has detail 0 and remains available after a cancelled drag.
+    if (muteDragged && event.detail !== 0) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
 
   function setVolume(value: number) {
     const next = String(Math.round(clamp(value, 0, 100)));

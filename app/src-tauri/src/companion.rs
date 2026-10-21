@@ -326,6 +326,11 @@ impl Companion {
         Ok(())
     }
 
+    pub async fn set_muted(&self, muted: bool) -> Result<(), PlayerError> {
+        self.command(if muted { "mute" } else { "unmute" }, None)
+            .await
+    }
+
     pub async fn set_shuffle(&self, on: bool) -> Result<(), PlayerError> {
         if !on {
             return Err(refused(
@@ -576,6 +581,7 @@ fn sample(state: &Value, elapsed: Duration) -> Playback {
     let mut playing = Playback {
         source: PlayerKind::Ytmdesktop,
         device_name: Some("ytmdesktop".into()),
+        muted: player["muted"].as_bool(),
         queue_revision: Some(format!("{:x}", hash.finish())),
         ..Default::default()
     };
@@ -631,6 +637,7 @@ fn sample(state: &Value, elapsed: Duration) -> Playback {
             }
         });
     playing.has_track = true;
+    playing.can_jump_queue = queue.is_object();
     playing.can_skip_next = true;
     playing.can_skip_previous = true;
     playing.can_seek = playing.duration_ms > 0 && video["isLive"] != true;
@@ -710,6 +717,8 @@ mod tests {
         assert_eq!(playing.progress_ms, Some(43_000));
         assert!(playing.is_playing && playing.can_seek && playing.can_set_volume);
         assert_eq!(playing.volume_percent, Some(37));
+        assert_eq!(playing.muted, Some(false));
+        assert!(playing.can_jump_queue);
         assert_eq!(playing.repeat, Some(Repeat::Context));
         assert!(
             playing.can_shuffle && playing.shuffle.is_none(),
@@ -721,6 +730,7 @@ mod tests {
         assert!(!paused.is_playing);
         assert_eq!(paused.progress_ms, Some(42_500));
         assert_eq!(paused.volume_percent, Some(0));
+        assert_eq!(paused.muted, Some(true));
         value["player"]["trackState"] = json!(2);
         value["video"]["isLive"] = json!(true);
         value["player"]["queue"]["repeatMode"] = json!(-1);
@@ -734,6 +744,7 @@ mod tests {
         );
         value["player"]["adPlaying"] = json!(true);
         assert!(!sample(&value, Duration::ZERO).has_track);
+        assert!(!sample(&value, Duration::ZERO).can_jump_queue);
         assert_eq!(parse_queue(&value), Queue::default());
     }
 
@@ -894,6 +905,91 @@ mod tests {
                 .unwrap()
                 .windows(2)
                 .all(|pair| pair[1].duration_since(pair[0]) >= Duration::from_millis(500)));
+        });
+    }
+
+    #[test]
+    fn native_mute_preserves_volume_and_falls_back_only_without_a_reported_state() {
+        run(async {
+            let (base, seen) = fake(route);
+            let client = Arc::new(Companion::connect_to(base, |_| {}).await.unwrap());
+            let player = crate::player::Player::ytmdesktop(client.clone());
+            player.toggle_mute().await.unwrap();
+            client.snapshot.lock().unwrap().state["player"]["muted"] = json!(true);
+            player.toggle_mute().await.unwrap();
+            client.snapshot.lock().unwrap().state["player"]
+                .as_object_mut()
+                .unwrap()
+                .remove("muted");
+            player.toggle_mute().await.unwrap();
+            let commands: Vec<_> = seen
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|request| request.path.ends_with("command"))
+                .map(|request| request.body.clone())
+                .collect();
+            assert_eq!(
+                commands,
+                [
+                    json!({"command":"mute"}),
+                    json!({"command":"unmute"}),
+                    json!({"command":"setVolume","data":0})
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn random_queue_jumps_are_serialized_and_reject_a_switched_source() {
+        run(async {
+            let order = Arc::new(Mutex::new(Vec::new()));
+            let captured = order.clone();
+            let (base, seen) = fake(move |request| {
+                if request.body["command"] == "playQueueIndex" {
+                    captured
+                        .lock()
+                        .unwrap()
+                        .push(format!("jump:{}", request.body["data"]));
+                }
+                route(request)
+            });
+            let player = crate::player::Player::ytmdesktop(Arc::new(
+                Companion::connect_to(base, |_| {}).await.unwrap(),
+            ));
+            let session = crate::Session::default();
+            *session.player.write().await = Some(player);
+            let first = crate::jump_random_queue(&session, |count| {
+                order.lock().unwrap().push("choose:first".into());
+                assert_eq!(count, 3);
+                0
+            });
+            let second = crate::jump_random_queue(&session, |count| {
+                order.lock().unwrap().push("choose:last".into());
+                count - 1
+            });
+            let (first, second) = tokio::join!(first, second);
+            first.unwrap();
+            second.unwrap();
+            assert_eq!(
+                *order.lock().unwrap(),
+                ["choose:first", "jump:2", "choose:last", "jump:5"]
+            );
+            assert!(crate::jump_random_queue(&session, |_| {
+                *session.player.try_write().unwrap() = None;
+                0
+            })
+            .await
+            .unwrap_err()
+            .contains("player changed"));
+            assert_eq!(
+                seen.lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|request| request.body["command"] == "playQueueIndex")
+                    .count(),
+                2
+            );
         });
     }
 

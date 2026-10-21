@@ -11,7 +11,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { activeLine, emptySample, formatTime, positionAt, type Sample } from "./clock";
-import { applyTheme, SEARCH_TRANSLATIONS, SETTINGS_PREVIEW, type ClickThrough, type Config, type Settings, type WindowStylePreview } from "./config";
+import { applyTheme, SEARCH_TRANSLATIONS, SETTINGS_PREVIEW, WHATS_NEW_OPEN, type ClickThrough, type Config, type Settings, type WindowStylePreview } from "./config";
 import { createDeck, restPoses, stretchedHeight, type CubeFace } from "./deck";
 import { floorExtent } from "./floor";
 import { createModes, nextRepeat, REPEAT_NAMES, repeatLabel, shuffleLabel, type Modes, type Repeat } from "./modes";
@@ -47,6 +47,8 @@ interface PlaybackEvent {
   canSeek: boolean;
   volumePercent?: number | null;
   canSetVolume?: boolean;
+  muted?: boolean | null;
+  canJumpQueue?: boolean;
   deviceName: string | null;
   deviceId?: string | null;
   /** Null when unavailable; canShuffle also permits a one-shot queue shuffle. */
@@ -116,6 +118,7 @@ const ui = {
   volume: element<HTMLInputElement>("volume"),
   volumeValue: element<HTMLOutputElement>("volume-value"),
   volumeControl: element("volume-control"),
+  volumeMute: element<HTMLButtonElement>("volume-mute"),
   compactLyrics: element<HTMLInputElement>("compact-lyrics"),
   cubeLyrics: element("cube-lyrics"),
   lidTitle: element("lid-title"),
@@ -155,7 +158,10 @@ const state = {
 };
 
 let seekPreview: { start: number; position: number } | null = null;
-const deck = createDeck({ beginSeek, previewSeek, endSeek, dragWindow: () => void appWindow.startDragging() });
+const deck = createDeck({
+  beginSeek, previewSeek, endSeek, dragWindow: () => void appWindow.startDragging(),
+  randomQueue: () => { if (config?.settings.shakeToSkip) void randomQueueTrack(); },
+});
 /** The cube's column: the floor is drawn across it, and compact's glass is all of it. */
 const objectZone = ui.scene.parentElement!;
 const wave = createWave({
@@ -394,6 +400,7 @@ let volumeSupported = false;
 let volumeEditing = false;
 let volumeDirty = false;
 let volumePending = false;
+let nativeMuted: boolean | null = null;
 
 function renderVolume() {
   ui.volume.disabled = !volumeSupported || volumePending;
@@ -404,6 +411,13 @@ function renderVolume() {
   ui.volumeControl.title = volumeSupported
     ? config?.settings.player && config.settings.player !== "spotify" ? `${config.settings.player} player volume` : "Spotify active device volume"
     : "Volume control is unavailable for this player or device";
+  ui.volumeMute.disabled = volumePending || volumeEditing || (!volumeSupported && nativeMuted === null);
+  const muted = nativeMuted ?? value === 0;
+  ui.volumeMute.dataset.muted = String(muted);
+  ui.volumeMute.setAttribute("aria-pressed", String(muted));
+  ui.volumeMute.title = nativeMuted !== null ? muted ? "Unmute" : "Mute"
+    : muted ? "Set volume to 100%" : "Set volume to 0%";
+  ui.volumeMute.setAttribute("aria-label", ui.volumeMute.title);
 }
 
 function resetVolume() {
@@ -411,6 +425,7 @@ function resetVolume() {
   volumeDevice = "";
   volumeConfirmed = null;
   volumeSupported = false;
+  nativeMuted = null;
   volumeEditing = false;
   volumeDirty = false;
   volumePending = false;
@@ -427,7 +442,8 @@ function receiveVolume(payload: PlaybackEvent) {
   volumeConfirmed = typeof value === "number" && Number.isFinite(value)
     ? Math.max(0, Math.min(100, Math.round(value))) : null;
   volumeSupported = payload.canSetVolume === true && volumeConfirmed !== null;
-  if (!volumeSupported) {
+  nativeMuted = typeof payload.muted === "boolean" ? payload.muted : null;
+  if (!volumeSupported && nativeMuted === null) {
     volumeSerial++;
     volumeEditing = false;
     volumePending = false;
@@ -439,6 +455,7 @@ ui.volume.addEventListener("pointerdown", () => {
   if (ui.volume.disabled) return;
   volumeEditing = true;
   volumeDirty = false;
+  ui.volumeMute.disabled = true;
 });
 // This row sits inside the draggable titlebar; slider gestures stay controls.
 for (const event of ["pointerdown", "mousedown"]) {
@@ -448,6 +465,7 @@ ui.volume.addEventListener("input", () => {
   if (ui.volume.disabled) return;
   volumeEditing = true;
   volumeDirty = true;
+  ui.volumeMute.disabled = true;
   ui.volumeValue.textContent = `${ui.volume.value}%`;
   ui.volume.setAttribute("aria-valuetext", `${ui.volume.value}%`);
 });
@@ -474,6 +492,7 @@ ui.volume.addEventListener("change", async () => {
   volumeDirty = false;
   volumePending = true;
   ui.volume.disabled = true;
+  ui.volumeMute.disabled = true;
   ui.volumeValue.textContent = `${volumePercent}%`;
   ui.volume.setAttribute("aria-valuetext", `${volumePercent}%`);
   try {
@@ -491,6 +510,45 @@ ui.volume.addEventListener("change", async () => {
     }
   }
 });
+
+ui.volumeMute.addEventListener("click", async () => {
+  if (ui.volumeMute.disabled) return;
+  const serial = ++volumeSerial;
+  const restoreFocus = document.activeElement === ui.volumeMute;
+  volumePending = true;
+  renderVolume();
+  try {
+    await invoke("toggle_mute");
+    // Playback events report the actual mute/volume result, including changes
+    // made in the player while this request was in flight.
+  } catch (error) {
+    if (serial === volumeSerial) setNotice(String(error));
+  } finally {
+    if (serial === volumeSerial) {
+      volumePending = false;
+      renderVolume();
+      if (restoreFocus && document.activeElement === document.body) ui.volumeMute.focus();
+    }
+  }
+});
+
+let canJumpQueue = false;
+let randomQueuePending = false;
+let randomQueueSerial = 0;
+async function randomQueueTrack() {
+  if (!canJumpQueue || randomQueuePending) return;
+  const serial = ++randomQueueSerial;
+  randomQueuePending = true;
+  try { await invoke("random_queue_track"); }
+  catch (error) { if (serial === randomQueueSerial) setNotice(String(error)); }
+  finally { if (serial === randomQueueSerial) randomQueuePending = false; }
+}
+
+function resetRandomQueue() {
+  canJumpQueue = false;
+  randomQueuePending = false;
+  randomQueueSerial++;
+}
 
 function seekToFraction(clientX: number) {
   if (!state.canSeek || state.sample.durationMs <= 0) return;
@@ -761,7 +819,7 @@ function applyConfig(value: Config) {
   const commandKeys = commandButton.querySelector("kbd");
   if (commandKeys) { commandKeys.textContent = commandHint; commandKeys.hidden = !commandHint; }
   commandButton.title = commandHint ? `Commands (${commandHint})` : "Commands";
-  if (changedPlayer) { resetVolume(); modes.reset(); }
+  if (changedPlayer) { resetVolume(); modes.reset(); resetRandomQueue(); }
   applyTheme(value.settings.theme);
   wave.setAccent(value.settings.theme.accent);
   wave.setStrength(value.settings.waveStrength ?? 100);
@@ -830,6 +888,23 @@ async function openSettings() {
 }
 
 element("settings-open").addEventListener("click", () => void openSettings());
+
+let whatsNewOpening = false;
+async function openWhatsNew() {
+  if (whatsNewOpening) return;
+  whatsNewOpening = true;
+  try {
+    const open = await WebviewWindow.getByLabel("whats-new");
+    if (open) { await open.setFocus(); return; }
+    const place = await placeBesideMain(560, 640);
+    await created(new WebviewWindow("whats-new", {
+      ...CHILD_WINDOW, ...place, url: "whats-new.html", title: "Hakuro · What's new",
+      transparent: true, shadow: false, resizable: false,
+    }));
+  } catch (error) { setNotice(String(error)); }
+  finally { whatsNewOpening = false; }
+}
+const whatsNewReady = listen(WHATS_NEW_OPEN, () => void openWhatsNew());
 
 const previewReady = listen<WindowStylePreview>(SETTINGS_PREVIEW, ({ payload }) => {
   const compact = document.body.classList.contains("is-compact");
@@ -962,6 +1037,7 @@ ui.follow.addEventListener("change", () => {
 
 const playbackReady = listen<PlaybackEvent>("playback", ({ payload }) => {
   receiveVolume(payload);
+  canJumpQueue = payload.canJumpQueue === true;
   modes.receive(payload);
   // The backend's own key, verbatim: lyric events carry it and the source and
   // match commands check it, so a key rebuilt here would never match theirs.
@@ -1033,6 +1109,10 @@ function toggleClickThrough() {
 }
 
 const statusReady = listen<StatusEvent>("status", ({ payload }) => {
+  if (["error", "needs-auth", "connecting"].includes(payload.state)) {
+    resetVolume();
+    resetRandomQueue();
+  }
   ui.statusText.textContent = payload.message;
   state.statusNotice = payload.notice;
   setNotice(state.notice);
@@ -1046,7 +1126,8 @@ let appVersion = "";
 const onOff = (on: boolean) => ({ text: on ? "ON" : "OFF", on });
 const usable = (button: HTMLButtonElement) => () => !button.disabled;
 const turn = (face: CubeFace, label: string, hint: string, words: string): Command => ({
-  id: `turn${face[0].toUpperCase()}${face.slice(1)}`, group: "CUBE", icon: "■", label: `Turn cube: ${label}`, hint, words, run: () => deck.turnTo(face),
+  id: `turn${face[0].toUpperCase()}${face.slice(1)}`, group: "CUBE", icon: "■", label: `Turn cube: ${label}`, hint, words,
+  run: () => deck.turnTo(face === "right" && config?.settings.compact ? "left" : face),
 });
 
 // Most commands click the control that already does the job, so the palette can
@@ -1062,8 +1143,10 @@ const COMMANDS: Command[] = [
   { id: "seekForward", group: "PLAYBACK", icon: "→", label: "Forward 10 seconds", hint: "快轉 10 秒", words: "seek", enabled: () => state.canSeek, run: () => seekBy(10_000) },
   { id: "seekBackward", group: "PLAYBACK", icon: "←", label: "Back 10 seconds", hint: "倒轉 10 秒", words: "seek rewind", enabled: () => state.canSeek, run: () => seekBy(-10_000) },
   { id: "volumeUp", group: "PLAYBACK", icon: "+", label: "Volume up", hint: "音量 +5", words: "louder", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(5) },
+  { id: "mute", group: "PLAYBACK", icon: "◖", label: () => ui.volumeMute.title || "Mute / unmute", hint: "靜音／取消靜音", words: "mute unmute silence volume", enabled: usable(ui.volumeMute), run: () => ui.volumeMute.click() },
   { id: "volumeDown", group: "PLAYBACK", icon: "−", label: "Volume down", hint: "音量 −5", words: "quieter", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(-5) },
   { id: "queue", group: "PLAYBACK", icon: "≣", label: "Queue…", hint: "播放佇列", words: "up next queue list", enabled: usable(ui.queueOpen), run: () => ui.queueOpen.click() },
+  { id: "randomQueue", group: "PLAYBACK", icon: "⚄", label: "Random queue track", hint: "隨機跳至佇列歌曲", words: "random queue dice shake 隨機 骰子", enabled: () => canJumpQueue && !randomQueuePending, run: () => void randomQueueTrack() },
   {
     id: "shuffle", group: "PLAYBACK", icon: "⤨", label: () => modes.current.shuffle === null ? "Shuffle queue" : "Shuffle", hint: "隨機播放", words: "random shuffle",
     state: () => modes.current.shuffle === null ? null : onOff(modes.current.shuffle), visible: () => !ui.shuffle.hidden, enabled: usable(ui.shuffle), run: () => ui.shuffle.click(),
@@ -1091,6 +1174,7 @@ const COMMANDS: Command[] = [
   { id: "alwaysOnTop", group: "WINDOW", icon: "▲", label: "Keep on top", hint: "置頂", words: "pin always", state: () => onOff(ui.pin.getAttribute("aria-pressed") === "true"), enabled: usable(ui.pin), run: () => ui.pin.click() },
   { id: "clickThrough", group: "WINDOW", icon: "◇", label: "Click-through", hint: "滑鼠穿透", words: "mouse ignore", state: () => onOff(config?.settings.clickThrough === "always"), run: toggleClickThrough },
   { id: "settings", group: "WINDOW", icon: "≡", label: "Settings…", hint: () => (appVersion ? `設定 · v${appVersion}` : "設定"), words: "preferences options version 版本", run: () => element("settings-open").click() },
+  { id: "whatsNew", group: "WINDOW", icon: "✦", label: "What's new…", hint: "版本更新說明", words: "release changelog history version 更新 歷史", run: () => void openWhatsNew() },
   {
     id: "waveFull", group: "WINDOW", icon: "≈", label: "Sound wave in full mode", hint: "波動：完整模式", words: "wave visualizer floor ripple audio",
     state: () => onOff(config?.settings.waveFull ?? false), enabled: () => Boolean(config),
@@ -1232,11 +1316,12 @@ async function start() {
   try {
     await Promise.all([
       playbackReady, lyricsReady, statusReady, shortcutReady, previewReady, translationsReady,
-      paletteRunReady, paletteClosedReady,
+      paletteRunReady, paletteClosedReady, whatsNewReady,
     ]);
     void syncMaximized();
-    void showVersion();
+    await showVersion();
     applyConfig(await invoke<Config>("get_config"));
+    if (appVersion && config!.settings.lastSeenVersion !== appVersion) void openWhatsNew();
     void checkForUpdates();
     // Only Spotify needs anything typed in before it can connect.
     if (config!.settings.player === "spotify" && !config!.settings.clientId) {

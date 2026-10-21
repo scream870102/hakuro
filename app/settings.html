@@ -98,6 +98,10 @@
         </label>
         <p>A floor of tiles under the cube ripples with whatever this computer is playing. Music playing on another device, such as a phone controlled through Spotify Connect, makes no sound here, so the floor stays still. In compact mode the window grows to hold the floor. Strength sets how high the tiles rise for the same sound; above 100% quiet music moves them more, and loud music reaches the full height sooner.</p>
 
+        <h3>Cube gestures / 骰子手勢</h3>
+        <label class="follow-setting"><input id="settings-shake-to-skip" type="checkbox" /> 快速亂轉骰子，隨機跳至 Queue 歌曲</label>
+        <p>拖曳骰子快速來回旋轉後放開，隨機播放佇列中接下來的一首歌曲。僅限支援 Queue 跳轉的播放器；Command Palette 的「Random queue track」可隨時使用，不受此開關影響。</p>
+
         <!-- Every command in the palette can be bound, which makes a long list,
              so it folds away under its heading. -->
         <details class="shortcuts" id="shortcuts">
@@ -109,6 +113,7 @@
 
         <label class="follow-setting"><input id="settings-follow" type="checkbox" /> Follow lyrics automatically</label>
         <h3>Updates / 更新</h3>
+        <button id="whats-new-open" class="ghost-button" type="button">What's new / 版本更新說明</button>
         <label class="follow-setting"><input id="settings-check-updates" type="checkbox" /> Check for updates on startup / 啟動時檢查更新</label>
         <p>When a newer version is available, show a notification with a link to the latest GitHub Release.</p>
         <p id="storage-info"></p>

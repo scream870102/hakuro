@@ -22,6 +22,7 @@ export default defineConfig(() => ({
         source: "source.html",
         queue: "queue.html",
         update: "update.html",
+        "whats-new": "whats-new.html",
       },
     },
   },

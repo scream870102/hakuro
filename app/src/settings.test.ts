@@ -34,6 +34,8 @@ const initial = () => ({
     waveCompact: false,
     waveStrength: 100,
     checkUpdates: true,
+    shakeToSkip: false,
+    lastSeenVersion: "1.3.0",
     shortcuts: SHORTCUT_ACTIONS.map(([action]) => ({ action, accelerator: "", global: false, ...DEFAULT_SHORTCUTS.find((item) => item.action === action) })),
   },
   providers: [{ id: "lrclib", label: "LRCLIB" }, { id: "musixmatch", label: "Musixmatch" }],
@@ -70,6 +72,15 @@ it("fills in what is stored, then shows itself", async () => {
   expect(win.setFocus).toHaveBeenCalled();
 });
 
+it("opens release notes through main without saving the settings draft", async () => {
+  expect(el<HTMLInputElement>("settings-shake-to-skip").checked).toBe(false);
+  el("whats-new-open").click();
+  await flush();
+  expect(bridge.emitTo).toHaveBeenCalledWith("main", "whats-new:open");
+  expect(bridge.invoke.mock.calls.some(([command]) => command === "save_settings")).toBe(false);
+  expect(win.close).not.toHaveBeenCalled();
+});
+
 it("saves Client ID, provider order/enabled state, colors and follow as one settings update, then closes", async () => {
   el<HTMLInputElement>("client-id").value = `  ${"b".repeat(32)}  `;
   el<HTMLInputElement>("color-accent").value = "#abcdef";
@@ -77,6 +88,7 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
   el<HTMLInputElement>("color-past").value = "#112233";
   el<HTMLInputElement>("settings-follow").checked = false;
   el<HTMLInputElement>("settings-check-updates").checked = false;
+  el<HTMLInputElement>("settings-shake-to-skip").checked = true;
   // The floor's two switches start from what is stored, one per mode.
   expect(el<HTMLInputElement>("settings-wave-full").checked).toBe(true);
   expect(el<HTMLInputElement>("settings-wave-compact").checked).toBe(false);
@@ -96,6 +108,8 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
     theme: { accent: "#abcdef", activeLine: "#fedcba", pastLine: "#112233" },
     followLyrics: false,
     checkUpdates: false,
+    shakeToSkip: true,
+    lastSeenVersion: "1.3.0",
     alwaysOnTop: false,
     opacity: 100,
     clickThrough: "off",

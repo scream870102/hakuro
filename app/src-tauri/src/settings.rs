@@ -140,6 +140,10 @@ pub struct Settings {
     pub follow_lyrics: bool,
     /// Check GitHub for a newer release at startup; only notify, never install.
     pub check_updates: bool,
+    /// Opt-in cube gesture; direct queue commands do not depend on this setting.
+    pub shake_to_skip: bool,
+    /// Written by the release-note acknowledgement command, never supplied by it.
+    pub last_seen_version: String,
     /// Keep the window above every other window.
     ///
     /// Stored rather than reset each launch: a reader who pins the lyrics over
@@ -203,6 +207,8 @@ impl Default for Settings {
             theme: Theme::default(),
             follow_lyrics: true,
             check_updates: true,
+            shake_to_skip: false,
+            last_seen_version: String::new(),
             always_on_top: false,
             opacity: 100,
             click_through: ClickThrough::Off,
@@ -372,6 +378,25 @@ pub(crate) mod tests {
             assert_eq!(reloaded.client_id, "abc123");
             assert_eq!(reloaded.theme.accent, "#ff8800");
             assert_eq!(reloaded.sources, settings.sources);
+        });
+    }
+
+    #[test]
+    fn cube_shake_is_opt_in_and_release_acknowledgement_persists() {
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!old.shake_to_skip);
+        assert!(old.last_seen_version.is_empty());
+        with_temp_data_dir(|_| {
+            let settings = Settings {
+                shake_to_skip: true,
+                last_seen_version: env!("CARGO_PKG_VERSION").into(),
+                ..old
+            };
+            save(&settings).unwrap();
+            assert_eq!(load(), settings);
+            let json = serde_json::to_value(settings).unwrap();
+            assert_eq!(json["shakeToSkip"], true);
+            assert_eq!(json["lastSeenVersion"], env!("CARGO_PKG_VERSION"));
         });
     }
 
