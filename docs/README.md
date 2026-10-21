@@ -2,7 +2,9 @@
 
 Live site: https://scream870102.github.io/hakuro/
 
-Static Traditional Chinese product introduction for GitHub Pages. No build step or runtime dependencies. Serve this directory with a static HTTP server; all asset paths work under `/hakuro/` or a domain root. GitHub Pages publishes from `gh-pages`, `/docs`, with HTTPS enabled.
+Static Traditional Chinese product introduction for GitHub Pages. No build step or runtime dependencies. Serve this directory with a static HTTP server; all asset paths work under `/hakuro/` or a domain root.
+
+App and website source are maintained together on `main`. The `Deploy website to GitHub Pages` workflow (`.github/workflows/pages.yml`) uploads only `docs/` when this directory or the workflow changes on `main`. It can also be run manually from Actions on `main`. GitHub Pages uses the GitHub Actions publishing source, with HTTPS enabled. The old `gh-pages` branch is no longer a publishing source.
 
 ## Authentic application media
 

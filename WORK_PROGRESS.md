@@ -779,3 +779,18 @@ the canonical URL returns the intended HAKURO page. Public Edge checks pass all
 four viewport widths, 13 hotspots, keyboard/touch, drag, both video decoders,
 relative resources and reduced motion. Both public favicon files return 200 and
 match local App icon copies byte-for-byte. No publication blockers remain.
+
+## Migration to main and GitHub Actions — 2026-10-21
+
+User requested one branch for App and website with Actions deployment.
+Plan exported to EccentricVault. Main fast-forwarded to include the two website
+commits without conflicts. Added a buildless Pages workflow: main-only deploy,
+docs/workflow path triggers, manual trigger, Pages/OIDC permissions, serialized
+deployments and upload of docs/ only. Official action release tags verified via
+GitHub API. Existing App release workflow is unchanged.
+
+- [x] main contains App and docs/ together.
+- [x] Workflow and maintenance documentation prepared.
+- [x] Switch Pages to workflow mode and environment policy to main.
+- [ ] Commit/push and verify successful Actions deployment from main.
+- [ ] Verify public HTML, favicon and media match the deployed main source.
