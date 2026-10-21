@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::companion::Companion;
 use crate::spotify::Spotify;
 use crate::ytmdesktop::Ytmdesktop;
 
@@ -21,6 +22,8 @@ use crate::ytmdesktop::Ytmdesktop;
 pub enum PlayerKind {
     #[default]
     Spotify,
+    /// YouTube Music Desktop's Companion API, independent of ytmdesktop2.
+    Ytmdesktop,
     /// YouTube Music in the ytmdesktop2 app, read through its local API, which
     /// names the exact video rather than only its title. "ytmusic" was the
     /// system media session, which is gone; a settings file that still names
@@ -38,6 +41,7 @@ impl PlayerKind {
     pub fn prefix(self) -> &'static str {
         match self {
             PlayerKind::Spotify => "sp",
+            PlayerKind::Ytmdesktop => "ytmd",
             PlayerKind::Ytmdesktop2 => "ytmd2",
         }
     }
@@ -45,11 +49,12 @@ impl PlayerKind {
     pub fn label(self) -> &'static str {
         match self {
             PlayerKind::Spotify => "Spotify",
+            PlayerKind::Ytmdesktop => "ytmdesktop",
             PlayerKind::Ytmdesktop2 => "ytmdesktop2",
         }
     }
 
-    /// Only Spotify needs a Client ID; ytmdesktop2 pairs by approval instead.
+    /// Only Spotify needs a Client ID; the desktop apps pair by approval.
     pub fn needs_client_id(self) -> bool {
         matches!(self, PlayerKind::Spotify)
     }
@@ -57,7 +62,7 @@ impl PlayerKind {
     /// Whether the song is playing on YouTube Music, whose own lyrics are then
     /// the closest match there is.
     pub fn plays_youtube_music(self) -> bool {
-        matches!(self, PlayerKind::Ytmdesktop2)
+        matches!(self, PlayerKind::Ytmdesktop | PlayerKind::Ytmdesktop2)
     }
 }
 
@@ -120,6 +125,8 @@ pub struct Playback {
     pub can_shuffle: bool,
     pub can_repeat_context: bool,
     pub can_repeat_track: bool,
+    /// Changes when a realtime backend reports a different queue.
+    pub queue_revision: Option<String>,
     /// Which backend produced this sample. Part of the database key.
     pub source: PlayerKind,
 }
@@ -175,6 +182,7 @@ static NEXT_SERIAL: AtomicU64 = AtomicU64::new(1);
 
 enum Backend {
     Spotify(Arc<Spotify>),
+    Ytmdesktop(Arc<Companion>),
     Ytmdesktop2(Arc<Ytmdesktop>),
 }
 
@@ -194,6 +202,10 @@ impl Player {
         Self::wrap(Backend::Ytmdesktop2(client))
     }
 
+    pub fn ytmdesktop(client: Arc<Companion>) -> Self {
+        Self::wrap(Backend::Ytmdesktop(client))
+    }
+
     fn wrap(backend: Backend) -> Self {
         Self {
             serial: NEXT_SERIAL.fetch_add(1, Ordering::SeqCst),
@@ -204,6 +216,7 @@ impl Player {
     pub fn kind(&self) -> PlayerKind {
         match self.backend.as_ref() {
             Backend::Spotify(_) => PlayerKind::Spotify,
+            Backend::Ytmdesktop(_) => PlayerKind::Ytmdesktop,
             Backend::Ytmdesktop2(_) => PlayerKind::Ytmdesktop2,
         }
     }
@@ -211,6 +224,7 @@ impl Player {
     pub async fn playback(&self) -> Result<Playback, PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.playback().await.map_err(Into::into),
+            Backend::Ytmdesktop(client) => client.playback().await,
             Backend::Ytmdesktop2(client) => client.playback().await,
         }
     }
@@ -218,6 +232,7 @@ impl Player {
     pub async fn play(&self) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.play().await.map_err(Into::into),
+            Backend::Ytmdesktop(client) => client.play().await,
             Backend::Ytmdesktop2(client) => client.play().await,
         }
     }
@@ -225,6 +240,7 @@ impl Player {
     pub async fn pause(&self) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.pause().await.map_err(Into::into),
+            Backend::Ytmdesktop(client) => client.pause().await,
             Backend::Ytmdesktop2(client) => client.pause().await,
         }
     }
@@ -232,6 +248,7 @@ impl Player {
     pub async fn next(&self) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.next().await.map_err(Into::into),
+            Backend::Ytmdesktop(client) => client.next().await,
             Backend::Ytmdesktop2(client) => client.next().await,
         }
     }
@@ -239,6 +256,7 @@ impl Player {
     pub async fn previous(&self) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.previous().await.map_err(Into::into),
+            Backend::Ytmdesktop(client) => client.previous().await,
             Backend::Ytmdesktop2(client) => client.previous().await,
         }
     }
@@ -246,6 +264,7 @@ impl Player {
     pub async fn seek(&self, position_ms: i64) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.seek(position_ms).await.map_err(Into::into),
+            Backend::Ytmdesktop(client) => client.seek(position_ms).await,
             Backend::Ytmdesktop2(client) => client.seek(position_ms).await,
         }
     }
@@ -256,7 +275,11 @@ impl Player {
         device_id: Option<String>,
     ) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
-            Backend::Spotify(client) => client.set_volume(volume_percent, device_id.as_deref()).await.map_err(Into::into),
+            Backend::Spotify(client) => client
+                .set_volume(volume_percent, device_id.as_deref())
+                .await
+                .map_err(Into::into),
+            Backend::Ytmdesktop(client) => client.set_volume(volume_percent).await,
             Backend::Ytmdesktop2(client) => client.set_volume(volume_percent).await,
         }
     }
@@ -264,6 +287,7 @@ impl Player {
     pub async fn queue(&self) -> Result<Queue, PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.queue().await.map_err(Into::into),
+            Backend::Ytmdesktop(client) => client.queue().await,
             Backend::Ytmdesktop2(client) => client.queue().await,
         }
     }
@@ -273,6 +297,7 @@ impl Player {
     pub async fn jump(&self, uri: &str, position: usize) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.jump(uri, position).await.map_err(Into::into),
+            Backend::Ytmdesktop(client) => client.jump(uri, position).await,
             Backend::Ytmdesktop2(_) => Err(unsupported("Playing a queued song")),
         }
     }
@@ -280,6 +305,7 @@ impl Player {
     pub async fn set_shuffle(&self, on: bool) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.set_shuffle(on).await.map_err(Into::into),
+            Backend::Ytmdesktop(client) => client.set_shuffle(on).await,
             Backend::Ytmdesktop2(_) => Err(unsupported("Shuffle")),
         }
     }
@@ -287,6 +313,7 @@ impl Player {
     pub async fn set_repeat(&self, repeat: Repeat) -> Result<(), PlayerError> {
         match self.backend.as_ref() {
             Backend::Spotify(client) => client.set_repeat(repeat).await.map_err(Into::into),
+            Backend::Ytmdesktop(client) => client.set_repeat(repeat).await,
             Backend::Ytmdesktop2(_) => Err(unsupported("Repeat")),
         }
     }
@@ -308,6 +335,7 @@ mod tests {
     fn every_source_gets_its_own_cache_prefix() {
         let prefixes = [
             PlayerKind::Spotify.prefix(),
+            PlayerKind::Ytmdesktop.prefix(),
             PlayerKind::Ytmdesktop2.prefix(),
             // The retired system media session's rows are still in old databases.
             "ytm",
@@ -323,22 +351,32 @@ mod tests {
     #[test]
     fn only_spotify_asks_for_a_client_id() {
         assert!(PlayerKind::Spotify.needs_client_id());
+        assert!(!PlayerKind::Ytmdesktop.needs_client_id());
         assert!(!PlayerKind::Ytmdesktop2.needs_client_id());
     }
 
     #[test]
-    fn the_youtube_music_player_offers_its_own_lyrics() {
+    fn both_youtube_music_players_offer_native_lyrics() {
+        assert!(PlayerKind::Ytmdesktop.plays_youtube_music());
         assert!(PlayerKind::Ytmdesktop2.plays_youtube_music());
         assert!(!PlayerKind::Spotify.plays_youtube_music());
     }
 
     #[test]
     fn the_stored_name_of_each_source_survives_a_round_trip() {
-        for kind in [PlayerKind::Spotify, PlayerKind::Ytmdesktop2] {
+        for kind in [
+            PlayerKind::Spotify,
+            PlayerKind::Ytmdesktop,
+            PlayerKind::Ytmdesktop2,
+        ] {
             let json = serde_json::to_string(&kind).unwrap();
             let back: PlayerKind = serde_json::from_str(&json).unwrap();
             assert_eq!(kind, back, "settings.json must reload the chosen source");
         }
+        assert_eq!(
+            serde_json::to_string(&PlayerKind::Ytmdesktop).unwrap(),
+            "\"ytmdesktop\""
+        );
         assert_eq!(
             serde_json::to_string(&PlayerKind::Ytmdesktop2).unwrap(),
             "\"ytmdesktop2\""
@@ -359,7 +397,10 @@ mod tests {
             (Repeat::Track, "track"),
         ] {
             assert_eq!(repeat.as_str(), name);
-            assert_eq!(serde_json::to_string(&repeat).unwrap(), format!("\"{name}\""));
+            assert_eq!(
+                serde_json::to_string(&repeat).unwrap(),
+                format!("\"{name}\"")
+            );
         }
     }
 }

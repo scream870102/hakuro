@@ -1,6 +1,6 @@
 [package]
 name = "hakuro"
-version = "1.5.4"
+version = "1.6.0"
 description = "Original-language lyrics for whatever Spotify is playing."
 authors = ["Eccentric Studio"]
 edition = "2021"
@@ -26,6 +26,8 @@ serde_json = "1"
 semver = "1"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "default-tls", "query", "form"] }
 tokio = { version = "1.53.1", features = ["time", "sync", "rt", "macros"] }
+tokio-tungstenite = "0.30"
+futures-util = { version = "0.3", features = ["sink"] }
 regex = "1.13.1"
 unicode-normalization = "0.1.25"
 caseless = "0.2.2"

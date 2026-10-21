@@ -151,6 +151,29 @@ it("refuses a port ytmdesktop2 would not accept, but only while it is the player
   expect((saved[1] as { incoming: { ytmdPort: number } }).incoming.ytmdPort).toBe(13091);
 });
 
+it("keeps ytmdesktop separate from ytmdesktop2 and preserves its port", async () => {
+  const player = el<HTMLSelectElement>("settings-player");
+  expect([...player.options].map((option) => option.value)).toEqual(["spotify", "ytmdesktop", "ytmdesktop2"]);
+  expect(el("ytmdesktop-settings").hidden).toBe(true);
+  player.value = "ytmdesktop";
+  player.dispatchEvent(new Event("change"));
+  expect(el("ytmdesktop-settings").hidden).toBe(false);
+  expect(el("spotify-settings").hidden).toBe(true);
+  expect(el("ytmd-settings").hidden).toBe(true);
+  expect(el("ytmdesktop-settings").textContent).toContain("Companion server");
+  expect(el("ytmdesktop-settings").textContent).toContain("Enable companion authorization");
+  expect(el("ytmdesktop-settings").textContent).toContain("30 seconds");
+  expect(el("ytmdesktop-settings").querySelector("input")).toBeNull();
+  el<HTMLInputElement>("ytmd-port").value = "invalid";
+  submit();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("save_settings", { incoming: expect.objectContaining({ player: "ytmdesktop", ytmdPort: 13091 }) });
+  player.value = "ytmdesktop2";
+  player.dispatchEvent(new Event("change"));
+  expect(el("ytmdesktop-settings").hidden).toBe(true);
+  expect(el("ytmd-settings").hidden).toBe(false);
+});
+
 it("previews the opacity, size and wave strength dials on the main window as they move", async () => {
   const size = el<HTMLInputElement>("settings-lyric-size");
   size.value = "40";

@@ -411,6 +411,7 @@ impl Spotify {
             can_shuffle: allowed("toggling_shuffle"),
             can_repeat_context: allowed("toggling_repeat_context"),
             can_repeat_track: allowed("toggling_repeat_track"),
+            queue_revision: None,
             source: PlayerKind::Spotify,
         })
     }

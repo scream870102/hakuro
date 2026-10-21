@@ -1,5 +1,5 @@
-//! Current-Windows-user DPAPI storage for the two secrets a player hands out:
-//! Spotify's refresh token and ytmdesktop2's API token. Each lives in its own
+//! Current-Windows-user DPAPI storage for each player's secret:
+//! Spotify's refresh token and the desktop apps' API tokens. Each lives in its own
 //! file, so forgetting one never costs the reader the other.
 //!
 //! Ported from the Python `token_store`. Windows API signatures and ownership:
@@ -19,8 +19,10 @@ use windows::Win32::Security::Cryptography::{
 
 pub const SESSION_FILE: &str = "session.bin";
 pub const YTMD_SESSION_FILE: &str = "ytmd-session.bin";
+pub const COMPANION_SESSION_FILE: &str = "companion-session.bin";
 /// ytmdesktop2 has no client id; its token is bound to this name instead.
 const YTMD_BINDING: &str = "ytmdesktop2";
+const COMPANION_BINDING: &str = "ytmdesktop";
 
 /// An encrypted blob far larger than this is not something this app wrote.
 const MAX_ENCRYPTED_BYTES: usize = 131_072;
@@ -151,6 +153,18 @@ pub fn clear_ytmd_token() {
     clear(YTMD_SESSION_FILE);
 }
 
+pub fn load_companion_token() -> Option<String> {
+    load(COMPANION_SESSION_FILE, COMPANION_BINDING)
+}
+
+pub fn save_companion_token(token: &str) -> Result<(), String> {
+    save(COMPANION_SESSION_FILE, COMPANION_BINDING, token)
+}
+
+pub fn clear_companion_token() {
+    clear(COMPANION_SESSION_FILE);
+}
+
 fn load(file: &str, binding: &str) -> Option<String> {
     let path = cache_path(file).ok()?;
     let mut encrypted = fs::read(path).ok()?;
@@ -244,15 +258,24 @@ mod tests {
     }
 
     #[test]
-    fn the_two_players_keep_their_tokens_apart() {
+    fn all_players_keep_their_tokens_apart() {
         with_temp_data_dir(|_| {
             save_refresh_token("client-one", "spotify-token").unwrap();
             save_ytmd_token("ytmd-token").unwrap();
+            save_companion_token("companion-token").unwrap();
             assert_eq!(load_ytmd_token().as_deref(), Some("ytmd-token"));
+            assert_eq!(load_companion_token().as_deref(), Some("companion-token"));
+            assert!(load(COMPANION_SESSION_FILE, YTMD_BINDING).is_none());
+            assert!(load(YTMD_SESSION_FILE, COMPANION_BINDING).is_none());
 
             // Forgetting one player's token must not sign the reader out of the other.
             clear_ytmd_token();
             assert!(load_ytmd_token().is_none());
+            assert_eq!(load_companion_token().as_deref(), Some("companion-token"));
+            save_ytmd_token("ytmd-token").unwrap();
+            clear_companion_token();
+            assert!(load_companion_token().is_none());
+            assert_eq!(load_ytmd_token().as_deref(), Some("ytmd-token"));
             assert_eq!(
                 load_refresh_token("client-one").as_deref(),
                 Some("spotify-token")
@@ -266,5 +289,6 @@ mod tests {
         assert!(save_refresh_token("", "token").is_err());
         assert!(save_refresh_token("client", "").is_err());
         assert!(save_ytmd_token("").is_err());
+        assert!(save_companion_token("").is_err());
     }
 }

@@ -213,6 +213,7 @@ function renderSourceOrder() {
 function showPlayerSettings(player: PlayerKind) {
   element("spotify-settings").hidden = player !== "spotify";
   element("ytmd-settings").hidden = player !== "ytmdesktop2";
+  element("ytmdesktop-settings").hidden = player !== "ytmdesktop";
 }
 
 /** The typed port, or undefined when ytmdesktop2 would not accept it. */

@@ -1,8 +1,8 @@
 //! Application wiring: playback polling, lyric lookups, and the commands the
 //! interface calls.
 //!
-//! Two playback sources are supported and exactly one is live: Spotify over its
-//! Web API, or YouTube Music through ytmdesktop2's local API. The choice is a
+//! Exactly one playback source is live: Spotify over its Web API, or YouTube
+//! Music through either desktop app's local API. The choice is a
 //! setting, and changing it drops the old connection so the poll loop below
 //! ends and a new one starts.
 //!
@@ -10,6 +10,7 @@
 //! frontend owns only presentation and the sub-second position extrapolation
 //! that keeps the highlight smooth between polls.
 
+mod companion;
 mod db;
 mod lrc;
 mod matching;
@@ -37,6 +38,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::RwLock;
 
+use companion::Companion;
 use db::Db;
 use lrc::Cue;
 use player::{Playback, Player, PlayerError, PlayerKind, Queue, QueueItem, Repeat};
@@ -45,7 +47,7 @@ use settings::Settings;
 use spotify::Spotify;
 use ytmdesktop::Ytmdesktop;
 
-/// ytmdesktop2 is local and free to ask, so it is polled briskly.
+/// Local backends are sampled briskly; Companion reads its realtime cache.
 const LOCAL_POLL_INTERVAL: Duration = Duration::from_millis(1500);
 /// Spotify counts every request against a daily quota. While a song plays the
 /// frontend extrapolates the position, so a sample only has to catch changes
@@ -278,9 +280,7 @@ async fn save_settings(
     // source altogether. A Client ID edited while following YouTube Music
     // changes nothing that is running, so it does not reconnect. ytmdesktop2's
     // port is where the open connection points, so moving it does.
-    let identity_changed = incoming.player != previous.player
-        || (incoming.player.needs_client_id() && incoming.client_id != previous.client_id)
-        || (incoming.player == PlayerKind::Ytmdesktop2 && incoming.ytmd_port != previous.ytmd_port);
+    let identity_changed = !same_player_connection(&incoming, &previous);
     let mut active = state.shortcuts.read().unwrap().clone();
     let outcome = shortcuts::replace(
         &mut active,
@@ -364,8 +364,10 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
         "",
     );
 
-    if settings.player == PlayerKind::Ytmdesktop2 {
-        return connect_ytmdesktop2(&app, &state, settings.ytmd_port).await;
+    match settings.player {
+        PlayerKind::Ytmdesktop => return connect_companion(&app, &state, &settings).await,
+        PlayerKind::Ytmdesktop2 => return connect_ytmdesktop2(&app, &state, &settings).await,
+        PlayerKind::Spotify => {}
     }
 
     let stored = settings.client_id.clone();
@@ -384,7 +386,11 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
 
     let client = Arc::new(Spotify::new(client_id.clone()).map_err(|error| error.to_string())?);
 
-    let needs_browser = match client.connect_session().await {
+    let session = client.connect_session().await;
+    if !same_player_connection(&*state.settings.read().await, &settings) {
+        return Err("The player changed while connecting. Connect again.".into());
+    }
+    let needs_browser = match session {
         Ok(needs_browser) => needs_browser,
         Err(error) => {
             emit_status(&app, "error", "Connection failed", error.to_string());
@@ -405,10 +411,13 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
             emit_status(&app, "error", "Connection failed", message);
             return Err(message.to_string());
         }
-        if let Err(error) = client
+        let authorization = client
             .complete_authorization(verifier, expected_state)
-            .await
-        {
+            .await;
+        if !same_player_connection(&*state.settings.read().await, &settings) {
+            return Err("The player changed during authorization. Connect again.".into());
+        }
+        if let Err(error) = authorization {
             emit_status(&app, "error", "Connection failed", error.to_string());
             return Err(error.to_string());
         }
@@ -424,13 +433,65 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
             format!("{notice} {warning}")
         };
     }
-    if state.settings.read().await.client_id != client_id {
-        return Err("Client ID changed during authorization. Connect again.".into());
+    let current_settings = state.settings.read().await;
+    if !same_player_connection(&current_settings, &settings) {
+        return Err("The player changed during authorization. Connect again.".into());
     }
     *state.session.player.write().await = Some(Player::spotify(client));
+    drop(current_settings);
     emit_status(&app, "connected", "Connected", notice);
 
     start_polling(&app, &state).await;
+    Ok(())
+}
+
+/// Only settings that identify the active connection can invalidate its result.
+fn same_player_connection(current: &Settings, requested: &Settings) -> bool {
+    current.player == requested.player
+        && match current.player {
+            PlayerKind::Spotify => current.client_id == requested.client_id,
+            PlayerKind::Ytmdesktop2 => current.ytmd_port == requested.ytmd_port,
+            PlayerKind::Ytmdesktop => true,
+        }
+}
+
+async fn connect_companion(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    requested: &Settings,
+) -> Result<(), String> {
+    let client = Companion::connect(|code| {
+        emit_status(
+            app,
+            "authorizing",
+            format!("Approve Hakuro in ytmdesktop - code {code}"),
+            "In ytmdesktop, open Settings > Integrations, enable Companion server and Enable companion authorization, then approve Hakuro within 30 seconds.",
+        )
+    })
+    .await;
+    let current_settings = state.settings.read().await;
+    if !same_player_connection(&current_settings, requested) {
+        return Err("The player changed while connecting. Connect again.".into());
+    }
+    let client = match client {
+        Ok(client) => Arc::new(client),
+        Err(error) => {
+            emit_status(app, "error", "Connection failed", error.to_string());
+            return Err(error.to_string());
+        }
+    };
+    let notice = [
+        client.cache_warning(),
+        state.db.warning().unwrap_or_default(),
+    ]
+    .into_iter()
+    .filter(|warning| !warning.is_empty())
+    .collect::<Vec<_>>()
+    .join(" ");
+    *state.session.player.write().await = Some(Player::ytmdesktop(client));
+    drop(current_settings);
+    emit_status(app, "connected", "Connected", notice);
+    start_polling(app, state).await;
     Ok(())
 }
 
@@ -439,9 +500,9 @@ async fn connect(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
 async fn connect_ytmdesktop2(
     app: &AppHandle,
     state: &State<'_, AppState>,
-    port: u16,
+    requested: &Settings,
 ) -> Result<(), String> {
-    let client = Ytmdesktop::connect(port, |code| {
+    let client = Ytmdesktop::connect(requested.ytmd_port, |code| {
         emit_status(
             app,
             "authorizing",
@@ -450,6 +511,12 @@ async fn connect_ytmdesktop2(
         )
     })
     .await;
+    // Hold the settings read guard through installation, so a late result
+    // cannot attach a backend after its source or port has been changed.
+    let current_settings = state.settings.read().await;
+    if !same_player_connection(&current_settings, requested) {
+        return Err("The player changed while connecting. Connect again.".into());
+    }
     let client = match client {
         Ok(client) => Arc::new(client),
         Err(error) => {
@@ -457,11 +524,6 @@ async fn connect_ytmdesktop2(
             return Err(error.to_string());
         }
     };
-    // The reader may have switched player or port while this waited.
-    let settings = state.settings.read().await.clone();
-    if settings.player != PlayerKind::Ytmdesktop2 || settings.ytmd_port != port {
-        return Err("The player changed while connecting. Connect again.".into());
-    }
     let notice = [
         client.cache_warning(),
         state.db.warning().unwrap_or_default(),
@@ -471,6 +533,7 @@ async fn connect_ytmdesktop2(
     .collect::<Vec<_>>()
     .join(" ");
     *state.session.player.write().await = Some(Player::ytmdesktop2(client));
+    drop(current_settings);
     emit_status(app, "connected", "Connected", notice);
     start_polling(app, state).await;
     Ok(())
@@ -563,10 +626,11 @@ async fn poll_loop(app: AppHandle) {
                 *state.session.player.write().await = None;
                 *state.session.polling.write().await = false;
                 let message = match client.kind() {
+                    PlayerKind::Ytmdesktop => "ytmdesktop access revoked; reconnect to pair again",
                     PlayerKind::Ytmdesktop2 => {
                         "ytmdesktop2 access revoked; reconnect to pair again"
                     }
-                    _ => "Spotify sign-in expired",
+                    PlayerKind::Spotify => "Spotify sign-in expired",
                 };
                 emit_status(&app, "needs-auth", message, "");
                 break;
@@ -1077,9 +1141,7 @@ async fn set_repeat(repeat: Repeat, state: State<'_, AppState>) -> Result<(), St
     with_client(&state, |client| async move { client.set_repeat(repeat).await }).await
 }
 
-/// The playing song and what follows, for the queue window. The playing song
-/// is the last sample's when there is one: it carries the artist and picture
-/// that ytmdesktop2's queue leaves out.
+/// Prefer the queue's current song; a previous playback poll can be stale.
 #[tauri::command]
 async fn get_queue(state: State<'_, AppState>) -> Result<Queue, String> {
     let client = state
@@ -1090,23 +1152,24 @@ async fn get_queue(state: State<'_, AppState>) -> Result<Queue, String> {
         .clone()
         .ok_or_else(|| "Not connected to a player".to_string())?;
     let mut queue = client.queue().await.map_err(|error| error.to_string())?;
-    if let Some(playing) = state
-        .session
-        .current_playback
-        .read()
-        .await
-        .as_ref()
-        .filter(|sample| sample.has_track && sample.source == client.kind())
-    {
-        queue.now = Some(QueueItem {
-            title: playing.name.clone(),
-            artists: playing.artists.clone(),
-            duration_ms: playing.duration_ms,
-            art: playing.album_art.clone(),
-            uri: queue.now.map(|now| now.uri).unwrap_or_default(),
-        });
-    }
+    let playback = state.session.current_playback.read().await;
+    fill_missing_queue_song(&mut queue, playback.as_ref(), client.kind());
     Ok(queue)
+}
+
+fn fill_missing_queue_song(queue: &mut Queue, playback: Option<&Playback>, source: PlayerKind) {
+    if queue.now.is_none() {
+        if let Some(playing) = playback.filter(|sample| sample.has_track && sample.source == source)
+        {
+            queue.now = Some(QueueItem {
+                title: playing.name.clone(),
+                artists: playing.artists.clone(),
+                duration_ms: playing.duration_ms,
+                art: playing.album_art.clone(),
+                uri: String::new(),
+            });
+        }
+    }
 }
 
 /// Play a queued song. `position` is where the window listed it.
@@ -1177,8 +1240,8 @@ mod tests {
     }
 
     #[test]
-    fn ytmdesktop2_hands_the_lyric_lookup_its_videos_not_a_spotify_id() {
-        let playing = Playback {
+    fn both_desktop_apps_use_exact_youtube_videos_and_separate_lyric_caches() {
+        let mut playing = Playback {
             name: "Title".into(),
             artists: vec!["Artist".into()],
             track_id: "dQw4w9WgXcQ".into(),
@@ -1187,10 +1250,19 @@ mod tests {
             source: PlayerKind::Ytmdesktop2,
             ..Playback::default()
         };
-        let query = lyric_query(&playing);
-        assert_eq!(query.spotify_id, None);
-        assert_eq!(query.video_ids, ["dQw4w9WgXcQ", "lYBUbBu4W08"]);
-        assert_eq!(track_key(&playing), "ytmd2:dQw4w9WgXcQ");
+        for (source, prefix) in [
+            (PlayerKind::Ytmdesktop, "ytmd"),
+            (PlayerKind::Ytmdesktop2, "ytmd2"),
+        ] {
+            playing.source = source;
+            let query = lyric_query(&playing);
+            assert_eq!(query.spotify_id, None);
+            assert_eq!(query.video_ids, ["dQw4w9WgXcQ", "lYBUbBu4W08"]);
+            assert_eq!(track_key(&playing), format!("{prefix}:dQw4w9WgXcQ"));
+            assert!(Settings::default()
+                .lyric_order(source)
+                .contains(&"youtube_music".into()));
+        }
         // The interface never sees the ids; they are a backend matter.
         let event = serde_json::to_value(&playing).unwrap();
         assert!(event.get("videoIds").is_none() && event.get("video_ids").is_none());
@@ -1241,6 +1313,7 @@ mod tests {
             can_shuffle: true,
             can_repeat_context: true,
             can_repeat_track: true,
+            queue_revision: None,
             source: PlayerKind::Spotify,
         }
     }
@@ -1264,6 +1337,65 @@ mod tests {
 
         sample.source = PlayerKind::Ytmdesktop2;
         assert_eq!(poll_delay(&sample), LOCAL_POLL_INTERVAL);
+        sample.source = PlayerKind::Ytmdesktop;
+        assert_eq!(poll_delay(&sample), LOCAL_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn late_connections_are_rejected_when_their_source_or_identity_changes() {
+        let original = Settings::default();
+        let mut current = original.clone();
+        current.player = PlayerKind::Ytmdesktop;
+        assert!(!same_player_connection(&current, &original));
+        current.player = PlayerKind::Ytmdesktop2;
+        assert!(!same_player_connection(&current, &original));
+
+        current = original.clone();
+        current.client_id = "another-client".into();
+        assert!(!same_player_connection(&current, &original));
+
+        for player in [PlayerKind::Ytmdesktop, PlayerKind::Ytmdesktop2] {
+            let requested = Settings {
+                player,
+                ..original.clone()
+            };
+            let mut current = requested.clone();
+            current.client_id = "irrelevant-to-local-player".into();
+            assert!(same_player_connection(&current, &requested));
+            current.ytmd_port = requested.ytmd_port + 1;
+            assert_eq!(
+                same_player_connection(&current, &requested),
+                player == PlayerKind::Ytmdesktop
+            );
+        }
+    }
+
+    #[test]
+    fn queue_snapshot_wins_over_an_older_playback_poll() {
+        let current = QueueItem {
+            title: "New song".into(),
+            uri: "queue:8".into(),
+            ..QueueItem::default()
+        };
+        let mut queue = Queue {
+            now: Some(current.clone()),
+            ..Queue::default()
+        };
+        let mut older = playback();
+        older.source = PlayerKind::Ytmdesktop;
+        fill_missing_queue_song(&mut queue, Some(&older), PlayerKind::Ytmdesktop);
+        assert_eq!(queue.now, Some(current));
+
+        queue.now = None;
+        fill_missing_queue_song(&mut queue, Some(&older), PlayerKind::Ytmdesktop2);
+        assert!(queue.now.is_none());
+        fill_missing_queue_song(&mut queue, Some(&older), PlayerKind::Ytmdesktop);
+        assert_eq!(queue.now.as_ref().unwrap().title, older.name);
+        assert!(queue.now.as_ref().unwrap().uri.is_empty());
+        queue.now = None;
+        older.has_track = false;
+        fill_missing_queue_song(&mut queue, Some(&older), PlayerKind::Ytmdesktop);
+        assert!(queue.now.is_none());
     }
 
     /// The interface reads these names literally. A flattened struct does not
@@ -1303,6 +1435,7 @@ mod tests {
             "canShuffle",
             "canRepeatContext",
             "canRepeatTrack",
+            "queueRevision",
             "generation",
         ] {
             assert!(object.contains_key(key), "missing key: {key}");
@@ -1317,6 +1450,7 @@ mod tests {
             "can_seek",
             "volume_percent",
             "can_set_volume",
+            "queue_revision",
         ] {
             assert!(!object.contains_key(key), "snake_case leaked: {key}");
         }
@@ -1451,9 +1585,14 @@ mod tests {
         let mut spotify = playback();
         spotify.track_id = String::new();
         let mut ytmd = spotify.clone();
+        ytmd.source = PlayerKind::Ytmdesktop;
+        assert_eq!(track_key(&ytmd), "ytmd:Title|180000");
+        assert_ne!(track_key(&spotify), track_key(&ytmd));
+        let companion_key = track_key(&ytmd);
         ytmd.source = PlayerKind::Ytmdesktop2;
         assert_eq!(track_key(&ytmd), "ytmd2:Title|180000");
         assert_ne!(track_key(&spotify), track_key(&ytmd));
+        assert_ne!(companion_key, track_key(&ytmd));
     }
 
     /// Read-only: needs ytmdesktop2 running with its API on the default port

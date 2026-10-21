@@ -106,9 +106,10 @@ function playback(trackId = "song-a", generation = 1, progressMs = 0, isPlaying 
   bridge.listeners.get("playback")!({ payload: {
     trackId, generation, name: trackId, artists: ["Artist"], album: "Album", albumArt: null,
     durationMs: 100000, progressMs, isPlaying, hasTrack: true,
-    canSkipNext: true, canSkipPrevious: true, canSeek: true, deviceName: null, ...extra,
+    canSkipNext: true, canSkipPrevious: true, canSeek: true, deviceName: null,
     // As the backend builds it: source-prefixed, falling back to name and length.
     trackKey: `spotify:${trackId || `${trackId}|100000`}`,
+    ...extra,
   } });
 }
 function lyrics(generation: number, text: string, matchedTitle = "") {
@@ -274,9 +275,9 @@ it("disables unsupported volume and discards pending replies when the player cha
   expect(el("notice").textContent).not.toContain("Old Spotify error");
 });
 
-it("connects to ytmdesktop2 without setup and lets its volume be set", async () => {
+it.each(["ytmdesktop", "ytmdesktop2"])("connects to %s without Spotify setup and lets its volume be set", async (player) => {
   bridge.invoke.mockImplementation(async (command: string) => {
-    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, player: "ytmdesktop2", clientId: "", ytmdPort: 13091 } };
+    if (command === "get_config") return { ...initial(), settings: { ...initial().settings, player, clientId: "", ytmdPort: 13091 } };
   });
   await import("./main");
   await flush();
@@ -284,11 +285,11 @@ it("connects to ytmdesktop2 without setup and lets its volume be set", async () 
   // Unlike Spotify, an empty Client ID is no reason to stop and open Settings.
   expect(bridge.invoke.mock.calls.some(([command]) => command === "connect")).toBe(true);
   expect(children.has("settings")).toBe(false);
-  playback("song-a", 1, 0, false, { volumePercent: 37, canSetVolume: true, deviceName: "ytmdesktop2" });
+  playback("song-a", 1, 0, false, { volumePercent: 37, canSetVolume: true, deviceName: player });
   const volume = el<HTMLInputElement>("volume");
   expect(volume.disabled).toBe(false);
   expect(el("volume-value").textContent).toBe("37%");
-  expect(el("volume-control").title).toBe("ytmdesktop2 player volume");
+  expect(el("volume-control").title).toBe(`${player} player volume`);
   volume.value = "60";
   volume.dispatchEvent(new Event("change"));
   await flush();
@@ -1254,6 +1255,41 @@ it("hides shuffle and repeat for a player that cannot report them", async () => 
   playback("ytmd2:song-a", 2, 0, true, { shuffle: null, repeat: null });
   expect(el("shuffle").hidden).toBe(true);
   expect(el("repeat").hidden).toBe(true);
+});
+
+it("switches from Spotify toggles to ytmdesktop queue shuffle in the bar, lid and palette", async () => {
+  await import("./main");
+  await flush();
+  playback("song-a", 1, 0, true, { ...MODES, trackKey: "sp:song-a" });
+  el("shuffle").click();
+  el("repeat").click();
+  await flush();
+  runFrame();
+  const lid = document.querySelector<HTMLButtonElement>('.lid .tool[data-proxy="shuffle"]')!;
+  expect(lid.getAttribute("aria-pressed")).toBe("true");
+  playback("song-b", 2, 0, true, { ...MODES, trackKey: "ytmd:song-b", shuffle: null, repeat: "track" });
+  runFrame();
+  expect(el("shuffle").hidden).toBe(false);
+  expect(el("shuffle").getAttribute("aria-label")).toBe("Shuffle queue");
+  expect(el("shuffle").hasAttribute("aria-pressed")).toBe(false);
+  expect(lid.hasAttribute("aria-pressed")).toBe(false);
+  expect(el("repeat").dataset.mode).toBe("track");
+  bridge.invoke.mockClear();
+  lid.click();
+  await flush();
+  const action = (await openPalette()).commands.find((command) => command.label === "Shuffle queue")!;
+  expect(action.state).toBeNull();
+  expect(action.enabled).toBe(true);
+  runInPalette({ command: action.id });
+  await flush();
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "set_shuffle").map(([, args]) => args)).toEqual([{ on: true }, { on: true }]);
+  expect(bridge.emitTo).toHaveBeenCalledWith("queue", "queue:changed");
+  playback("song-b", 3, 0, true, { trackKey: "ytmd2:song-b", shuffle: null, repeat: null, canShuffle: false });
+  expect(el("shuffle").hidden).toBe(true);
+  expect(el("repeat").hidden).toBe(true);
+  playback("song-b", 4, 0, true, { ...MODES, trackKey: "ytmd:song-b", shuffle: null });
+  expect(el("shuffle").hidden).toBe(false);
+  expect(el("repeat").dataset.mode).toBe("off");
 });
 
 it("opens the queue beside the window from the record, and the same button closes it", async () => {

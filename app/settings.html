@@ -27,13 +27,18 @@
         <label for="settings-player">Player</label>
         <select id="settings-player">
           <option value="spotify">Spotify</option>
+          <option value="ytmdesktop">YouTube Music (ytmdesktop)</option>
           <option value="ytmdesktop2">YouTube Music (ytmdesktop2)</option>
         </select>
-        <p>Hakuro follows one player at a time. For YouTube Music, play it in the ytmdesktop2 app: it tells Hakuro the exact song, so its lyrics are found reliably, and its volume can be set here.</p>
+        <p>Hakuro follows one player at a time. Choose the YouTube Music desktop app you use; ytmdesktop and ytmdesktop2 connect separately.</p>
         <div id="spotify-settings">
           <label for="client-id">Spotify Client ID</label>
           <input id="client-id" type="text" autocomplete="off" spellcheck="false" placeholder="32-character Client ID" />
           <p>Copy the Client ID from your Spotify Developer app. Set its redirect URI to <code>http://127.0.0.1:8787/callback</code>. No Client Secret is needed.</p>
+        </div>
+        <div id="ytmdesktop-settings" hidden>
+          <p>In ytmdesktop, turn on Settings → Integrations → Companion server and Enable companion authorization. Save these settings to connect, then approve Hakuro in ytmdesktop's authorization dialog within 30 seconds. Check that the code matches the one Hakuro shows.</p>
+          <p>You can control playback, volume and repeat, shuffle the queue, and choose a queued song here.</p>
         </div>
         <div id="ytmd-settings" hidden>
           <label for="ytmd-port">ytmdesktop2 API port</label>

@@ -49,7 +49,7 @@ interface PlaybackEvent {
   canSetVolume?: boolean;
   deviceName: string | null;
   deviceId?: string | null;
-  /** Null when the player cannot report them (ytmdesktop2). */
+  /** Null when unavailable; canShuffle also permits a one-shot queue shuffle. */
   shuffle?: boolean | null;
   repeat?: Repeat | null;
   canShuffle?: boolean;
@@ -402,7 +402,7 @@ function renderVolume() {
   ui.volumeValue.textContent = value === null ? "—" : `${value}%`;
   ui.volume.setAttribute("aria-valuetext", value === null ? "Unavailable" : `${value}%`);
   ui.volumeControl.title = volumeSupported
-    ? config?.settings.player === "ytmdesktop2" ? "ytmdesktop2 player volume" : "Spotify active device volume"
+    ? config?.settings.player && config.settings.player !== "spotify" ? `${config.settings.player} player volume` : "Spotify active device volume"
     : "Volume control is unavailable for this player or device";
 }
 
@@ -716,10 +716,11 @@ function endSeek(commit: boolean) {
 const modes = createModes(renderModes, (error) => setNotice(error ?? ""));
 
 function renderModes(current: Readonly<Modes>) {
-  ui.shuffle.hidden = current.shuffle === null;
+  ui.shuffle.hidden = current.shuffle === null && !current.canShuffle;
   ui.shuffle.disabled = !current.canShuffle;
-  ui.shuffle.setAttribute("aria-pressed", String(current.shuffle === true));
-  ui.shuffle.title = shuffleLabel(current.shuffle === true);
+  if (current.shuffle === null) ui.shuffle.removeAttribute("aria-pressed");
+  else ui.shuffle.setAttribute("aria-pressed", String(current.shuffle));
+  ui.shuffle.title = shuffleLabel(current.shuffle);
   ui.shuffle.setAttribute("aria-label", ui.shuffle.title);
   const repeat = current.repeat ?? "off";
   ui.repeat.hidden = current.repeat === null;
@@ -760,7 +761,7 @@ function applyConfig(value: Config) {
   const commandKeys = commandButton.querySelector("kbd");
   if (commandKeys) { commandKeys.textContent = commandHint; commandKeys.hidden = !commandHint; }
   commandButton.title = commandHint ? `Commands (${commandHint})` : "Commands";
-  if (changedPlayer) resetVolume();
+  if (changedPlayer) { resetVolume(); modes.reset(); }
   applyTheme(value.settings.theme);
   wave.setAccent(value.settings.theme.accent);
   wave.setStrength(value.settings.waveStrength ?? 100);
@@ -1064,8 +1065,8 @@ const COMMANDS: Command[] = [
   { id: "volumeDown", group: "PLAYBACK", icon: "−", label: "Volume down", hint: "音量 −5", words: "quieter", enabled: () => !ui.volume.disabled, run: () => nudgeVolume(-5) },
   { id: "queue", group: "PLAYBACK", icon: "≣", label: "Queue…", hint: "播放佇列", words: "up next queue list", enabled: usable(ui.queueOpen), run: () => ui.queueOpen.click() },
   {
-    id: "shuffle", group: "PLAYBACK", icon: "⤨", label: "Shuffle", hint: "隨機播放", words: "random shuffle",
-    state: () => onOff(modes.current.shuffle === true), visible: () => !ui.shuffle.hidden, enabled: usable(ui.shuffle), run: () => ui.shuffle.click(),
+    id: "shuffle", group: "PLAYBACK", icon: "⤨", label: () => modes.current.shuffle === null ? "Shuffle queue" : "Shuffle", hint: "隨機播放", words: "random shuffle",
+    state: () => modes.current.shuffle === null ? null : onOff(modes.current.shuffle), visible: () => !ui.shuffle.hidden, enabled: usable(ui.shuffle), run: () => ui.shuffle.click(),
   },
   {
     id: "repeat", group: "PLAYBACK", icon: "⟲", label: "Repeat", hint: "循環播放", words: "repeat loop one all",

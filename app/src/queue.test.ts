@@ -8,11 +8,13 @@ isolateListeners(window, document);
 
 const bridge = vi.hoisted(() => ({
   invoke: vi.fn(),
+  emitTo: vi.fn(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
   focus: [] as ((event: { payload: boolean }) => void)[],
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: bridge.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({
+  emitTo: bridge.emitTo,
   listen: vi.fn(async (name: string, callback: (event: { payload: unknown }) => void) => {
     bridge.listeners.set(name, callback);
     return () => {};
@@ -57,6 +59,9 @@ beforeEach(() => {
   bridge.listeners.clear();
   bridge.focus.length = 0;
   bridge.invoke.mockReset();
+  bridge.emitTo.mockReset().mockImplementation(async (_target: string, event: string) => {
+    bridge.listeners.get(event)?.({ payload: null });
+  });
   for (const fn of Object.values(win)) fn.mockReset().mockResolvedValue(undefined);
   win.onFocusChanged.mockImplementation(async (callback: (event: { payload: boolean }) => void) => {
     bridge.focus.push(callback);
@@ -154,6 +159,50 @@ it("sets Spotify's shuffle and repeat from the header", async () => {
   expect(bridge.invoke).toHaveBeenCalledWith("set_repeat", { repeat: "context" });
   expect(el("queue-shuffle").getAttribute("aria-pressed")).toBe("true");
   expect(el("queue-repeat").dataset.mode).toBe("context");
+});
+
+it("plays ytmdesktop queue items unchanged and exposes one-shot shuffle plus repeat", async () => {
+  await open({
+    get_config: config("ytmdesktop"),
+    get_queue: { now: item("Now"), upcoming: [item("Next", { uri: "ytmd:7:video-id", artists: ["Singer", "Guest"], art: "https://i.ytimg.com/vi/video-id/default.jpg" })], canJump: true },
+  });
+  playback("ytmd:Now", { shuffle: null, repeat: "off" });
+  expect(rows()[0].disabled).toBe(false);
+  expect(rows()[0].querySelector(".qr__artist")!.textContent).toBe("Singer, Guest");
+  expect(rows()[0].querySelector(".qr__time")!.textContent).toBe("03:20");
+  expect(rows()[0].querySelector<HTMLElement>(".art")!.style.backgroundImage).toContain("i.ytimg.com");
+  rows()[0].click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("jump_queue", { uri: "ytmd:7:video-id", position: 0 });
+  const reads = () => bridge.invoke.mock.calls.filter(([command]) => command === "get_queue").length;
+  const before = reads();
+  expect(el("queue-shuffle").hidden).toBe(false);
+  expect(el("queue-shuffle").title).toBe("Shuffle queue");
+  expect(el("queue-shuffle").hasAttribute("aria-pressed")).toBe(false);
+  el("queue-shuffle").click();
+  await flush();
+  el("queue-shuffle").click();
+  await flush();
+  expect(bridge.invoke.mock.calls.filter(([command]) => command === "set_shuffle").map(([, args]) => args)).toEqual([{ on: true }, { on: true }]);
+  expect(reads()).toBe(before + 2);
+  expect(el("queue-shuffle").hasAttribute("aria-pressed")).toBe(false);
+  el("queue-repeat").click();
+  await flush();
+  expect(bridge.invoke).toHaveBeenCalledWith("set_repeat", { repeat: "context" });
+});
+
+it("refreshes for queue revisions and external shuffle notifications without a track or toggle change", async () => {
+  await open({ get_config: config("ytmdesktop"), get_queue: spotifyQueue() });
+  const report = { shuffle: null, queueRevision: "1" };
+  playback("ytmd:Now", report);
+  const reads = () => bridge.invoke.mock.calls.filter(([command]) => command === "get_queue").length;
+  const before = reads();
+  playback("ytmd:Now", report);
+  expect(reads()).toBe(before);
+  playback("ytmd:Now", { ...report, queueRevision: "2" });
+  expect(reads()).toBe(before + 1);
+  bridge.listeners.get("queue:changed")!({ payload: null });
+  expect(reads()).toBe(before + 2);
 });
 
 it("reads the queue again when the song changes, when shuffle changes and when focused", async () => {

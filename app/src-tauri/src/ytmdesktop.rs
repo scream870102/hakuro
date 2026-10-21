@@ -465,6 +465,7 @@ fn sample(state: &Value, track: &Value, volume: Option<u8>) -> Playback {
         can_shuffle: false,
         can_repeat_context: false,
         can_repeat_track: false,
+        queue_revision: None,
         source: PlayerKind::Ytmdesktop2,
     }
 }
@@ -505,7 +506,7 @@ fn parse_queue(answer: &Value, playing: &[String]) -> Queue {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use std::io::{Read, Write};
@@ -514,18 +515,18 @@ mod tests {
     use crate::settings::tests::with_temp_data_dir;
 
     #[derive(Debug, Clone)]
-    struct Seen {
-        method: String,
-        path: String,
-        authorization: Option<String>,
-        body: Value,
+    pub(crate) struct Seen {
+        pub(crate) method: String,
+        pub(crate) path: String,
+        pub(crate) authorization: Option<String>,
+        pub(crate) body: Value,
     }
 
     type Route = dyn Fn(&Seen) -> (u16, String) + Send + Sync;
 
     /// A stand-in for ytmdesktop2 on a free loopback port, answering by route and
     /// recording every request it was sent.
-    fn fake(
+    pub(crate) fn fake(
         route: impl Fn(&Seen) -> (u16, String) + Send + Sync + 'static,
     ) -> (String, Arc<Mutex<Vec<Seen>>>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -594,7 +595,7 @@ mod tests {
         (base, seen)
     }
 
-    fn run<T>(body: impl std::future::Future<Output = T>) -> T {
+    pub(crate) fn run<T>(body: impl std::future::Future<Output = T>) -> T {
         with_temp_data_dir(|_| {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()

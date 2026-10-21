@@ -562,6 +562,7 @@ export function createDeck(options: {
       // A plain switch (the way back to full mode) is never "pressed".
       if (tool.hasAttribute("data-plain")) pressed = null;
       if (pressed !== null && tool.getAttribute("aria-pressed") !== pressed) tool.setAttribute("aria-pressed", pressed);
+      if (pressed === null) tool.removeAttribute("aria-pressed");
     }
   }
 

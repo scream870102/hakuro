@@ -7,10 +7,10 @@ import type { ShortcutBinding } from "./shortcuts";
 
 export type ClickThrough = "off" | "auto" | "always";
 /**
- * Which player Hakuro follows. Exactly one is live at a time. "ytmdesktop2" is
- * YouTube Music through the ytmdesktop2 app's local API, which names the exact song.
+ * Which player Hakuro follows. The two YouTube Music desktop apps have separate
+ * local APIs and credentials; exactly one player is live at a time.
  */
-export type PlayerKind = "spotify" | "ytmdesktop2";
+export type PlayerKind = "spotify" | "ytmdesktop" | "ytmdesktop2";
 
 export interface Theme { accent: string; activeLine: string; pastLine: string }
 

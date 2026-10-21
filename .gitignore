@@ -26,3 +26,5 @@ settings.json
 lyrics.db
 lyrics.db-*
 session.bin
+ytmd-session.bin
+companion-session.bin

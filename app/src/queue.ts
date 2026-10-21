@@ -1,7 +1,7 @@
 /**
  * The queue window: the song playing now and what follows it, beside the main
- * window. Spotify's rows play when picked, and its shuffle and repeat sit in
- * the header; ytmdesktop2 lists its queue by title only, to read.
+ * window. Spotify and ytmdesktop offer playable rows, shuffle and repeat;
+ * ytmdesktop2 lists its queue by title only, to read.
  *
  * Playback events reach every window, so this one follows the song on its own:
  * the progress runs from them, and the queue is read again when the song
@@ -12,7 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { emptySample, formatTime, positionAt, type Sample } from "./clock";
 import { applyTheme, type Config } from "./config";
-import { createModes, nextRepeat, repeatLabel, shuffleLabel, type ModeReport, type Modes } from "./modes";
+import { createModes, nextRepeat, QUEUE_CHANGED, repeatLabel, shuffleLabel, type ModeReport, type Modes } from "./modes";
 import { element, panel, reveal, wireClosing } from "./panel";
 
 interface QueueItem {
@@ -33,6 +33,7 @@ interface Queue {
 
 interface PlaybackEvent extends ModeReport {
   trackKey: string;
+  queueRevision?: string | null;
   hasTrack: boolean;
   progressMs: number | null;
   durationMs: number;
@@ -58,13 +59,14 @@ const ui = {
 };
 
 /** The source's name, from the track key's prefix, or the stored player before any playback. */
-const SOURCES: Record<string, string> = { sp: "SPOTIFY", spotify: "SPOTIFY", ytmd2: "YTMDESKTOP2", ytmdesktop2: "YTMDESKTOP2" };
+const SOURCES: Record<string, string> = { sp: "SPOTIFY", spotify: "SPOTIFY", ytmd: "YTMDESKTOP", ytmdesktop: "YTMDESKTOP", ytmd2: "YTMDESKTOP2", ytmdesktop2: "YTMDESKTOP2" };
 let source = "";
 let queue: Queue | null = null;
 let hint = "";
 let sample: Sample = emptySample(performance.now());
 let trackKey: string | null = null;
 let reportedShuffle: boolean | null | undefined;
+let queueRevision: string | null | undefined;
 let serial = 0;
 let jumping = false;
 
@@ -188,10 +190,11 @@ async function jump(item: QueueItem, index: number) {
 const modes = createModes(renderModes, (error) => setStatus(error ?? hint, error !== null));
 
 function renderModes(current: Readonly<Modes>) {
-  ui.shuffle.hidden = current.shuffle === null;
+  ui.shuffle.hidden = current.shuffle === null && !current.canShuffle;
   ui.shuffle.disabled = !current.canShuffle;
-  ui.shuffle.setAttribute("aria-pressed", String(current.shuffle === true));
-  ui.shuffle.title = shuffleLabel(current.shuffle === true);
+  if (current.shuffle === null) ui.shuffle.removeAttribute("aria-pressed");
+  else ui.shuffle.setAttribute("aria-pressed", String(current.shuffle));
+  ui.shuffle.title = shuffleLabel(current.shuffle);
   ui.shuffle.setAttribute("aria-label", ui.shuffle.title);
   const repeat = current.repeat ?? "off";
   ui.repeat.hidden = current.repeat === null;
@@ -222,8 +225,10 @@ function receive(payload: PlaybackEvent) {
   const key = payload.hasTrack ? payload.trackKey : "";
   // A new song moves the queue on; Spotify reorders it when shuffle changes.
   const reshuffled = reportedShuffle !== undefined && payload.shuffle !== reportedShuffle;
+  const queueChanged = queueRevision != null && payload.queueRevision != null && queueRevision !== payload.queueRevision;
   reportedShuffle = payload.shuffle;
-  if (trackKey !== null && (key !== trackKey || reshuffled)) void load();
+  queueRevision = payload.queueRevision;
+  if (trackKey !== null && (key !== trackKey || reshuffled || queueChanged)) void load();
   trackKey = key;
 }
 
@@ -241,6 +246,7 @@ function frame(now: number) {
 
 async function start() {
   await listen<PlaybackEvent>("playback", ({ payload }) => receive(payload));
+  await listen(QUEUE_CHANGED, () => void load());
   void panel.onFocusChanged(({ payload: focused }) => {
     if (focused) void load();
   });

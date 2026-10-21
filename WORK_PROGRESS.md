@@ -1,5 +1,49 @@
 # hakuro session recovery
 
+## 1.6.0 ytmdesktop Companion support alongside ytmdesktop2 - 2026-10-21
+
+Goal: add ytmdesktop/ytmdesktop as a distinct player and implement the existing
+Hakuro controls its official Companion API supports, independently of ytmdesktop2.
+Known: clean checkout; existing ytmdesktop.rs is Venipa/ytmdesktop2. Official
+ytmdesktop v2.0.12 uses port 9863, raw Authorization token, Socket.IO state events;
+REST state is limited to 1/5s. Shuffle is an action, not a reported on/off mode.
+Scope: user confirmed existing checkout; reversible source edits, no personal
+config, commit, push or installed-app changes. User additionally requested all
+version entries at 1.6.0 and a local NSIS installer.
+Plan: verify official API; add independent auth/storage/backend and realtime
+state; wire selection/controls/lyrics; add protocol and UI regressions; run Rust,
+frontend and build checks and obtain independent review.
+Acceptance:
+- [x] Both YouTube players remain selectable, with independent credentials,
+  settings/cache identities and native lyrics; legacy settings still load.
+- [x] Playback/seek/volume, repeat, shuffle action and rich selectable queue use
+  verified API semantics, respect rate limits and handle reconnect/revocation.
+- [x] Frontend exposes capabilities correctly without inventing shuffle state;
+  ytmdesktop2 retains existing behavior.
+- [x] Tests/build/read-back/review pass; README explains setup and limitations.
+- [x] All six version entries are 1.6.0 and the local NSIS installer is built
+  and its executable/installer version metadata verified.
+Progress: official source research in app/node_modules/.cache/ytmdesktop-research;
+both default local API ports were closed, so real-player validation is unavailable.
+Verification: frontend 141 passed and TypeScript/Vite build passed; Rust 154
+passed / 13 ignored, including real loopback HTTP/WebSocket protocol fixtures
+and real DPAPI with dummy isolated tokens. Independent review passed all four
+criteria after adding the initial-subscription paused-state regression.
+Reusable finding: ytmdesktop emits no initial Socket.IO state on subscription.
+Always schedule a rate-safe catch-up while still processing realtime events;
+a full state event cancels the redundant catch-up. Queue URIs preserve absolute
+indexes across filtered/duplicate/automix rows and are checked after throttling.
+Scope limit: this implements Hakuro's existing playback/queue/lyrics controls;
+Companion's separate playlist browser and like/dislike actions are not added.
+Delivery: version entries are 1.6.0; TypeScript/Vite and Tauri release/NSIS
+packaging passed. Both executable and installer report FileVersion and
+ProductVersion 1.6.0. Installer:
+app/src-tauri/target/release/bundle/nsis/Hakuro_1.6.0_x64-setup.exe
+(9,794,036 bytes), SHA256
+36b7b338c9be2fd82fdc5c4f3ba580ada212b76575319f8681a1988dd723cf39.
+Final diff whitespace check passed. No commit/push or installed-app changes.
+
+
 ## 1.5.4 low-volume wave and disc click - 2026-10-20
 
 Goal: make the wave respond to this machine's quiet multichannel audio,
