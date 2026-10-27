@@ -15,6 +15,8 @@ Windows 桌面歌詞播放器：跟隨 Spotify 或 YouTube Music（透過 ytmdes
 
 App 使用 PKCE 授權。Redirect URI 必須完全一致，請勿改成 `localhost`；詳見 [Spotify Redirect URI 規則](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri)。
 
+Spotify 外部播放控制（例如耳機、媒體鍵或手機）會在 Hakuro 可見時持續同步，包含置頂但未取得焦點的情況。自 1.8.1 起，確認暫停後的前 10 分鐘維持每 5 秒查詢，滿 10 分鐘改為每 5 分鐘；偵測到恢復播放就重設暫停計時。暫停滿 1 小時仍會停止查詢，可點回 Hakuro、重新整理或使用播放控制喚醒。視窗最小化／隱藏時暫停查詢，Spotify 限流時依服務要求等待。
+
 ### YouTube Music (ytmdesktop)
 
 3. 安裝並開啟 [ytmdesktop](https://github.com/ytmdesktop/ytmdesktop)，在 Settings → Integrations 開啟 **Companion server** 與 **Enable companion authorization**。Companion API 固定使用本機埠 `9863`。

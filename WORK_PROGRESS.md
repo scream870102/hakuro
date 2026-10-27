@@ -1,5 +1,37 @@
 # hakuro session recovery
 
+## 1.8.1 Spotify external resume - 2026-10-27
+
+Goal: detect Spotify resume from headphones/external controls while Hakuro is
+pinned and unfocused. User authorized the fix, 1.8.1, commit, push and tag.
+Plan: EccentricVault `Project/Hakuro/261027-spotify-resume-1-8-1.md`.
+Root cause: paused/empty Spotify samples wait five minutes; after an hour the
+loop sleeps until focus or an in-app action wakes it. A visible pinned window
+can remain unfocused throughout, so external resume gets no prompt update.
+Acceptance:
+- [x] User refinement: poll paused/empty Spotify every five seconds for the
+  first ten minutes, then every five minutes; reset when playback resumes.
+  Focus does not restart the timer during active polling. User additionally
+  confirmed retaining one-hour dormancy and its focus/refresh/control wakeup;
+  preserve hidden/minimized suspension and rate-limit waits.
+- [x] Regression coverage for pause/resume and pinned/unfocused rendering.
+- [x] Version manifests/locks, Traditional Chinese release history, What's new
+  tests and README agree on 1.8.1.
+- [x] npm test, npm run build, cargo test --lib pass.
+- [ ] Commit/push main and v1.8.1; verify remote refs and release workflow.
+Verification: the regression first failed on the old 300-second pause delay.
+Final tests cover the ten-minute boundary, repeated pauses, resume/re-pause,
+empty samples, local players and pinned/unfocused rendering. Frontend 201/201,
+Rust 170 passed / 13 existing ignored; TypeScript/Vite production build passed.
+All six manifest/lock version fields are 1.8.1; git diff --check passed.
+One-hour dormancy, hidden-window wakeup and non-interruptible rate-limit waits
+were inspected in the final loop. Remote main is unchanged; v1.8.1 is unused.
+Publication is the remaining step.
+Reusable lesson: keep the pause grace, reduced polling and final dormancy as
+separate thresholds; a pinned window must keep updating without a focus event.
+Limit: physical headphone interaction has not been exercised in this session.
+Open questions: none.
+
 ## 1.8.0 automatic updates - 2026-10-27
 
 Goal: replace the startup "new version, go to GitHub" notification with the

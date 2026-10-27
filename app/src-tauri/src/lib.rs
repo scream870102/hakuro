@@ -50,15 +50,14 @@ use ytmdesktop::Ytmdesktop;
 
 /// Local backends are sampled briskly; Companion reads its realtime cache.
 const LOCAL_POLL_INTERVAL: Duration = Duration::from_millis(1500);
-/// Spotify counts every request against a daily quota. While a song plays the
-/// frontend extrapolates the position, so a sample only has to catch changes
-/// made elsewhere — a seek on the phone, a skip from another device.
+/// The frontend extrapolates Spotify's position; polling catches external
+/// controls even while a pinned window stays unfocused.
 const SPOTIFY_PLAYING_INTERVAL: Duration = Duration::from_secs(5);
-/// Paused or nothing loaded. Playing from another device shows up this late;
-/// the refresh button, or any transport button here, asks at once.
+/// Keep checking promptly for ten minutes after playback stops.
+const SPOTIFY_STOPPED_GRACE: Duration = Duration::from_secs(10 * 60);
+/// After the grace period, keep checking for resume at a reduced rate.
 const SPOTIFY_STOPPED_INTERVAL: Duration = Duration::from_secs(5 * 60);
-/// After this long with nothing playing, Spotify is not asked at all until the
-/// window comes back to the front or the reader presses refresh.
+/// After an hour stopped, wait for focus, refresh or a transport command.
 const SPOTIFY_DORMANT_AFTER: Duration = Duration::from_secs(60 * 60);
 /// Slack after the predicted end of a song, so the next sample already sees
 /// the next one rather than the last second of this one.
@@ -622,6 +621,7 @@ async fn start_polling(app: &AppHandle, state: &State<'_, AppState>) {
 async fn poll_loop(app: AppHandle) {
     // When Spotify was last seen not playing, or None while it plays.
     let mut stopped_since: Option<Instant> = None;
+    let mut last_serial = None;
     // Whether the last sample failed, so the next good one can say it recovered.
     let mut faulted = false;
     loop {
@@ -642,9 +642,13 @@ async fn poll_loop(app: AppHandle) {
         };
         // Outside the block, so both guards are released before the loop ends.
         let Some(client) = client else { break };
+        if last_serial != Some(client.serial) {
+            stopped_since = None;
+            last_serial = Some(client.serial);
+        }
 
-        // Nobody is looking, or nothing has played for an hour: ask nothing
-        // until the window is focused again or refresh is pressed.
+        // Visible pinned windows keep polling while unfocused until an hour
+        // has passed with nothing playing. Hidden windows wait for a wakeup.
         let dormant = stopped_since.is_some_and(|since| since.elapsed() >= SPOTIFY_DORMANT_AFTER);
         if dormant || window_hidden(&app) {
             if dormant {
@@ -654,6 +658,8 @@ async fn poll_loop(app: AppHandle) {
             if dormant {
                 emit_status(&app, "connected", "Connected", "");
             }
+            // A hidden window may have crossed the dormant deadline while
+            // waiting. Let this wakeup reach a fresh sample in either case.
             stopped_since = None;
             continue;
         }
@@ -676,12 +682,7 @@ async fn poll_loop(app: AppHandle) {
                 if std::mem::take(&mut faulted) {
                     emit_status(&app, "connected", "Connected", "");
                 }
-                delay = poll_delay(&playback);
-                if playback.source == PlayerKind::Spotify && !playback.is_playing {
-                    stopped_since.get_or_insert_with(Instant::now);
-                } else {
-                    stopped_since = None;
-                }
+                delay = poll_delay(&playback, &mut stopped_since, Instant::now());
                 apply_playback(&app, playback).await;
             }
             Err(PlayerError::NeedsAuth) => {
@@ -715,10 +716,12 @@ async fn poll_loop(app: AppHandle) {
         tokio::select! {
             _ = tokio::time::sleep(delay) => {}
             _ = state.session.wake.notified(), if interruptible => {
-                // Pressing refresh or a transport button counts as the reader
-                // being here, so the hour before going dormant starts over.
-                stopped_since = None;
+                // Focus/refresh asks now without changing how long playback
+                // has actually been stopped, unless it wakes the hourly sleep.
                 tokio::time::sleep(AFTER_COMMAND_DELAY).await;
+                if stopped_since.is_some_and(|since| since.elapsed() >= SPOTIFY_DORMANT_AFTER) {
+                    stopped_since = None;
+                }
             }
         }
     }
@@ -734,13 +737,20 @@ fn window_hidden(app: &AppHandle) -> bool {
 /// How long to wait before the next sample. Spotify is asked as rarely as the
 /// display allows, but always right after the current song should have ended,
 /// so the lyrics change with the song rather than up to an interval later.
-fn poll_delay(playback: &Playback) -> Duration {
+fn poll_delay(playback: &Playback, stopped_since: &mut Option<Instant>, now: Instant) -> Duration {
     if playback.source != PlayerKind::Spotify {
+        *stopped_since = None;
         return LOCAL_POLL_INTERVAL;
     }
     if !playback.has_track || !playback.is_playing {
-        return SPOTIFY_STOPPED_INTERVAL;
+        let since = *stopped_since.get_or_insert(now);
+        return if now.duration_since(since) >= SPOTIFY_STOPPED_GRACE {
+            SPOTIFY_STOPPED_INTERVAL
+        } else {
+            SPOTIFY_PLAYING_INTERVAL
+        };
     }
+    *stopped_since = None;
     let remaining = playback
         .progress_ms
         .map(|progress| (playback.duration_ms - progress).max(0))
@@ -1538,24 +1548,105 @@ mod tests {
     #[test]
     fn spotify_is_polled_by_state_and_catches_the_end_of_a_song() {
         let mut sample = playback();
-        assert_eq!(poll_delay(&sample), SPOTIFY_PLAYING_INTERVAL);
+        let mut stopped_since = None;
+        let now = Instant::now();
+        let mut delay = |sample: &Playback| poll_delay(sample, &mut stopped_since, now);
+        assert_eq!(delay(&sample), SPOTIFY_PLAYING_INTERVAL);
 
         sample.progress_ms = Some(sample.duration_ms - 2000);
-        assert_eq!(poll_delay(&sample), Duration::from_millis(2500));
+        assert_eq!(delay(&sample), Duration::from_millis(2500));
         sample.progress_ms = Some(sample.duration_ms);
-        assert_eq!(poll_delay(&sample), LOCAL_POLL_INTERVAL);
+        assert_eq!(delay(&sample), LOCAL_POLL_INTERVAL);
         sample.progress_ms = None;
-        assert_eq!(poll_delay(&sample), SPOTIFY_PLAYING_INTERVAL);
+        assert_eq!(delay(&sample), SPOTIFY_PLAYING_INTERVAL);
 
         sample.is_playing = false;
-        assert_eq!(poll_delay(&sample), SPOTIFY_STOPPED_INTERVAL);
+        // External controls do not wake the app; resume must be seen promptly
+        // even when the pinned window never regains focus.
+        assert_eq!(delay(&sample), Duration::from_secs(5));
         sample.has_track = false;
-        assert_eq!(poll_delay(&sample), SPOTIFY_STOPPED_INTERVAL);
+        assert_eq!(delay(&sample), Duration::from_secs(5));
+
+        sample.has_track = true;
+        sample.is_playing = true;
+        sample.progress_ms = Some(2000);
+        assert_eq!(delay(&sample), Duration::from_secs(5));
 
         sample.source = PlayerKind::Ytmdesktop2;
-        assert_eq!(poll_delay(&sample), LOCAL_POLL_INTERVAL);
+        assert_eq!(delay(&sample), LOCAL_POLL_INTERVAL);
         sample.source = PlayerKind::Ytmdesktop;
-        assert_eq!(poll_delay(&sample), LOCAL_POLL_INTERVAL);
+        assert_eq!(delay(&sample), LOCAL_POLL_INTERVAL);
+    }
+
+    #[test]
+    fn spotify_pause_gets_ten_minutes_of_fast_polling_and_resume_resets_it() {
+        let mut sample = playback();
+        sample.is_playing = false;
+        let mut stopped_since = None;
+        let start = Instant::now();
+
+        // Repeated paused samples, including a refresh, must not restart the
+        // grace period. At exactly ten minutes, switch to five-minute checks.
+        for elapsed_ms in [0, 5000, 599_999, 600_000, 900_000] {
+            let delay = poll_delay(
+                &sample,
+                &mut stopped_since,
+                start + Duration::from_millis(elapsed_ms),
+            );
+            let expected = if elapsed_ms < 600_000 { 5 } else { 300 };
+            assert_eq!(delay, Duration::from_secs(expected));
+            assert_eq!(stopped_since, Some(start));
+        }
+
+        sample.is_playing = true;
+        assert_eq!(
+            poll_delay(
+                &sample,
+                &mut stopped_since,
+                start + Duration::from_secs(905)
+            ),
+            Duration::from_secs(5)
+        );
+        assert_eq!(stopped_since, None);
+
+        sample.is_playing = false;
+        let paused_again = start + Duration::from_secs(910);
+        assert_eq!(
+            poll_delay(&sample, &mut stopped_since, paused_again),
+            Duration::from_secs(5)
+        );
+        assert_eq!(stopped_since, Some(paused_again));
+    }
+
+    #[test]
+    fn an_empty_spotify_sample_keeps_the_pause_timer_and_local_playback_clears_it() {
+        let mut sample = playback();
+        sample.is_playing = false;
+        let start = Instant::now();
+        let mut stopped_since = None;
+        poll_delay(&sample, &mut stopped_since, start);
+
+        sample = Playback::default();
+        assert_eq!(
+            poll_delay(
+                &sample,
+                &mut stopped_since,
+                start + Duration::from_secs(600)
+            ),
+            Duration::from_secs(300)
+        );
+        assert_eq!(stopped_since, Some(start));
+
+        sample.source = PlayerKind::Ytmdesktop;
+        assert_eq!(
+            poll_delay(
+                &sample,
+                &mut stopped_since,
+                start + Duration::from_secs(605)
+            ),
+            LOCAL_POLL_INTERVAL
+        );
+        assert_eq!(stopped_since, None);
     }
 
     #[test]

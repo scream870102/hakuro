@@ -12,6 +12,14 @@ export interface Release {
  * app version. Earlier Python snapshots have no recorded version number. */
 export const releases: readonly Release[] = [
   {
+    version: "1.8.1", date: "2026-10-27", title: "Spotify 外部播放控制同步",
+    changes: [
+      "修正透過耳機或其他外部控制暫停 Spotify 後，恢復播放未及時更新的問題；Hakuro 置頂但未取得焦點時也會持續同步。",
+      "確認暫停後，前 10 分鐘維持每 5 秒查詢，滿 10 分鐘後改為每 5 分鐘；偵測到恢復播放會重新計時。",
+      "保留暫停滿 1 小時後停止查詢的省流量行為；點回 Hakuro、重新整理或使用播放控制即可喚醒。",
+    ],
+  },
+  {
     version: "1.8.0", date: "2026-10-27", title: "自動更新",
     changes: [
       "有新版本時，Hakuro 會在背景下載並驗證安裝檔，下載完成才跳出通知，不必再自己到 GitHub 下載。",

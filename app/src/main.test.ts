@@ -552,6 +552,29 @@ it("pins the window on top and stores the choice", async () => {
   });
 });
 
+it("updates external pause and resume while pinned without regaining focus", async () => {
+  await import("./main");
+  await flush();
+  el("pin").click();
+  await flush();
+  for (const focus of bridge.focus) focus({ payload: false });
+  bridge.invoke.mockClear();
+
+  playback("song-a", 1, 1500, true);
+  lyrics(1, "Saved lyrics");
+  playback("song-a", 1, 2000, false);
+  expect(document.body.classList.contains("is-playing")).toBe(false);
+  expect(el("bar-play").getAttribute("aria-label")).toBe("Play");
+
+  playback("song-a", 1, 2500, true);
+  expect(document.body.classList.contains("is-playing")).toBe(true);
+  expect(el("bar-play").getAttribute("aria-label")).toBe("Pause");
+  expect(el("lyrics-list").textContent).toBe("Saved lyrics");
+  expect(appWindow.setAlwaysOnTop).toHaveBeenLastCalledWith(true);
+  expect(appWindow.setFocus).not.toHaveBeenCalled();
+  expect(bridge.invoke).not.toHaveBeenCalledWith("refresh_playback");
+});
+
 it("keeps the window pinned as it was when the save fails", async () => {
   await import("./main");
   await flush();

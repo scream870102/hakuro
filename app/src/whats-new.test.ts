@@ -22,7 +22,7 @@ const open = async () => { await import("./whats-new"); await flush(); };
 
 beforeEach(() => {
   vi.resetModules();
-  bridge.getVersion.mockReset().mockResolvedValue("1.8.0");
+  bridge.getVersion.mockReset().mockResolvedValue("1.8.1");
   bridge.invoke.mockReset().mockImplementation(async (command: string) => command === "get_config" ? config : undefined);
   for (const fn of Object.values(win)) fn.mockReset().mockResolvedValue(undefined);
   document.documentElement.innerHTML = html;
@@ -32,15 +32,18 @@ beforeEach(() => {
 it("expands the installed release and lets readers independently open older versions", async () => {
   await open();
   expect(history()).toHaveLength(releases.length);
-  expect(history().filter((item) => item.open).map((item) => item.dataset.version)).toEqual(["1.8.0"]);
+  expect(history().filter((item) => item.open).map((item) => item.dataset.version)).toEqual(["1.8.1"]);
   expect(history()[0].textContent).toContain("目前版本");
-  expect(history()[0].textContent).toContain("自動更新");
-  expect(history()[0].textContent).toContain("關閉 Hakuro 時自動安裝");
-  expect(history()[1].textContent).toContain("簡體歌詞轉繁體");
-  expect(history()[1].textContent).toContain("Noto Sans TC");
-  expect(history()[2].textContent).toContain("不綁定");
-  expect(history()[3].textContent).toContain("0%／100%");
-  expect(history()[4].textContent).toContain("ytmdesktop");
+  expect(history()[0].textContent).toContain("Spotify 外部播放控制同步");
+  expect(history()[0].textContent).toContain("前 10 分鐘維持每 5 秒查詢");
+  expect(history()[0].textContent).toContain("滿 1 小時後停止查詢");
+  expect(history()[1].textContent).toContain("自動更新");
+  expect(history()[1].textContent).toContain("關閉 Hakuro 時自動安裝");
+  expect(history()[2].textContent).toContain("簡體歌詞轉繁體");
+  expect(history()[2].textContent).toContain("Noto Sans TC");
+  expect(history()[3].textContent).toContain("不綁定");
+  expect(history()[4].textContent).toContain("0%／100%");
+  expect(history()[5].textContent).toContain("ytmdesktop");
   const previous = history()[1];
   previous.querySelector("summary")!.click();
   expect(previous.open).toBe(true);
@@ -53,7 +56,7 @@ it("expands the installed release and lets readers independently open older vers
 it("includes every recorded product version, keeping early numbering after official 1.0.0", async () => {
   // Audited against all historical package/Tauri versions, git tags and worklogs.
   const versions = [
-    "1.8.0", "1.7.0", "1.6.2", "1.6.1", "1.6.0", "1.5.4", "1.5.3", "1.5.2", "1.5.1", "1.5.0",
+    "1.8.1", "1.8.0", "1.7.0", "1.6.2", "1.6.1", "1.6.0", "1.5.4", "1.5.3", "1.5.2", "1.5.1", "1.5.0",
     "1.4.1", "1.4.0", "1.3.2", "1.3.1", "1.3.0", "1.2.2", "1.2.1",
     "1.2.0", "1.1.1", "1.1.0", "1.0.0", "4.0.0", "3.0.0",
   ];
@@ -61,7 +64,7 @@ it("includes every recorded product version, keeping early numbering after offic
   expect(new Set(versions).size).toBe(versions.length);
   await open();
   expect(history().map((item) => item.dataset.version)).toEqual(versions);
-  expect(history().filter((item) => item.open).map((item) => item.dataset.version)).toEqual(["1.8.0"]);
+  expect(history().filter((item) => item.open).map((item) => item.dataset.version)).toEqual(["1.8.1"]);
   for (const item of history().slice(-2)) {
     expect(item.open).toBe(false);
     expect(item.querySelector("summary")!.textContent).toContain("早期開發版本");
