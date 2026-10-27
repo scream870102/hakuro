@@ -1,5 +1,41 @@
 # hakuro session recovery
 
+## 1.8.0 automatic updates - 2026-10-27
+
+Goal: replace the startup "new version, go to GitHub" notification with the
+official Tauri updater: check at startup, download and verify in the
+background, then offer Restart now, or install as Hakuro closes; bump to 1.8.0.
+Scope: current checkout, source edits and local verification. No commit/push.
+Plan: EccentricVault `Project/Hakuro/261027-hakuro-auto-update.md`.
+Acceptance:
+- [x] `tauri-plugin-updater` 2.12 registered; `tauri.conf.json` has
+  `createUpdaterArtifacts`, the user's minisign public key (DC7BC8B9D1F3A8DD),
+  the `releases/latest/download/latest.json` endpoint and passive install.
+- [x] `check_for_updates` returns `{ version, installable }` only once the
+  installer is downloaded and verified; only newer stable versions qualify
+  (same comparator as before); turning the setting off cancels it.
+- [x] Only NSIS installs (`bundle_type() == Nsis`) download. Portable and dev
+  builds get a link-only notification: the `windows-x86_64` feed entry is the
+  NSIS installer, which would add a second installed copy on every exit.
+- [x] Restart now runs `install_update` (passive NSIS, `/R` reopens). Failure
+  shows the GitHub link. Later or ignoring it installs on `RunEvent::Exit` with
+  `restart_after_install(false)`, unless updates were turned off.
+- [x] `release.yml` passes `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)` repository
+  secrets to tauri-action, which uploads `.sig` and `latest.json`.
+- [x] Version 1.8.0 in package/lock, Cargo/lock, tauri.conf and release notes;
+  README covers the behaviour, the secrets and local signing.
+Progress: Rust 168 passed / 13 existing ignored, no warnings; frontend 200/200;
+TypeScript/Vite build passed. `tauri build --bundles nsis` with a throwaway key
+produced the installer and `.sig` (exe patched with bundle type nsis; the CLI
+warns when the key does not match the pubkey). That build started and stayed up.
+Not done: no end-to-end update yet. It needs two releases signed with the real
+key (1.8.0 installed, then a later one). The repository secrets must exist
+before tagging v1.8.0, or the release build fails.
+Reusable lesson: on Windows the updater exits the app inside `install`; an
+unbundled exe falls back to the `{os}-{arch}` feed entry, so gate installs on
+`bundle_type()`.
+Open questions: none.
+
 ## 1.7.0 matched CJK weights and opt-in Simplified to Traditional - 2026-10-27
 
 Goal: stop Chinese characters missing from Noto Sans JP falling back to

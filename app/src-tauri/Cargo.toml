@@ -1,6 +1,6 @@
 [package]
 name = "hakuro"
-version = "1.7.0"
+version = "1.8.0"
 description = "Original-language lyrics for whatever Spotify is playing."
 authors = ["Eccentric Studio"]
 edition = "2021"
@@ -52,6 +52,7 @@ ferrous-opencc = { version = "0.4.0", default-features = false, features = ["s2t
 # `bundled` compiles SQLite from source, so the release needs no DLL beside the executable.
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-updater = "2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

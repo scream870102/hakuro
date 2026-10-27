@@ -1,61 +1,66 @@
-//! Optional startup notification. Only the public release metadata is fetched.
+//! Optional startup update. The release feed and the signed installer are public
+//! GitHub release assets; the installer is downloaded in the background and only
+//! installed when the user restarts from the notification or closes Hakuro.
 
 use std::time::Duration;
 
 use semver::Version;
-use serde::Deserialize;
+use tauri::utils::{config::BundleType, platform::bundle_type};
+use tauri::AppHandle;
+use tauri_plugin_updater::{Update, UpdaterExt};
 
-const LATEST_API: &str = "https://api.github.com/repos/scream870102/hakuro/releases/latest";
 pub const RELEASE_URL: &str = "https://github.com/scream870102/hakuro/releases/latest";
 
-#[derive(Deserialize)]
-struct Release {
-    tag_name: String,
-    draft: bool,
-    prerelease: bool,
+/// A newer release whose installer has been downloaded and its signature verified.
+pub struct Ready {
+    update: Update,
+    bytes: Vec<u8>,
 }
 
-fn newer_release(release: Release, current: &str) -> Option<String> {
-    if release.draft || release.prerelease {
-        return None;
+impl Ready {
+    pub fn version(&self) -> &str {
+        &self.update.version
     }
-    let latest = Version::parse(
-        release
-            .tag_name
-            .strip_prefix('v')
-            .unwrap_or(&release.tag_name),
-    )
-    .ok()?;
-    let current = Version::parse(current).ok()?;
+
+    /// On Windows this runs the installer and exits Hakuro, so it only returns on failure.
+    pub fn install(&self, restart: bool) -> Result<(), String> {
+        self.update
+            .clone()
+            .restart_after_install(restart)
+            .install(&self.bytes)
+            .map_err(|error| error.to_string())
+    }
+}
+
+fn is_newer(latest: &Version, current: &Version) -> bool {
     // Build metadata is not a newer release; never suggest a downgrade to a local build.
-    (latest.pre.is_empty() && latest.cmp_precedence(&current).is_gt()).then(|| latest.to_string())
+    latest.pre.is_empty() && latest.cmp_precedence(current).is_gt()
 }
 
-async fn fetch_latest(http: &reqwest::Client, url: &str, current: &str) -> Option<String> {
-    // GitHub's latest endpoint excludes draft/prereleases and is public without a token.
-    // https://docs.github.com/en/rest/releases/releases#get-the-latest-release
-    let release = http
-        .get(url)
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", concat!("Hakuro/", env!("CARGO_PKG_VERSION")))
-        .header("X-GitHub-Api-Version", "2026-03-10")
+pub enum Found {
+    Ready(Ready),
+    /// A portable or development build only links to the release page: the
+    /// installer would add a second, installed copy instead of replacing it.
+    Manual(String),
+}
+
+pub async fn find(app: &AppHandle) -> Option<Found> {
+    let mut update = app
+        .updater_builder()
+        .version_comparator(|current, release| is_newer(&release.version, &current))
         .timeout(Duration::from_secs(8))
-        .send()
-        .await
+        .build()
         .ok()?
-        .error_for_status()
-        .ok()?
-        .json::<Release>()
+        .check()
         .await
-        .ok()?;
-    newer_release(release, current)
-}
-
-pub async fn check(http: &reqwest::Client, enabled: bool) -> Option<String> {
-    if !enabled {
-        return None;
+        .ok()??;
+    if bundle_type() != Some(BundleType::Nsis) {
+        return Some(Found::Manual(update.version));
     }
-    fetch_latest(http, LATEST_API, env!("CARGO_PKG_VERSION")).await
+    // The check's timeout covers a whole request, which would cut a slow installer off.
+    update.timeout = None;
+    let bytes = update.download(|_, _| {}, || {}).await.ok()?;
+    Some(Found::Ready(Ready { update, bytes }))
 }
 
 #[cfg(test)]
@@ -63,87 +68,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_newer_stable_versions_notify() {
-        for (tag, expected) in [
-            ("v1.5.3", Some("1.5.3")),
-            ("v1.10.0", Some("1.10.0")),
-            ("2.0.0", Some("2.0.0")),
-            ("v1.5.2", None),
-            ("v1.5.1", None),
-            ("v1.5.2+build.9", None),
-            ("v2.0.0-rc.1", None),
-            ("not-a-version", None),
+    fn only_newer_stable_versions_update() {
+        let current = Version::parse("1.5.2").unwrap();
+        for (latest, expected) in [
+            ("1.5.3", true),
+            ("1.10.0", true),
+            ("2.0.0", true),
+            ("1.5.2", false),
+            ("1.5.1", false),
+            ("1.5.2+build.9", false),
+            ("2.0.0-rc.1", false),
         ] {
-            let release = Release {
-                tag_name: tag.into(),
-                draft: false,
-                prerelease: false,
-            };
             assert_eq!(
-                newer_release(release, "1.5.2").as_deref(),
+                is_newer(&Version::parse(latest).unwrap(), &current),
                 expected,
-                "{tag}"
+                "{latest}"
             );
         }
-        for (draft, prerelease) in [(true, false), (false, true)] {
-            let release = Release {
-                tag_name: "v2.0.0".into(),
-                draft,
-                prerelease,
-            };
-            assert!(newer_release(release, "1.5.2").is_none());
-        }
-    }
-
-    #[tokio::test]
-    async fn release_responses_and_failures_are_handled_without_interrupting_startup() {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-
-        for (status, body, expected) in [
-            (
-                "200 OK",
-                r#"{"tag_name":"v1.6.0","draft":false,"prerelease":false}"#,
-                Some("1.6.0"),
-            ),
-            ("200 OK", "invalid json", None),
-            (
-                "403 Forbidden",
-                r#"{"message":"API rate limit exceeded"}"#,
-                None,
-            ),
-            ("404 Not Found", "{}", None),
-        ] {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            let url = format!("http://{}/latest", listener.local_addr().unwrap());
-            let server = std::thread::spawn(move || {
-                let (mut stream, _) = listener.accept().unwrap();
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(3)))
-                    .unwrap();
-                let mut request = Vec::new();
-                let mut byte = [0];
-                while !request.ends_with(b"\r\n\r\n") {
-                    stream.read_exact(&mut byte).unwrap();
-                    request.push(byte[0]);
-                }
-                let request = String::from_utf8(request).unwrap().to_lowercase();
-                assert!(request.contains("user-agent: hakuro/"));
-                assert!(!request.contains("authorization:"));
-                write!(
-                    stream,
-                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                )
-                .unwrap();
-            });
-            let client = reqwest::Client::new();
-            assert_eq!(
-                fetch_latest(&client, &url, "1.5.2").await.as_deref(),
-                expected
-            );
-            server.join().unwrap();
-        }
-        assert!(check(&reqwest::Client::new(), false).await.is_none());
     }
 }

@@ -12,6 +12,15 @@ export interface Release {
  * app version. Earlier Python snapshots have no recorded version number. */
 export const releases: readonly Release[] = [
   {
+    version: "1.8.0", date: "2026-10-27", title: "自動更新",
+    changes: [
+      "有新版本時，Hakuro 會在背景下載並驗證安裝檔，下載完成才跳出通知，不必再自己到 GitHub 下載。",
+      "通知中選「立即更新」會安裝並重新啟動；選「稍後」則在關閉 Hakuro 時自動安裝，不會重新開啟。",
+      "安裝失敗時，通知會改提供 GitHub Release 連結。可在 Settings → Updates 關閉啟動時檢查更新。",
+      "1.7.0 以前的版本需手動安裝一次 1.8.0，之後的版本才會自動更新。",
+    ],
+  },
+  {
     version: "1.7.0", date: "2026-10-27", title: "簡體歌詞轉繁體",
     changes: [
       "新增「簡體歌詞轉繁體」設定，位於 Settings → Lyrics search order，預設關閉。開啟後，下載歌詞時會把簡體歌詞與翻譯轉成繁體並存入本機，只在下載時轉換一次；日文歌詞不會被轉換。",

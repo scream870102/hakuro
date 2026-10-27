@@ -1,5 +1,10 @@
 # Project settings
 
+## Paths
+
+- `obsidian_vault`: `C:\Data\Obisidian\EccentricVault`
+- `plan_export_dir`: `C:\Data\Obisidian\EccentricVault\Project\Hakuro`
+
 ## Rules
 
 ### Version bumps

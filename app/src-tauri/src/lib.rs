@@ -171,6 +171,8 @@ struct AppState {
     shortcut_warning: std::sync::RwLock<String>,
     db: Db,
     visualizer: visualizer::Visualizer,
+    /// A downloaded update waits here until the user restarts or Hakuro closes.
+    update: std::sync::Mutex<Option<updates::Ready>>,
 }
 
 impl AppState {
@@ -185,6 +187,7 @@ impl AppState {
             shortcut_warning: std::sync::RwLock::new(String::new()),
             db: Db::open(),
             visualizer: visualizer::Visualizer::default(),
+            update: std::sync::Mutex::new(None),
         }
     }
 
@@ -240,16 +243,50 @@ async fn get_config(state: State<'_, AppState>) -> Result<ConfigPayload, String>
     Ok(state.config(&settings))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateNotice {
+    version: String,
+    /// False for a build that cannot update itself; the notification links to GitHub.
+    installable: bool,
+}
+
+/// An installable update resolves only once its installer is downloaded and verified.
 #[tauri::command]
-async fn check_for_updates(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    let enabled = state.settings.read().await.check_updates;
-    let release = updates::check(&state.http, enabled).await;
-    // Turning the setting off while a request is pending also cancels its notification.
-    Ok(if state.settings.read().await.check_updates {
-        release
-    } else {
-        None
-    })
+async fn check_for_updates(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<UpdateNotice>, String> {
+    if !state.settings.read().await.check_updates {
+        return Ok(None);
+    }
+    let found = updates::find(&app).await;
+    // Turning the setting off while a download is pending also cancels its notification.
+    if !state.settings.read().await.check_updates {
+        return Ok(None);
+    }
+    Ok(found.map(|found| match found {
+        updates::Found::Ready(ready) => {
+            let version = ready.version().to_string();
+            *state.update.lock().unwrap() = Some(ready);
+            UpdateNotice {
+                version,
+                installable: true,
+            }
+        }
+        updates::Found::Manual(version) => UpdateNotice {
+            version,
+            installable: false,
+        },
+    }))
+}
+
+#[tauri::command]
+fn install_update(state: State<'_, AppState>) -> Result<(), String> {
+    match state.update.lock().unwrap().as_ref() {
+        Some(ready) => ready.install(true),
+        None => Err("No downloaded update is waiting.".into()),
+    }
 }
 
 #[tauri::command]
@@ -1834,6 +1871,7 @@ mod tests {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
@@ -1904,6 +1942,7 @@ pub fn run() {
             connect,
             get_config,
             check_for_updates,
+            install_update,
             open_latest_release,
             save_settings,
             mark_whats_new_seen,
@@ -1930,6 +1969,21 @@ pub fn run() {
             start_wave,
             stop_wave
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // An update left for later goes in as Hakuro closes, without reopening it.
+            if let tauri::RunEvent::Exit = event {
+                let state = app.state::<AppState>();
+                let enabled = state
+                    .settings
+                    .try_read()
+                    .is_ok_and(|settings| settings.check_updates);
+                if enabled {
+                    if let Some(ready) = state.update.lock().unwrap().as_ref() {
+                        let _ = ready.install(false);
+                    }
+                }
+            }
+        });
 }

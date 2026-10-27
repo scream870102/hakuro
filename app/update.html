@@ -16,16 +16,17 @@
     </header>
     <div class="panel" role="dialog" aria-labelledby="update-title">
       <div class="panel__body">
-        <h2 id="update-title">New version available</h2>
+        <h2 id="update-title">Update ready</h2>
         <p id="update-version"></p>
-        <p>有新版本可用，前往 GitHub 查看更新內容並下載。</p>
-        <p>You can turn off startup checks in Settings → Updates.</p>
+        <p id="update-message">新版本已在背景下載完成。立即更新會重新啟動 Hakuro；選「稍後」則在關閉 Hakuro 時自動安裝。</p>
+        <p>You can turn off update checks in Settings → Updates.</p>
       </div>
       <div class="panel__foot">
         <p id="update-error" role="alert" hidden></p>
         <div class="dialog-actions">
+          <a class="ghost-button" id="update-release" href="https://github.com/scream870102/hakuro/releases/latest" hidden>GitHub Release ↗</a>
           <button class="ghost-button" id="update-dismiss" type="button">Later / 稍後</button>
-          <a class="ghost-button ghost-button--go" id="update-release" href="https://github.com/scream870102/hakuro/releases/latest">GitHub Release ↗</a>
+          <button class="ghost-button ghost-button--go" id="update-install" type="button">Restart now / 立即更新</button>
         </div>
       </div>
     </div>

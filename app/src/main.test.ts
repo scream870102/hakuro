@@ -372,12 +372,15 @@ it("opens settings as a window of its own, previews its dials and re-reads what 
   expect(document.documentElement.style.getPropertyValue("--lyric-size")).toBe("26px");
 });
 
+const ready = { version: "1.6.0", installable: true };
+const manual = { version: "1.6.0", installable: false };
 it.each([
-  [false, "1.6.0", false],
-  [true, null, false],
-  [true, "1.6.0", true],
-  [true, new Error("offline"), false],
-])("checks updates at startup only when enabled (%s, %s)", async (enabled, release, notified) => {
+  [false, ready, null],
+  [true, null, null],
+  [true, ready, "update.html?version=1.6.0"],
+  [true, manual, "update.html?version=1.6.0&manual=1"],
+  [true, new Error("offline"), null],
+])("checks updates at startup only when enabled (%s, %o)", async (enabled, release, url) => {
   bridge.invoke.mockImplementation(async (command: string) => {
     if (command === "get_config") return { ...initial(), settings: { ...initial().settings, compact: true, checkUpdates: enabled } };
     if (command === "check_for_updates") {
@@ -389,17 +392,17 @@ it.each([
   await flush();
   await flush();
   expect(bridge.invoke.mock.calls.some(([command]) => command === "check_for_updates")).toBe(enabled);
-  expect(children.has("update")).toBe(notified);
-  if (notified) expect(children.get("update")?.options).toMatchObject({ url: "update.html?version=1.6.0", parent: "main", width: 460, height: 320 });
+  expect(children.has("update")).toBe(url !== null);
+  if (url) expect(children.get("update")?.options).toMatchObject({ url, parent: "main", width: 460, height: 320 });
   expect(bridge.invoke).toHaveBeenCalledWith("connect", undefined);
 });
 
 it("does not delay connecting for update checks and drops a result after updates are disabled", async () => {
-  let resolveUpdate!: (version: string) => void;
+  let resolveUpdate!: (update: typeof ready) => void;
   let checkUpdates = true;
   bridge.invoke.mockImplementation(async (command: string) => {
     if (command === "get_config") return { ...initial(), settings: { ...initial().settings, checkUpdates } };
-    if (command === "check_for_updates") return new Promise<string>((resolve) => { resolveUpdate = resolve; });
+    if (command === "check_for_updates") return new Promise<typeof ready>((resolve) => { resolveUpdate = resolve; });
   });
   await import("./main");
   await flush();
@@ -409,7 +412,7 @@ it("does not delay connecting for update checks and drops a result after updates
   checkUpdates = false;
   children.get("settings")!.events.get("tauri://destroyed")!({ payload: null });
   await flush();
-  resolveUpdate("1.6.0");
+  resolveUpdate(ready);
   await flush();
   expect(children.has("update")).toBe(false);
 });

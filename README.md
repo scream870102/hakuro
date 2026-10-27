@@ -66,7 +66,7 @@ ytmdesktop2 會告訴 Hakuro 目前歌曲的 YouTube 影片 ID，所以不必靠
 - 設定視窗右上角顯示目前版本。介面字型（Anton、JetBrains Mono、Noto Sans JP，以及補足中文字的 Noto Sans TC／SC）隨 App 打包，離線也能顯示；日文字型缺少的中文字改用同系列、同粗細的字型，不會忽粗忽細。
 - **簡體歌詞轉繁體**：**Settings → Lyrics search order** 下方可開啟（預設關閉）。開啟後，下載歌詞時把簡體歌詞與翻譯轉成繁體（台灣用字）並存入本機，只在下載那一次轉換；含假名的日文歌詞不轉換，原本就是繁體的歌詞也維持原樣。已存的歌詞不會改變，按 **Reload lyrics** 重新下載即可轉換。
 - **What's new**：每個版本首次啟動時，顯示與 Queue 同風格的獨立立體更新視窗。目前版本預設展開，舊版可自行點開；可從 **Settings → Updates → What's new** 或 Command Palette 隨時重看。內附繁體中文版本歷史，不需連網。
-- **更新通知**：預設在啟動時背景檢查 GitHub 最新正式版；有較新版本才彈出獨立通知，可按 **GitHub Release** 開啟最新版頁面，或按 **Later／稍後** 關閉。**Settings → Updates → Check for updates on startup** 可關閉自動檢查，儲存後生效。離線、無新版本或檢查失敗時不打擾播放；不會自動下載或安裝。
+- **自動更新**：預設在啟動時背景檢查 GitHub 最新正式版；有較新版本就在背景下載安裝程式並驗證簽章，完成後才彈出獨立通知。按 **Restart now／立即更新** 會安裝並重新啟動；按 **Later／稍後** 或關閉通知，則在關閉 Hakuro 時自動安裝，不會重新開啟。安裝失敗時改提供 **GitHub Release** 連結。可攜版與開發版不會自動安裝，只通知並連到 GitHub。**Settings → Updates → Check for updates on startup** 可關閉檢查，關閉後也會取消尚未安裝的更新，儲存後生效。離線、無新版本或檢查失敗時不打擾播放。1.7.0 以前的版本沒有自動更新，需手動安裝一次 1.8.0。
 
 ## 歌詞與設定
 
@@ -155,6 +155,13 @@ npm ci
 npm run tauri -- build --bundles nsis
 ```
 
+打包時會替自動更新簽章，需先在同一個 PowerShell 設定私鑰，否則建置會失敗（`.env` 檔無效）：
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = "<私鑰檔路徑或內容>"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "<私鑰密碼，沒有則留空>"
+```
+
 預設輸出資料夾：`app/src-tauri/target/release/bundle/nsis/`，其中 `*-setup.exe` 是要提供給使用者的安裝程式。設定採 `currentUser` 安裝模式，請保留可寫入的安裝位置，讓設定和 SQLite 能存到 EXE 旁。NSIS 的 WebView2 安裝行為與部署選項見 [Tauri Windows Installer 文件](https://v2.tauri.app/distribute/windows-installer/)。
 
 更新可攜版時，先關閉 App，再替換 `hakuro.exe`，保留原本的資料檔。不要把建置過程測試產生的資料檔打包給其他人。
@@ -180,6 +187,17 @@ npm run tauri -- icon icon.png
 推一個 `v` 開頭的 tag 就會觸發 [`.github/workflows/release.yml`](.github/workflows/release.yml)：在 `windows-latest` 上建置 NSIS 安裝程式，並發佈成可下載的 GitHub Release。不需要手動上傳檔案。
 
 Workflow 的第一步是拿 tag 比對 `app/src-tauri/tauri.conf.json` 的 `version`，不一致就直接失敗、不進建置。**這是唯一會被檢查、也是唯一決定安裝程式檔名的版號**，產物會是 `Hakuro_<version>_x64-setup.exe`。
+
+#### 自動更新簽章
+
+Release 同時上傳安裝程式的簽章（`.sig`）與 App 讀取的 `latest.json`。簽章用的私鑰存放在 repo 的 **Settings → Secrets and variables → Actions → Repository secrets**：
+
+| Secret | 內容 |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | `npm run tauri signer generate` 產生的私鑰檔內容 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 私鑰密碼；沒有設密碼就不必建立 |
+
+對應的公鑰寫在 `tauri.conf.json` 的 `plugins.updater.pubkey`。缺少私鑰時建置會失敗。**私鑰遺失後，已安裝的使用者將無法再收到自動更新**，請另外離線備份。換金鑰時要同時更新公鑰，而且只有裝了新公鑰版本的使用者才能接著自動更新。
 
 #### 要更新的檔案
 

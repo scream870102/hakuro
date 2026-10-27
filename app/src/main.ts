@@ -1303,10 +1303,13 @@ async function showVersion() {
 async function checkForUpdates() {
   if (!config?.settings.checkUpdates) return;
   try {
-    const version = await invoke<string | null>("check_for_updates");
-    if (!version || !config?.settings.checkUpdates) return;
+    const update = await invoke<{ version: string; installable: boolean } | null>("check_for_updates");
+    if (!update || !config?.settings.checkUpdates) return;
+    const params = new URLSearchParams({ version: update.version });
+    // A portable or development build cannot update itself and links to GitHub instead.
+    if (!update.installable) params.set("manual", "1");
     await openPanel("update", {
-      url: `update.html?${new URLSearchParams({ version })}`, title: "Hakuro Update",
+      url: `update.html?${params}`, title: "Hakuro Update",
       width: 460, height: 320, minWidth: 360, minHeight: 260, drop: 0.5,
     });
   } catch { /* Offline or rate-limited: startup and playback continue normally. */ }
