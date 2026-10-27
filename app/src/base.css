@@ -3,11 +3,15 @@
    reader picks another). */
 
 /* Bundled, so the poster type survives being offline. Noto Sans JP carries the
-   heavy CJK weights the lyrics are set in; Anton and JetBrains Mono are Latin. */
+   heavy CJK weights the lyrics are set in; its sibling cuts TC, then SC, fill
+   the Chinese characters JP lacks at the same weights. Anton and JetBrains Mono
+   are Latin. */
 @import "@fontsource/anton/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 @import "@fontsource/jetbrains-mono/700.css";
 @import "@fontsource-variable/noto-sans-jp/wght.css";
+@import "@fontsource-variable/noto-sans-tc/wght.css";
+@import "@fontsource-variable/noto-sans-sc/wght.css";
 
 :root {
   --accent: #e6ff1f;
@@ -25,9 +29,9 @@
   --lyric-size: 26px;
   --accent-glow: color-mix(in srgb, var(--accent) 55%, transparent);
   --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
-  --display: "Anton", "Noto Sans JP Variable", "Yu Gothic UI", "Microsoft JhengHei UI", sans-serif;
+  --display: "Anton", "Noto Sans JP Variable", "Noto Sans TC Variable", "Noto Sans SC Variable", "Yu Gothic UI", "Microsoft JhengHei UI", sans-serif;
   /* Japanese and Chinese lyrics need a CJK-capable stack, not just a Latin face. */
-  --jp: "Noto Sans JP Variable", "Yu Gothic UI", "Meiryo", "Microsoft JhengHei UI", sans-serif;
+  --jp: "Noto Sans JP Variable", "Noto Sans TC Variable", "Noto Sans SC Variable", "Yu Gothic UI", "Meiryo", "Microsoft JhengHei UI", sans-serif;
   --tc: "Microsoft JhengHei UI", "Noto Sans JP Variable", "Yu Gothic UI", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
 }

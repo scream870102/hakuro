@@ -1,6 +1,6 @@
 [package]
 name = "hakuro"
-version = "1.6.2"
+version = "1.7.0"
 description = "Original-language lyrics for whatever Spotify is playing."
 authors = ["Eccentric Studio"]
 edition = "2021"
@@ -48,7 +48,7 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Variant",
 ] }
-ferrous-opencc = { version = "0.4.0", default-features = false, features = ["t2s-conversion"] }
+ferrous-opencc = { version = "0.4.0", default-features = false, features = ["s2t-conversion", "t2s-conversion"] }
 # `bundled` compiles SQLite from source, so the release needs no DLL beside the executable.
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 tauri-plugin-global-shortcut = "2"

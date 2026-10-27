@@ -12,6 +12,14 @@ export interface Release {
  * app version. Earlier Python snapshots have no recorded version number. */
 export const releases: readonly Release[] = [
   {
+    version: "1.7.0", date: "2026-10-27", title: "簡體歌詞轉繁體",
+    changes: [
+      "新增「簡體歌詞轉繁體」設定，位於 Settings → Lyrics search order，預設關閉。開啟後，下載歌詞時會把簡體歌詞與翻譯轉成繁體並存入本機，只在下載時轉換一次；日文歌詞不會被轉換。",
+      "已存的歌詞維持原樣，可用 Reload lyrics 重新下載並轉換。",
+      "隨 App 打包 Noto Sans TC 與 Noto Sans SC：日文字型缺少的中文字，改用同系列、同粗細的字型顯示，不再忽粗忽細。",
+    ],
+  },
+  {
     version: "1.6.2", date: "2026-10-21", title: "一致的圖示，自訂搖一搖",
     changes: [
       "主畫面、Compact 模式、Queue 與 Command Palette 的相同動作使用一致的圖示；Compact 歌詞改用對話框加文字線。",

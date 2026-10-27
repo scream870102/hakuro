@@ -1,5 +1,35 @@
 # hakuro session recovery
 
+## 1.7.0 matched CJK weights and opt-in Simplified to Traditional - 2026-10-27
+
+Goal: stop Chinese characters missing from Noto Sans JP falling back to
+Microsoft JhengHei UI (Light/Regular/Bold only, no synthesis) at a visibly
+different weight; let readers opt in to converting Simplified lyrics to
+Traditional once, at download, with the converted text stored; bump to 1.7.0.
+Scope: current checkout, source edits and local verification. No commit/push.
+Acceptance:
+- [x] `--display` and `--jp` stacks are JP → Noto Sans TC → Noto Sans SC, all
+  bundled variable 100–900 (Fontsource). `--tc` unchanged: JhengHei UI covers
+  Simplified, so translations never fell back.
+- [x] `convertToTraditional` setting, default off; older settings files load off.
+- [x] Conversion runs only on downloads (auto/pinned lookup, manual preview,
+  manual reload) before the DB write; cached lyrics are never rewritten.
+- [x] Original lines and translations decided separately: any kana keeps the
+  lines (shinjitai like 国/学 overlap Simplified); otherwise convert only when
+  OpenCC s2tw changes more characters than t2s. Word timings convert as one
+  joined line, then split back, so phrases across words (头|发 → 頭|髮) hold.
+- [x] Version 1.7.0 in package/lock, Cargo/lock, tauri.conf and release notes.
+Progress: Rust 169 passed / 13 existing ignored (5 new), no warnings; frontend
+197/197; TypeScript/Vite build passed. Edge render confirms uniform 900 weight
+across JP/TC/SC. Bundle grows ~8.8 MB of woff2 (TC 4.3 MB, SC 4.5 MB); only
+needed unicode-range chunks load at runtime.
+Not done: Tauri app not launched; NSIS packaging not run; docs/index.html
+still says V 1.6.2 (its captures are of 1.6.2).
+Reusable lesson: Japanese fonts lack Simplified-only Han characters; a CJK stack
+needs sibling SC/TC cuts at the same weight axis, or the system fallback's
+fixed weights show.
+Open questions: none.
+
 ## 1.6.2 consistent icons and configurable shake - 2026-10-21
 
 Goal: share action icons across the app, replace Compact lyrics' microphone

@@ -28,3 +28,9 @@ lyrics.db-*
 session.bin
 ytmd-session.bin
 companion-session.bin
+
+# Agent rules: local-rules/ is personal and excluded through .git/info/exclude,
+# except project.md, which holds Hakuro's own rules and is tracked.
+!/local-rules/
+/local-rules/*
+!/local-rules/project.md

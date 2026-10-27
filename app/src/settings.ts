@@ -244,6 +244,7 @@ function fill(value: Config) {
   draft = structuredClone(value.settings);
   draft.waveStrength ??= 100;
   draft.checkUpdates ??= true;
+  draft.convertToTraditional ??= false;
   if (draft.shakeAction === undefined) draft.shakeAction = "randomQueue";
   draft.lastSeenVersion ??= "";
   draft.shortcuts = SHORTCUT_ACTIONS.map(([action]) => ({ action, accelerator: "", global: false, ...(value.settings.shortcuts ?? DEFAULT_SHORTCUTS).find((item) => item.action === action) }));
@@ -258,6 +259,7 @@ function fill(value: Config) {
   element<HTMLInputElement>("color-past").value = draft.theme.pastLine;
   element<HTMLInputElement>("settings-follow").checked = draft.followLyrics;
   element<HTMLInputElement>("settings-check-updates").checked = draft.checkUpdates;
+  element<HTMLInputElement>("settings-traditional").checked = draft.convertToTraditional;
   shakeAction.value = draft.shakeAction ?? "";
   element<HTMLInputElement>("settings-wave-full").checked = draft.waveFull;
   element<HTMLInputElement>("settings-wave-compact").checked = draft.waveCompact;
@@ -305,6 +307,7 @@ element("settings-form").addEventListener("submit", async (event) => {
   };
   draft.followLyrics = element<HTMLInputElement>("settings-follow").checked;
   draft.checkUpdates = element<HTMLInputElement>("settings-check-updates").checked;
+  draft.convertToTraditional = element<HTMLInputElement>("settings-traditional").checked;
   draft.shakeAction = shakeAction.value as ShortcutAction || null;
   draft.waveFull = element<HTMLInputElement>("settings-wave-full").checked;
   draft.waveCompact = element<HTMLInputElement>("settings-wave-compact").checked;

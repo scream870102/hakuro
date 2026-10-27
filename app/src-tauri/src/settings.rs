@@ -140,6 +140,10 @@ pub struct Settings {
     pub follow_lyrics: bool,
     /// Check GitHub for a newer release at startup; only notify, never install.
     pub check_updates: bool,
+    /// Rewrite Simplified Chinese lyrics in Traditional characters as they are
+    /// downloaded. Off by default: it changes what the source published, and
+    /// lyrics already stored are not rewritten.
+    pub convert_to_traditional: bool,
     /// Command palette action for the cube gesture; None disables it.
     pub shake_action: Option<String>,
     /// Written by the release-note acknowledgement command, never supplied by it.
@@ -207,6 +211,7 @@ impl Default for Settings {
             theme: Theme::default(),
             follow_lyrics: true,
             check_updates: true,
+            convert_to_traditional: false,
             shake_action: Some("randomQueue".into()),
             last_seen_version: String::new(),
             always_on_top: false,
@@ -722,6 +727,17 @@ pub(crate) mod tests {
                 .unwrap()
                 .check_updates
         );
+    }
+
+    #[test]
+    fn traditional_conversion_defaults_off_and_preserves_an_opt_in() {
+        let older: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!older.convert_to_traditional);
+        let mut settings: Settings =
+            serde_json::from_str(r#"{"convertToTraditional":true}"#).unwrap();
+        settings.normalize();
+        let saved = serde_json::to_string(&settings).unwrap();
+        assert!(saved.contains("\"convertToTraditional\":true"));
     }
 
     /// Disabling everything must not mean "never fetch lyrics again".

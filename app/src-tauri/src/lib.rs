@@ -22,6 +22,7 @@ mod settings;
 mod shortcuts;
 mod spotify;
 mod token_store;
+mod traditional;
 mod updates;
 mod visualizer;
 mod youtube_music;
@@ -838,6 +839,7 @@ async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
         };
 
         let state = handle.state::<AppState>();
+        let result = downloaded(&state, result).await;
         let _update = state.session.lyrics_update.lock().await;
         // Drop the answer if the song moved on while the lookup was in flight.
         if state.session.generation.load(Ordering::SeqCst) != generation
@@ -856,6 +858,16 @@ async fn deliver_lyrics(app: &AppHandle, playback: &Playback, generation: u64) {
         );
         emit_lyrics(&handle, generation, &key, &requested, result, false);
     });
+}
+
+/// Freshly downloaded lyrics, rewritten in Traditional characters when the
+/// reader asked for it. Only downloads pass through here, so lyrics already
+/// stored stay as they were saved.
+async fn downloaded(state: &AppState, mut lyrics: LyricsResult) -> LyricsResult {
+    if state.settings.read().await.convert_to_traditional {
+        traditional::convert(&mut lyrics);
+    }
+    lyrics
 }
 
 fn emit_lyrics(
@@ -922,6 +934,7 @@ async fn reload_lyrics(app: AppHandle, state: State<'_, AppState>) -> Result<(),
         let lyrics = providers::fetch_candidate(&state.http, &selection.candidate)
             .await
             .map_err(|error| format!("Could not refresh the selected lyrics: {error}"))?;
+        let lyrics = downloaded(&state, lyrics).await;
         let _update = state.session.lyrics_update.lock().await;
         let current = state.session.current_track.read().await;
         validate_source_track(&current, &key)?;
@@ -1025,6 +1038,7 @@ async fn preview_lyric_candidate(
     let lyrics = providers::fetch_candidate(&state.http, &candidate)
         .await
         .map_err(|error| format!("Lyric preview failed: {error}"))?;
+    let lyrics = downloaded(&state, lyrics).await;
     let current = state.session.current_track.read().await;
     validate_source_track(&current, &track_id)?;
     let mut preview = state.session.lyric_preview.write().await;

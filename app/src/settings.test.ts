@@ -67,6 +67,8 @@ it("fills in what is stored, then shows itself", async () => {
   expect(el("storage-info").textContent).toBe("Data folder: C:/Hakuro · Cached songs: 2");
   expect(el("app-version").textContent).toBe("v1.3.0");
   expect(el<HTMLInputElement>("settings-check-updates").checked).toBe(true);
+  // A settings file from before the option exists leaves conversion off.
+  expect(el<HTMLInputElement>("settings-traditional").checked).toBe(false);
   expect(document.documentElement.style.getPropertyValue("--accent")).toBe("#123456");
   expect(win.show).toHaveBeenCalled();
   expect(win.setFocus).toHaveBeenCalled();
@@ -97,6 +99,7 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
   el<HTMLInputElement>("color-past").value = "#112233";
   el<HTMLInputElement>("settings-follow").checked = false;
   el<HTMLInputElement>("settings-check-updates").checked = false;
+  el<HTMLInputElement>("settings-traditional").checked = true;
   el<HTMLSelectElement>("settings-shake-action").value = "compactLyrics";
   // The floor's two switches start from what is stored, one per mode.
   expect(el<HTMLInputElement>("settings-wave-full").checked).toBe(true);
@@ -117,6 +120,7 @@ it("saves Client ID, provider order/enabled state, colors and follow as one sett
     theme: { accent: "#abcdef", activeLine: "#fedcba", pastLine: "#112233" },
     followLyrics: false,
     checkUpdates: false,
+    convertToTraditional: true,
     shakeAction: "compactLyrics",
     lastSeenVersion: "1.3.0",
     alwaysOnTop: false,

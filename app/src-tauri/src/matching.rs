@@ -2,8 +2,8 @@
 //!
 //! Ported from the Python `lyrics_sources._normal` / `_matches`. Version words
 //! (Live, Remix, ...) are deliberately kept: stripping them picks wrong recordings.
-//! Traditional/Simplified conversion is used for comparison only — displayed
-//! lyrics are never rewritten.
+//! Traditional/Simplified conversion is used for comparison only here; lyrics
+//! are rewritten only by `traditional`, when the reader opts in.
 
 use std::sync::LazyLock;
 
@@ -15,7 +15,7 @@ use crate::lrc::unescape;
 
 /// Dictionaries are embedded in the crate at build time, so no data files ship
 /// beside the executable.
-static TO_SIMPLIFIED: LazyLock<OpenCC> = LazyLock::new(|| {
+pub(crate) static TO_SIMPLIFIED: LazyLock<OpenCC> = LazyLock::new(|| {
     OpenCC::from_config(BuiltinConfig::T2s).expect("embedded t2s dictionary must load")
 });
 

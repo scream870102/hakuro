@@ -23,6 +23,8 @@ export interface Settings {
   theme: Theme;
   followLyrics: boolean;
   checkUpdates: boolean;
+  /** Rewrite Simplified Chinese lyrics in Traditional characters as they are downloaded. */
+  convertToTraditional: boolean;
   /** Command run after rapidly turning the cube; null leaves the gesture unbound. */
   shakeAction: ShortcutAction | null;
   /** Written by the backend after the release notes have been displayed. */
