@@ -18,15 +18,23 @@ Acceptance:
 - [x] Version manifests/locks, Traditional Chinese release history, What's new
   tests and README agree on 1.8.1.
 - [x] npm test, npm run build, cargo test --lib pass.
-- [ ] Commit/push main and v1.8.1; verify remote refs and release workflow.
+- [x] Commit/push main and v1.8.1; verify remote refs.
+- [x] Verify the release workflow and published installer/update feed.
 Verification: the regression first failed on the old 300-second pause delay.
 Final tests cover the ten-minute boundary, repeated pauses, resume/re-pause,
 empty samples, local players and pinned/unfocused rendering. Frontend 201/201,
 Rust 170 passed / 13 existing ignored; TypeScript/Vite production build passed.
 All six manifest/lock version fields are 1.8.1; git diff --check passed.
 One-hour dormancy, hidden-window wakeup and non-interruptible rate-limit waits
-were inspected in the final loop. Remote main is unchanged; v1.8.1 is unused.
-Publication is the remaining step.
+were inspected in the final loop. Commit ce046de was atomically pushed to
+origin/main and v1.8.1; both remote refs were verified at publication. This
+progress-only follow-up records the completed release without moving its tag.
+Release run 40485721806 succeeded:
+https://github.com/scream870102/hakuro/actions/runs/40485721806.
+v1.8.1 is the latest non-draft, non-prerelease GitHub release. Published assets:
+Hakuro_1.8.1_x64-setup.exe, its .sig and latest.json. The feed version is 1.8.1;
+both Windows platform entries target installer asset 681209316 and match the
+published signature. Release: https://github.com/scream870102/hakuro/releases/tag/v1.8.1.
 Reusable lesson: keep the pause grace, reduced polling and final dormancy as
 separate thresholds; a pinned window must keep updating without a focus event.
 Limit: physical headphone interaction has not been exercised in this session.
